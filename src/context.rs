@@ -883,20 +883,13 @@ impl StrategyContext {
             let buffer = buffer_lock.read().unwrap();
             let source = resolve_history_source(&buffer, &symbol, freq)?;
             let use_tick = matches!(source, HistorySource::Tick);
-            let (current, previous) = match &source {
-                HistorySource::Tick => (
-                    buffer.get_tick_history(&symbol),
-                    buffer.get_previous_tick_history(&symbol),
-                ),
-                HistorySource::Bar => (
-                    buffer.get_history(&symbol),
-                    buffer.get_previous_history(&symbol),
-                ),
-                HistorySource::Window(label) => (
-                    buffer.get_window_history(&symbol, label),
-                    buffer.get_previous_window_history(&symbol, label),
-                ),
+            let current = match &source {
+                HistorySource::Tick => buffer.get_tick_history(&symbol),
+                HistorySource::Bar => buffer.get_history(&symbol),
+                HistorySource::Window(label) => buffer.get_window_history(&symbol, label),
             };
+            // 截止时刻不早于最新一行时改用上一视图(最近一次写入之前的序列):
+            // 环形缓冲刚挤掉最老的一行, 上一视图还保留着它, 取够 count 行。
             let history = match (current, end_before_ns) {
                 (Some(history), Some(cutoff))
                     if history
@@ -904,52 +897,39 @@ impl StrategyContext {
                         .back()
                         .is_some_and(|timestamp| *timestamp >= cutoff) =>
                 {
-                    previous.unwrap_or(history)
+                    history.previous_view().unwrap_or_else(|| history.view())
                 }
-                (Some(history), _) => history,
+                (Some(history), _) => history.view(),
                 (None, _) => return Ok(None),
             };
             {
                 let len = match end_before_ns {
                     Some(cutoff) => history
-                        .timestamps
-                        .iter()
-                        .take_while(|timestamp| **timestamp < cutoff)
+                        .timestamps()
+                        .take_while(|timestamp| *timestamp < cutoff)
                         .count(),
-                    None => history.timestamps.len(),
+                    None => history.len(),
                 };
                 if len == 0 {
                     return Ok(None);
                 }
 
                 let start = len.saturating_sub(count);
-                let py_array = match field.as_str() {
-                    "open" => PyArray1::from_iter(py, history.opens.iter().skip(start).cloned()),
-                    "high" => PyArray1::from_iter(py, history.highs.iter().skip(start).cloned()),
-                    "low" => PyArray1::from_iter(py, history.lows.iter().skip(start).cloned()),
-                    "close" => PyArray1::from_iter(py, history.closes.iter().skip(start).cloned()),
-                    // "price" 是 tick 的自然字段名, 语义 = tick 容器的 close(成交价)。
-                    // bar 没有 price 概念, 故仅在实际取的是 tick 容器时放行——
-                    // guard 不满足时穿透到下面的 extras/Invalid field 分支,
-                    // 与 bar 路径此前的报错行为完全一致。
-                    "price" if use_tick => {
-                        PyArray1::from_iter(py, history.closes.iter().skip(start).cloned())
-                    }
-                    "volume" => {
-                        PyArray1::from_iter(py, history.volumes.iter().skip(start).cloned())
-                    }
-                    _ => {
-                        if let Some(series) = history.extras.get(&field) {
-                            PyArray1::from_iter(py, series.iter().skip(start).cloned())
-                        } else {
-                            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                                "Invalid field: '{}'. Available extra fields: {:?}",
-                                field,
-                                history.extras.keys()
-                            )));
-                        }
-                    }
+                // "price" 是 tick 的自然字段名, 语义 = tick 容器的 close(成交价)。
+                // bar 没有 price 概念, 故仅在实际取的是 tick 容器时放行——
+                // 否则按 extra 列查, 查不到报 Invalid field, 与此前的报错行为一致。
+                let column = match field.as_str() {
+                    "price" if use_tick => "close",
+                    other => other,
                 };
+                let Some(series) = history.field(column) else {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid field: '{}'. Available extra fields: {:?}",
+                        field,
+                        history.extra_keys()
+                    )));
+                };
+                let py_array = PyArray1::from_iter(py, series.skip(start));
 
                 return Ok(Some(py_array));
             }
@@ -984,20 +964,13 @@ impl StrategyContext {
             let buffer = buffer_lock.read().unwrap();
             let source = resolve_history_source(&buffer, &symbol, freq)?;
             let use_tick = matches!(source, HistorySource::Tick);
-            let (current, previous) = match &source {
-                HistorySource::Tick => (
-                    buffer.get_tick_history(&symbol),
-                    buffer.get_previous_tick_history(&symbol),
-                ),
-                HistorySource::Bar => (
-                    buffer.get_history(&symbol),
-                    buffer.get_previous_history(&symbol),
-                ),
-                HistorySource::Window(label) => (
-                    buffer.get_window_history(&symbol, label),
-                    buffer.get_previous_window_history(&symbol, label),
-                ),
+            let current = match &source {
+                HistorySource::Tick => buffer.get_tick_history(&symbol),
+                HistorySource::Bar => buffer.get_history(&symbol),
+                HistorySource::Window(label) => buffer.get_window_history(&symbol, label),
             };
+            // 截止时刻不早于最新一行时改用上一视图(最近一次写入之前的序列):
+            // 环形缓冲刚挤掉最老的一行, 上一视图还保留着它, 取够 count 行。
             let history = match (current, end_before_ns) {
                 (Some(history), Some(cutoff))
                     if history
@@ -1005,19 +978,18 @@ impl StrategyContext {
                         .back()
                         .is_some_and(|timestamp| *timestamp >= cutoff) =>
                 {
-                    previous.unwrap_or(history)
+                    history.previous_view().unwrap_or_else(|| history.view())
                 }
-                (Some(history), _) => history,
+                (Some(history), _) => history.view(),
                 (None, _) => return Ok(None),
             };
 
             let len = match end_before_ns {
                 Some(cutoff) => history
-                    .timestamps
-                    .iter()
-                    .take_while(|timestamp| **timestamp < cutoff)
+                    .timestamps()
+                    .take_while(|timestamp| *timestamp < cutoff)
                     .count(),
-                None => history.timestamps.len(),
+                None => history.len(),
             };
             if len == 0 {
                 return Ok(None);
@@ -1027,28 +999,20 @@ impl StrategyContext {
             let mut out: HashMap<String, Bound<'py, PyArray1<f64>>> =
                 HashMap::with_capacity(fields.len());
             for field in fields {
-                let series = match field.as_str() {
-                    "open" => &history.opens,
-                    "high" => &history.highs,
-                    "low" => &history.lows,
-                    "close" => &history.closes,
-                    // 与 history() 保持一致: "price" 仅在实际取的是 tick 容器时
-                    // 等价于 close; bar 路径穿透到下面的 Invalid field 分支。
-                    "price" if use_tick => &history.closes,
-                    "volume" => &history.volumes,
-                    _ => {
-                        if let Some(series) = history.extras.get(&field) {
-                            series
-                        } else {
-                            return Err(pyo3::exceptions::PyValueError::new_err(format!(
-                                "Invalid field: '{}'. Available extra fields: {:?}",
-                                field,
-                                history.extras.keys()
-                            )));
-                        }
-                    }
+                // 与 history() 保持一致: "price" 仅在实际取的是 tick 容器时
+                // 等价于 close; bar 路径按 extra 列查, 查不到报 Invalid field。
+                let column = match field.as_str() {
+                    "price" if use_tick => "close",
+                    other => other,
                 };
-                let py_array = PyArray1::from_iter(py, series.iter().skip(start).cloned());
+                let Some(series) = history.field(column) else {
+                    return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                        "Invalid field: '{}'. Available extra fields: {:?}",
+                        field,
+                        history.extra_keys()
+                    )));
+                };
+                let py_array = PyArray1::from_iter(py, series.skip(start));
                 out.insert(field, py_array);
             }
             return Ok(Some(out));

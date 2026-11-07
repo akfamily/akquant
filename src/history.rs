@@ -2,6 +2,7 @@ use crate::model::{Bar, Tick};
 use rust_decimal::prelude::ToPrimitive;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
+use std::iter::{Chain, Copied, Take};
 
 #[derive(Debug, Clone)]
 pub struct SymbolHistory {
@@ -13,6 +14,113 @@ pub struct SymbolHistory {
     pub volumes: VecDeque<f64>,
     pub extras: HashMap<String, VecDeque<f64>>,
     pub capacity: usize,
+    /// 最近一次写入的记录, 供 [`SymbolHistory::previous_view`] 现拼"写入前"的视图。
+    last_push: LastPush,
+}
+
+/// 最近一次写入的记录。
+///
+/// 旧实现每次写入前把整个序列复制一份留作"上一视图", 代价与容量成正比
+/// (默认容量 10000 时每根 bar 复制约 480KB)。现在只记下被挤掉的最老一行
+/// 和本次新建的 extra 列, 上一视图 = 被挤掉的一行 + 当前序列去掉最后一行,
+/// 与整份复制逐值相同。
+#[derive(Debug, Clone, Default)]
+enum LastPush {
+    /// 没有上一视图: 写入前序列为空, 或调整容量 / 从存档恢复之后。
+    #[default]
+    None,
+    Pushed {
+        /// 写入时因满容量被挤掉的最老一行; 未满时为 None。
+        evicted: Option<EvictedRow>,
+        /// 本次写入新建的 extra 列(上一视图里没有这些列)。
+        new_extras: Vec<String>,
+    },
+}
+
+/// 被挤出序列的一行。
+#[derive(Debug, Clone)]
+struct EvictedRow {
+    timestamp: i64,
+    open: f64,
+    high: f64,
+    low: f64,
+    close: f64,
+    volume: f64,
+    extras: HashMap<String, f64>,
+}
+
+/// 视图里一列的迭代器: 可选的被挤掉的一行在前, 后接序列的前若干行。
+pub type ColumnIter<'a, T> =
+    Chain<std::option::IntoIter<T>, Take<Copied<std::collections::vec_deque::Iter<'a, T>>>>;
+
+/// 序列的只读视图: 当前视图(序列本身)或上一视图(最近一次写入之前的样子)。
+#[derive(Debug, Clone, Copy)]
+pub struct HistoryView<'a> {
+    history: &'a SymbolHistory,
+    evicted: Option<&'a EvictedRow>,
+    /// 取序列前多少行(上一视图去掉最后一行)。
+    take: usize,
+    /// 视图里不存在的 extra 列(上一视图隐藏最近一次写入新建的列)。
+    hidden_extras: &'a [String],
+}
+
+impl<'a> HistoryView<'a> {
+    /// 行数。
+    pub fn len(&self) -> usize {
+        self.take + usize::from(self.evicted.is_some())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn timestamps(&self) -> ColumnIter<'a, i64> {
+        self.evicted
+            .map(|row| row.timestamp)
+            .into_iter()
+            .chain(self.history.timestamps.iter().copied().take(self.take))
+    }
+
+    /// 按字段名取一列: `open` / `high` / `low` / `close` / `volume`, 其余按 extra 列查;
+    /// 视图里没有该列时返回 None。
+    pub fn field(&self, name: &str) -> Option<ColumnIter<'a, f64>> {
+        let (column, evicted) = match name {
+            "open" => (&self.history.opens, self.evicted.map(|row| row.open)),
+            "high" => (&self.history.highs, self.evicted.map(|row| row.high)),
+            "low" => (&self.history.lows, self.evicted.map(|row| row.low)),
+            "close" => (&self.history.closes, self.evicted.map(|row| row.close)),
+            "volume" => (&self.history.volumes, self.evicted.map(|row| row.volume)),
+            _ => {
+                if self.hidden_extras.iter().any(|key| key == name) {
+                    return None;
+                }
+                let column = self.history.extras.get(name)?;
+                // 挤掉那一行时该列已存在(写入先淘汰、后建新列), 一定有值
+                let evicted = self
+                    .evicted
+                    .map(|row| row.extras.get(name).copied().unwrap_or(f64::NAN));
+                (column, evicted)
+            }
+        };
+        Some(
+            evicted
+                .into_iter()
+                .chain(column.iter().copied().take(self.take)),
+        )
+    }
+
+    /// 视图里存在的 extra 列名(排序)。
+    pub fn extra_keys(&self) -> Vec<String> {
+        let mut keys: Vec<String> = self
+            .history
+            .extras
+            .keys()
+            .filter(|key| !self.hidden_extras.contains(key))
+            .cloned()
+            .collect();
+        keys.sort();
+        keys
+    }
 }
 
 impl SymbolHistory {
@@ -26,7 +134,75 @@ impl SymbolHistory {
             volumes: VecDeque::with_capacity(capacity),
             extras: HashMap::new(),
             capacity,
+            last_push: LastPush::None,
         }
+    }
+
+    /// 当前视图(序列本身)。
+    pub fn view(&self) -> HistoryView<'_> {
+        HistoryView {
+            history: self,
+            evicted: None,
+            take: self.timestamps.len(),
+            hidden_extras: &[],
+        }
+    }
+
+    /// 上一视图: 最近一次写入之前的序列。写入前序列为空、或调整容量 / 从存档
+    /// 恢复之后还没有写入时为 None。
+    pub fn previous_view(&self) -> Option<HistoryView<'_>> {
+        match &self.last_push {
+            LastPush::None => None,
+            LastPush::Pushed {
+                evicted,
+                new_extras,
+            } => Some(HistoryView {
+                history: self,
+                evicted: evicted.as_ref(),
+                take: self.timestamps.len().saturating_sub(1),
+                hidden_extras: new_extras,
+            }),
+        }
+    }
+
+    /// 满容量时弹出最老一行并返回。
+    fn evict_if_full(&mut self) -> Option<EvictedRow> {
+        if self.timestamps.len() < self.capacity {
+            return None;
+        }
+        let timestamp = self.timestamps.pop_front()?;
+        let mut extras = HashMap::new();
+        for (key, values) in self.extras.iter_mut() {
+            if let Some(value) = values.pop_front() {
+                extras.insert(key.clone(), value);
+            }
+        }
+        Some(EvictedRow {
+            timestamp,
+            open: self.opens.pop_front().unwrap_or(f64::NAN),
+            high: self.highs.pop_front().unwrap_or(f64::NAN),
+            low: self.lows.pop_front().unwrap_or(f64::NAN),
+            close: self.closes.pop_front().unwrap_or(f64::NAN),
+            volume: self.volumes.pop_front().unwrap_or(f64::NAN),
+            extras,
+        })
+    }
+
+    /// 写入完成后记下本次写入: 写入前为空则没有上一视图。
+    fn record_push(
+        &mut self,
+        was_empty: bool,
+        evicted: Option<EvictedRow>,
+        new_extras: Vec<String>,
+    ) {
+        self.last_push = if was_empty {
+            LastPush::None
+        } else {
+            LastPush::Pushed {
+                evicted,
+                new_extras,
+            }
+        };
     }
 
     pub fn push(&mut self, bar: &Bar) {
@@ -34,19 +210,11 @@ impl SymbolHistory {
             return;
         }
 
-        if self.timestamps.len() >= self.capacity {
-            self.timestamps.pop_front();
-            self.opens.pop_front();
-            self.highs.pop_front();
-            self.lows.pop_front();
-            self.closes.pop_front();
-            self.volumes.pop_front();
-            for v in self.extras.values_mut() {
-                v.pop_front();
-            }
-        }
+        let was_empty = self.timestamps.is_empty();
+        let evicted = self.evict_if_full();
 
         let cur_len = self.timestamps.len();
+        let mut new_extras = Vec::new();
         for (k, _) in bar.extra.iter() {
             if !self.extras.contains_key(k) {
                 let mut dq = VecDeque::with_capacity(self.capacity);
@@ -54,6 +222,7 @@ impl SymbolHistory {
                     dq.push_back(f64::NAN);
                 }
                 self.extras.insert(k.clone(), dq);
+                new_extras.push(k.clone());
             }
         }
         for (k, dq) in self.extras.iter_mut() {
@@ -66,6 +235,7 @@ impl SymbolHistory {
         self.lows.push_back(bar.low.to_f64().unwrap_or(0.0));
         self.closes.push_back(bar.close.to_f64().unwrap_or(0.0));
         self.volumes.push_back(bar.volume.to_f64().unwrap_or(0.0));
+        self.record_push(was_empty, evicted, new_extras);
     }
 
     /// 把 tick 以退化 bar 的形式写入历史.
@@ -84,17 +254,8 @@ impl SymbolHistory {
             return;
         }
 
-        if self.timestamps.len() >= self.capacity {
-            self.timestamps.pop_front();
-            self.opens.pop_front();
-            self.highs.pop_front();
-            self.lows.pop_front();
-            self.closes.pop_front();
-            self.volumes.pop_front();
-            for v in self.extras.values_mut() {
-                v.pop_front();
-            }
-        }
+        let was_empty = self.timestamps.is_empty();
+        let evicted = self.evict_if_full();
 
         // Tick 无 extra: 为所有已存在的 extras 列补 NaN, 保持各列等长。
         for dq in self.extras.values_mut() {
@@ -108,6 +269,7 @@ impl SymbolHistory {
         self.lows.push_back(price);
         self.closes.push_back(price);
         self.volumes.push_back(tick.volume.to_f64().unwrap_or(0.0));
+        self.record_push(was_empty, evicted, Vec::new());
     }
 }
 
@@ -149,6 +311,8 @@ impl From<SymbolHistorySnapshot> for SymbolHistory {
             volumes: snapshot.volumes,
             extras: snapshot.extras,
             capacity: snapshot.capacity,
+            // 上一视图是派生状态, 不入快照; 恢复后到下一次写入之前没有上一视图
+            last_push: LastPush::None,
         }
     }
 }
@@ -156,15 +320,12 @@ impl From<SymbolHistorySnapshot> for SymbolHistory {
 #[derive(Debug)]
 pub struct HistoryBuffer {
     pub data: HashMap<String, SymbolHistory>,
-    pub previous_data: HashMap<String, SymbolHistory>,
     /// tick 序列。与 `data` 并列而非共用: tick 以退化 OHLC 写入, 若与 bar 混在
     /// 同一 SymbolHistory, 高频 tick 会把历史 bar 挤出窗口, 且完全静默
     /// (取到的值看起来就是价格)。
     pub tick_data: HashMap<String, SymbolHistory>,
-    pub previous_tick_data: HashMap<String, SymbolHistory>,
     /// 窗口(多周期)序列, 键 (symbol, freq_label)。只存闭合的窗口 bar。
     pub window_data: HashMap<(String, String), SymbolHistory>,
-    pub previous_window_data: HashMap<(String, String), SymbolHistory>,
     pub default_capacity: usize,
 }
 
@@ -172,6 +333,8 @@ pub struct HistoryBuffer {
 /// `tick_data` / `window_data`)的裁剪循环共用此函数。
 fn trim_to_capacity(history: &mut SymbolHistory, capacity: usize) {
     history.capacity = capacity;
+    // 调整容量后没有上一视图(与旧实现清空整份复制一致)
+    history.last_push = LastPush::None;
     while history.timestamps.len() > capacity {
         history.timestamps.pop_front();
         history.opens.pop_front();
@@ -189,11 +352,8 @@ impl HistoryBuffer {
     pub fn new(default_capacity: usize) -> Self {
         HistoryBuffer {
             data: HashMap::new(),
-            previous_data: HashMap::new(),
             tick_data: HashMap::new(),
-            previous_tick_data: HashMap::new(),
             window_data: HashMap::new(),
-            previous_window_data: HashMap::new(),
             default_capacity,
         }
     }
@@ -201,18 +361,12 @@ impl HistoryBuffer {
     pub fn set_capacity(&mut self, capacity: usize) {
         self.default_capacity = capacity;
         self.data.clear();
-        self.previous_data.clear();
         self.tick_data.clear();
-        self.previous_tick_data.clear();
         self.window_data.clear();
-        self.previous_window_data.clear();
     }
 
     pub fn set_capacity_preserve_existing(&mut self, capacity: usize) {
         self.default_capacity = capacity;
-        self.previous_data.clear();
-        self.previous_tick_data.clear();
-        self.previous_window_data.clear();
         if capacity == 0 {
             self.data.clear();
             self.tick_data.clear();
@@ -238,24 +392,20 @@ impl HistoryBuffer {
             return;
         }
 
-        let symbol = bar.symbol.clone();
-        let history = self
-            .data
-            .entry(symbol.clone())
-            .or_insert_with(|| SymbolHistory::new(self.default_capacity));
-        if history.timestamps.is_empty() {
-            self.previous_data.remove(&symbol);
-        } else {
-            self.previous_data.insert(symbol, history.clone());
-        }
-
+        let capacity = self.default_capacity;
+        let history = match self.data.get_mut(&bar.symbol) {
+            Some(history) => history,
+            None => self
+                .data
+                .entry(bar.symbol.clone())
+                .or_insert_with(|| SymbolHistory::new(capacity)),
+        };
         history.push(bar);
     }
 
     /// `update` 的 tick 版本, 语义与之对称, 但落到独立的 `tick_data` 容器.
     ///
-    /// 与 `update` 保持同样的 previous_data 快照时序: 首次写入某 symbol 时
-    /// 清除其 previous 快照, 否则把当前状态存为 previous。
+    /// 与 `update` 一样由写入本身记下上一视图(见 [`SymbolHistory::previous_view`])。
     ///
     /// **不写入 `data`**: tick 以退化 OHLC (`open=high=low=close=price`) 写入,
     /// 若与 bar 共用同一个 `SymbolHistory`, 高频 tick 会把历史 bar 挤出窗口,
@@ -265,17 +415,14 @@ impl HistoryBuffer {
             return;
         }
 
-        let symbol = tick.symbol.clone();
-        let history = self
-            .tick_data
-            .entry(symbol.clone())
-            .or_insert_with(|| SymbolHistory::new(self.default_capacity));
-        if history.timestamps.is_empty() {
-            self.previous_tick_data.remove(&symbol);
-        } else {
-            self.previous_tick_data.insert(symbol, history.clone());
-        }
-
+        let capacity = self.default_capacity;
+        let history = match self.tick_data.get_mut(&tick.symbol) {
+            Some(history) => history,
+            None => self
+                .tick_data
+                .entry(tick.symbol.clone())
+                .or_insert_with(|| SymbolHistory::new(capacity)),
+        };
         history.push_tick(tick);
     }
 
@@ -295,26 +442,15 @@ impl HistoryBuffer {
             log::debug!("update_window 收到不带 freq 的 bar: symbol={}", bar.symbol);
             return;
         };
-        let key = (bar.symbol.clone(), freq);
         let history = self
             .window_data
-            .entry(key.clone())
+            .entry((bar.symbol.clone(), freq))
             .or_insert_with(|| SymbolHistory::new(self.default_capacity));
-        if history.timestamps.is_empty() {
-            self.previous_window_data.remove(&key);
-        } else {
-            self.previous_window_data.insert(key, history.clone());
-        }
         history.push(bar);
     }
 
     pub fn get_window_history(&self, symbol: &str, freq: &str) -> Option<&SymbolHistory> {
         self.window_data
-            .get(&(symbol.to_string(), freq.to_string()))
-    }
-
-    pub fn get_previous_window_history(&self, symbol: &str, freq: &str) -> Option<&SymbolHistory> {
-        self.previous_window_data
             .get(&(symbol.to_string(), freq.to_string()))
     }
 
@@ -339,16 +475,8 @@ impl HistoryBuffer {
         self.data.get(symbol)
     }
 
-    pub fn get_previous_history(&self, symbol: &str) -> Option<&SymbolHistory> {
-        self.previous_data.get(symbol)
-    }
-
     pub fn get_tick_history(&self, symbol: &str) -> Option<&SymbolHistory> {
         self.tick_data.get(symbol)
-    }
-
-    pub fn get_previous_tick_history(&self, symbol: &str) -> Option<&SymbolHistory> {
-        self.previous_tick_data.get(symbol)
     }
 
     /// 该 symbol 是否已有 bar 序列（供上层判断双流歧义）.
@@ -429,15 +557,11 @@ impl From<HistoryBufferSnapshot> for HistoryBuffer {
                 .into_iter()
                 .map(|(symbol, history)| (symbol, SymbolHistory::from(history)))
                 .collect(),
-            previous_data: HashMap::new(),
             tick_data: snapshot
                 .tick_data
                 .into_iter()
                 .map(|(symbol, history)| (symbol, SymbolHistory::from(history)))
                 .collect(),
-            // previous_tick_data 与 previous_data 一样是派生缓存(下一次
-            // update_tick 时会被重新计算), 不入快照, 恢复后留空即可。
-            previous_tick_data: HashMap::new(),
             window_data: snapshot
                 .window_data
                 .into_iter()
@@ -448,8 +572,6 @@ impl From<HistoryBufferSnapshot> for HistoryBuffer {
                     )
                 })
                 .collect(),
-            // previous_window_data 同样是派生缓存, 不入快照, 恢复后留空即可。
-            previous_window_data: HashMap::new(),
             default_capacity: snapshot.default_capacity,
         }
     }
@@ -638,7 +760,7 @@ mod tests {
     #[test]
     fn test_history_buffer_snapshot_roundtrip_preserves_tick_history() {
         // (a)(b): tick_data 是与 data 对等的主序列, 快照 round-trip 后必须能
-        // 还原, 而不是像 previous_data 那样静默清空。
+        // 还原, 而不是像派生的上一视图那样恢复后留空。
         let mut buffer = HistoryBuffer::new(4);
         buffer.update_tick(&make_tick(1, 10));
         buffer.update_tick(&make_tick(2, 11));
@@ -758,10 +880,12 @@ mod tests {
     fn window_previous_snapshot_tracks_like_bar() {
         let mut buffer = HistoryBuffer::new(4);
         buffer.update_window(&make_window_bar(5, 50, "5min"));
-        assert!(buffer.get_previous_window_history("TEST", "5min").is_none());
+        let history = buffer.get_window_history("TEST", "5min").unwrap();
+        assert!(history.previous_view().is_none());
         buffer.update_window(&make_window_bar(10, 60, "5min"));
-        let prev = buffer.get_previous_window_history("TEST", "5min").unwrap();
-        assert_eq!(prev.closes.iter().copied().collect::<Vec<_>>(), vec![50.0]);
+        let history = buffer.get_window_history("TEST", "5min").unwrap();
+        let prev = history.previous_view().unwrap();
+        assert_eq!(prev.field("close").unwrap().collect::<Vec<_>>(), vec![50.0]);
     }
 
     #[test]
@@ -801,5 +925,194 @@ mod tests {
         assert!(snapshot.window_data.is_empty());
         let restored = HistoryBuffer::from(snapshot);
         assert!(restored.window_data.is_empty());
+    }
+
+    /// 上一视图等价性的参照实现: 每次写入前把序列整份复制(旧实现的做法)。
+    /// `None` 表示没有上一视图(写入前为空、或调整容量/从存档恢复之后)。
+    #[derive(Default)]
+    struct PreviousReference {
+        bar: HashMap<String, Option<super::SymbolHistory>>,
+        tick: HashMap<String, Option<super::SymbolHistory>>,
+        window: HashMap<(String, String), Option<super::SymbolHistory>>,
+    }
+
+    impl PreviousReference {
+        fn clear(&mut self) {
+            for v in self.bar.values_mut() {
+                *v = None;
+            }
+            for v in self.tick.values_mut() {
+                *v = None;
+            }
+            for v in self.window.values_mut() {
+                *v = None;
+            }
+        }
+    }
+
+    fn snapshot_before(history: Option<&super::SymbolHistory>) -> Option<super::SymbolHistory> {
+        history.filter(|h| !h.timestamps.is_empty()).cloned()
+    }
+
+    fn bits(values: impl Iterator<Item = f64>) -> Vec<u64> {
+        values.map(f64::to_bits).collect()
+    }
+
+    /// 逐字段比对视图与参照(NaN 按位比较)。
+    fn assert_view_matches(
+        view: Option<super::HistoryView<'_>>,
+        reference: Option<&super::SymbolHistory>,
+        what: &str,
+    ) {
+        match (view, reference) {
+            (None, None) => {}
+            (Some(view), Some(reference)) => {
+                assert_eq!(
+                    view.timestamps().collect::<Vec<_>>(),
+                    reference.timestamps.iter().copied().collect::<Vec<_>>(),
+                    "{what}: timestamps"
+                );
+                for (name, column) in [
+                    ("open", &reference.opens),
+                    ("high", &reference.highs),
+                    ("low", &reference.lows),
+                    ("close", &reference.closes),
+                    ("volume", &reference.volumes),
+                ] {
+                    let got = view.field(name).map(bits);
+                    assert_eq!(got, Some(bits(column.iter().copied())), "{what}: {name}");
+                }
+                let mut expected_keys: Vec<String> = reference.extras.keys().cloned().collect();
+                expected_keys.sort();
+                assert_eq!(view.extra_keys(), expected_keys, "{what}: extra keys");
+                for key in ["x", "y", "z"] {
+                    let got = view.field(key).map(bits);
+                    let want = reference.extras.get(key).map(|c| bits(c.iter().copied()));
+                    assert_eq!(got, want, "{what}: extra {key}");
+                }
+            }
+            (view, reference) => panic!(
+                "{what}: 视图存在性不一致, view={} reference={}",
+                view.is_some(),
+                reference.is_some()
+            ),
+        }
+    }
+
+    /// 上一视图与"写入前整份复制"逐字段一致: 覆盖淘汰/未淘汰、新增 extra 列、
+    /// tick 与窗口序列、调整容量(含 0)、清空与存档往返。
+    #[test]
+    fn previous_view_matches_clone_before_push_reference() {
+        let mut seed: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = move |modulo: u64| {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (seed >> 33) % modulo
+        };
+        let mut buffer = HistoryBuffer::new(3);
+        let mut reference = PreviousReference::default();
+        let symbols = ["A", "B"];
+        let extra_keys = ["x", "y", "z"];
+
+        for step in 0..4000_i64 {
+            let ts = step + 1;
+            match next(100) {
+                0..=54 => {
+                    let symbol = symbols[next(2) as usize];
+                    let mut bar = make_bar(ts, ts % 97 + 1, None);
+                    bar.symbol = symbol.to_string();
+                    for key in extra_keys {
+                        // 多数 bar 不带 extra; 偶尔带上, 触发新增列与 NaN 补齐
+                        if next(5) == 0 {
+                            bar.extra.insert(key.to_string(), (ts % 13) as f64);
+                        }
+                    }
+                    let before = snapshot_before(buffer.get_history(symbol));
+                    buffer.update(&bar);
+                    if buffer.default_capacity > 0 {
+                        reference.bar.insert(symbol.to_string(), before);
+                    }
+                }
+                55..=74 => {
+                    let symbol = symbols[next(2) as usize];
+                    let mut tick = make_tick(ts, ts % 89 + 1);
+                    tick.symbol = symbol.to_string();
+                    let before = snapshot_before(buffer.get_tick_history(symbol));
+                    buffer.update_tick(&tick);
+                    if buffer.default_capacity > 0 {
+                        reference.tick.insert(symbol.to_string(), before);
+                    }
+                }
+                75..=89 => {
+                    let freq = if next(2) == 0 { "5min" } else { "1h" };
+                    let mut bar = make_window_bar(ts, ts % 83 + 1, freq);
+                    if next(4) == 0 {
+                        bar.extra.insert("x".to_string(), 1.5);
+                    }
+                    let before = snapshot_before(buffer.get_window_history("TEST", freq));
+                    buffer.update_window(&bar);
+                    if buffer.default_capacity > 0 {
+                        reference
+                            .window
+                            .insert(("TEST".to_string(), freq.to_string()), before);
+                    }
+                }
+                90..=95 => {
+                    let capacity = [0_usize, 1, 2, 3, 5, 8][next(6) as usize];
+                    buffer.set_capacity_preserve_existing(capacity);
+                    reference.clear();
+                }
+                96..=97 => {
+                    let restored = HistoryBuffer::from(HistoryBufferSnapshot::from(&buffer));
+                    buffer = restored;
+                    reference.clear();
+                }
+                _ => {
+                    let capacity = [1_usize, 3, 4][next(3) as usize];
+                    buffer.set_capacity(capacity);
+                    reference = PreviousReference::default();
+                }
+            }
+
+            for (symbol, expected) in &reference.bar {
+                let view = buffer.get_history(symbol).and_then(|h| h.previous_view());
+                assert_view_matches(
+                    view,
+                    expected.as_ref(),
+                    &format!("step {step} bar {symbol}"),
+                );
+            }
+            for (symbol, expected) in &reference.tick {
+                let view = buffer
+                    .get_tick_history(symbol)
+                    .and_then(|h| h.previous_view());
+                assert_view_matches(
+                    view,
+                    expected.as_ref(),
+                    &format!("step {step} tick {symbol}"),
+                );
+            }
+            for ((symbol, freq), expected) in &reference.window {
+                let view = buffer
+                    .get_window_history(symbol, freq)
+                    .and_then(|h| h.previous_view());
+                assert_view_matches(
+                    view,
+                    expected.as_ref(),
+                    &format!("step {step} window {symbol} {freq}"),
+                );
+            }
+            // 当前视图就是序列本身
+            for symbol in symbols {
+                if let Some(h) = buffer.get_history(symbol) {
+                    assert_view_matches(
+                        Some(h.view()),
+                        Some(h),
+                        &format!("step {step} current {symbol}"),
+                    );
+                }
+            }
+        }
     }
 }
