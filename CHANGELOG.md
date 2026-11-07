@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.80] - 2026-11-07
+
 > **规则版本 2.2.0**：含基金（ETF）标的、且走中国市场规则（`t_plus_one=True`、含期货或期权、或有标的设置了 `sellable_after_days`）的回测，基金手续费会变化——此前按引擎默认费率收取，现在按传入的全局费率收取（不传时与股票一样为 0）；其余回测不变。paper 会话不传新参数时行为与此前一致。
 
 ### Added
