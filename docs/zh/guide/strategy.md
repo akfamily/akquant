@@ -766,7 +766,7 @@ AKQuant 提供了两种风格的策略开发接口：
 
 *   **`self.get_history(count, ...)`**: 返回 `numpy.ndarray`，性能最高，适合计算指标。
 *   **`self.get_history_df(count, ...)`**: 返回 `pandas.DataFrame`，包含 OHLCV，适合复杂分析。
-*   **保留长度（框架为每个标的保留多少根历史）**：回测里取 `history_depth`、`warmup_period` 与指标推断预热期中的最大值。实盘（`run_live`）只按 `history_depth` 设置（预加载历史时至少加长到预加载的根数），只设 `warmup_period` 不会开启或加长历史——没有设 `history_depth` 也没有预加载时，`get_history` 会报 “History tracking is not enabled”。需要历史的实盘策略请显式调用 `self.set_history_depth(N)`。
+*   **保留长度（框架为每个标的保留多少根历史）**：回测里取 `history_depth`、`warmup_period` 与指标推断预热期中的最大值。实盘（`run_live`）按 `history_depth` 设置，`warmup_period` 不直接设定历史深度：开启自动预加载时（行情源提供 `history_provider`，如 klinedata，默认开启），它只参与计算预加载根数（取 3 倍推断预热期、500、`warmup_period` 与 `history_depth` 中的最大值，有上限），预加载完成后历史按实际预加载的根数开启；没有预加载时，在调用 `set_history_depth` 之前 `get_history` 会报 “History tracking is not enabled”。需要历史的实盘策略请显式调用 `self.set_history_depth(N)`。
 *   **请在 `__init__` / `on_start` 里设置历史深度**：运行中（开跑后）才第一次调用 `set_history_depth(N)` 时，调用之前的行情不会补回，需再积累 N 根 bar 才完整。
 *   **`count` 超过保留长度时会自动加长并告警一次**：`count` 更大时，框架第一次遇到就把保留长度加到 `count`，并打一条告警给出该设的值；加长之前已丢掉的数据补不回来，此后满 `count` 根 bar 起才是完整数据。请按告警在 `on_start` 里调用 `self.set_history_depth(N)` 提前设置（回测与实盘都生效）。预热期数据还不够（前面补 NaN）是正常情况，不会告警。自动加长有上限：取 10000 与显式声明的 `history_depth` / `warmup_period` 中的较大值；`count` 超过上限时不再加长，单独告警一次，照旧前面补 NaN，以免 `get_history(self.bars_held)` 这类随时间增长的 `count` 让实盘里的缓冲区无限增长。
 

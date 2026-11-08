@@ -609,7 +609,7 @@ class MyStrategy(Strategy):
             self.sell(symbol=bar.symbol, quantity=100)
 ```
 
-**Retained length (how many bars of history the framework keeps per symbol)**: in a backtest it is the largest of `history_depth`, `warmup_period` and the warmup inferred from your indicators. In a live session (`run_live`) it follows `history_depth` only (raised to at least the number of preloaded bars when history is preloaded); setting only `warmup_period` neither enables nor lengthens the history — with no `history_depth` and no preload, `get_history` raises "History tracking is not enabled". Live strategies that read history should call `self.set_history_depth(N)` explicitly.
+**Retained length (how many bars of history the framework keeps per symbol)**: in a backtest it is the largest of `history_depth`, `warmup_period` and the warmup inferred from your indicators. In a live session (`run_live`) it follows `history_depth`; `warmup_period` does not set the history depth directly. With auto-preload on (the feed offers a `history_provider`, as klinedata does by default), it only feeds into the preload count (the largest of 3 × the inferred warmup, 500, `warmup_period` and `history_depth`, capped), and once the preload is done history is enabled at the number of bars actually preloaded. Without a preload, `get_history` raises "History tracking is not enabled" until `set_history_depth` is called. Live strategies that read history should call `self.set_history_depth(N)` explicitly.
 
 **Set the history depth in `__init__` / `on_start`**: if `set_history_depth(N)` is first called mid-run (after the session has started), the bars before the call are not backfilled; the window becomes complete only after another N bars.
 
