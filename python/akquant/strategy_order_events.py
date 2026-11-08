@@ -1,7 +1,8 @@
+import os
 from collections import deque
 from typing import Any, Iterable, List, Mapping, Set, Tuple
 
-from .akquant import OrderStatus
+from .akquant import OrderStatus, StrategyContext
 from .strategy_framework_hooks import (
     call_user_callback,
     ensure_framework_state,
@@ -18,6 +19,75 @@ _TERMINAL_ORDER_STATUSES = (
 #: on_order 去重缓存上限(与成交侧 trade_dedupe_cache_size 同量级)。
 #: 不做成对外可配参数: 订单事件量级远小于成交, 固定上限足够, 不必扩大 API 面。
 _ORDER_EVENT_DEDUPE_LIMIT = 50000
+
+# ---- 临时: 订单账本双跑比对(订单账本改造 Task 4, Task 5 删除) ----
+_SHADOW = os.environ.get("AKQ_ORDER_LEDGER_SHADOW") == "1"
+_SHADOW_STACK: List[Any] = []
+
+
+def _order_sig(order: Any, fire_reject: bool) -> Tuple[Any, ...]:
+    avg = getattr(order, "average_filled_price", None)
+    return (
+        "order",
+        str(getattr(order, "id", "")),
+        str(getattr(order, "status", "")),
+        float(getattr(order, "filled_quantity", 0.0)),
+        None if avg is None else float(avg),
+        str(getattr(order, "reject_reason", "")),
+        bool(fire_reject),
+    )
+
+
+def _trade_sig(trade: Any) -> Tuple[Any, ...]:
+    return (
+        "trade",
+        str(getattr(trade, "id", "")),
+        str(getattr(trade, "order_id", "")),
+        int(getattr(trade, "timestamp", 0)),
+        str(getattr(trade, "symbol", "")),
+        str(getattr(trade, "side", "")),
+        float(getattr(trade, "quantity", 0.0)),
+        float(getattr(trade, "price", 0.0)),
+    )
+
+
+class _LedgerShadow:
+    """旁路调用 Rust 账本, 与旧实现的派发序列逐条比对."""
+
+    def __init__(self, strategy: Any) -> None:
+        self.ctx = strategy.ctx
+        self.fl = finalized_order_cache_limit(strategy)
+        self.tl = trade_dedupe_cache_limit(strategy)
+        self.py: List[Tuple[Any, ...]] = []
+        self.rust: List[Tuple[Any, ...]] = []
+        self.rust_trades: List[Any] = []
+        self.done = True
+        result = self.ctx.order_events(0, self.fl, self.tl)
+        if result is not None:
+            events, trades, self.done = result
+            self.rust.extend(_order_sig(o, r) for o, r in events)
+            self.rust_trades = list(trades)
+
+    def before_new_orders(self) -> None:
+        if self.done:
+            return
+        self.done = True
+        result = self.ctx.order_events(1, self.fl, self.tl)
+        if result is not None:
+            events, trades, _ = result
+            self.rust.extend(_order_sig(o, r) for o, r in events)
+            self.rust_trades = list(trades)
+
+    def finish(self) -> None:
+        rust = self.rust + [_trade_sig(t) for t in self.rust_trades]
+        log_path = os.environ.get("AKQ_ORDER_LEDGER_SHADOW_LOG")
+        if log_path:
+            with open(log_path, "a", encoding="utf-8") as handle:
+                handle.write(f"{len(self.py)} {int(rust == self.py)}\n")
+        if rust != self.py:
+            raise AssertionError(
+                "订单账本与旧实现不一致:\n旧: " + repr(self.py) + "\n新: " + repr(rust)
+            )
 
 
 def assign_slot_ownership(
@@ -112,7 +182,22 @@ def check_order_events(strategy: Any) -> None:
     ensure_framework_state(strategy)
     if strategy.ctx is None:
         return
+    shadow = (
+        _LedgerShadow(strategy)
+        if _SHADOW and type(strategy.ctx) is StrategyContext
+        else None
+    )
+    _SHADOW_STACK.append(shadow)
+    try:
+        _check_order_events_legacy(strategy, shadow)
+    finally:
+        _SHADOW_STACK.pop()
+    if shadow is not None:
+        shadow.finish()
 
+
+def _check_order_events_legacy(strategy: Any, shadow: Any) -> None:
+    """检查订单和成交事件并触发回调(旧实现)."""
     # 多槽位: 账户共享, 但订单/成交/拒单/过期回调只派给所属槽位(按订单与成交的
     # owner_strategy_id; 为空或不在任何槽位的归默认槽位)。在途/拒单/过期/成交
     # 列表是全账户的, 需过滤; canceled_order_ids 是本槽位上下文自己的。
@@ -173,6 +258,8 @@ def check_order_events(strategy: Any) -> None:
         remember_finalized_order(strategy, order)
         del strategy._known_orders[oid]
 
+    if shadow is not None:
+        shadow.before_new_orders()
     pending_order_ids: set[str] = set()
     if hasattr(strategy.ctx, "orders"):
         ctx_orders = strategy.ctx.orders
@@ -248,6 +335,8 @@ def check_order_events(strategy: Any) -> None:
             key = trade_event_key(strategy, t)
             if not remember_trade_key(strategy, key):
                 continue
+            if shadow is not None:
+                shadow.py.append(_trade_sig(t))
             strategy._framework_emit_previous_portfolio_snapshot = True
             strategy._framework_use_previous_account_snapshot = True
             try:
@@ -368,6 +457,14 @@ def _emit_order_callback(strategy: Any, order: Any) -> None:
     # 按状态指纹去重: 状态没变的重复推送丢弃, 状态一变立刻放行。
     if not remember_order_event_key(strategy, order_event_key(order)):
         return
+    if _SHADOW_STACK and _SHADOW_STACK[-1] is not None:
+        order_id = getattr(order, "id", "")
+        fire = (
+            getattr(order, "status", None) == OrderStatus.Rejected
+            and bool(order_id)
+            and order_id not in strategy._framework_rejected_order_ids
+        )
+        _SHADOW_STACK[-1].py.append(_order_sig(order, fire))
     call_user_callback(strategy, "on_order", order, payload=order)
     mark_portfolio_dirty(strategy)
 
