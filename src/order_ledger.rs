@@ -540,6 +540,14 @@ mod tests {
         let mut l = OrderLedger::default();
         let new = [order("A", OrderStatus::New, 0)];
         l.stage_b(b(&new, &[], &[], &[]), None, LIMITS);
+        assert_eq!(
+            l.snapshot()
+                .known
+                .iter()
+                .map(|o| o.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["A"]
+        );
         let (ev, _) = l.stage_b(b(&[], &new, &[], &[]), None, LIMITS);
         assert!(ev.is_empty());
     }
