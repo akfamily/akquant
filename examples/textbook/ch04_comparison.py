@@ -155,10 +155,10 @@ def run_akquant_backtest(df: pd.DataFrame) -> None:
 
         def on_bar(self, bar: Bar) -> None:
             symbol = bar.symbol
-            closes = self.get_history(
-                count=self.ma_long + 1, symbol=symbol, field="close"
-            )
-            if len(closes) < self.ma_long + 1:
+            # 两条均线最长只用到最近 ma_long 根收盘价，取 ma_long 根即可，
+            # 与 warmup_period 一致
+            closes = self.get_history(count=self.ma_long, symbol=symbol, field="close")
+            if len(closes) < self.ma_long:
                 return
 
             # 为了避免未来函数，我们使用 [:-1] 切片，仅使用截止到昨天的数据

@@ -180,8 +180,9 @@ def initialize(ctx: Any) -> None:
 def on_bar(ctx: Any, bar: Bar) -> None:
     """核心交易逻辑，等价于类风格的 on_bar；self 全部换成 ctx."""
     symbol = bar.symbol
-    closes = ctx.get_history(count=ctx.ma_long + 1, symbol=symbol, field="close")
-    if len(closes) < ctx.ma_long + 1:
+    # 两条均线最长只用到最近 ma_long 根收盘价，取 ma_long 根即可，与 warmup_period 一致
+    closes = ctx.get_history(count=ctx.ma_long, symbol=symbol, field="close")
+    if len(closes) < ctx.ma_long:
         return
 
     # 为了避免未来函数，我们使用 [:-1] 切片，仅使用截止到昨天的数据
