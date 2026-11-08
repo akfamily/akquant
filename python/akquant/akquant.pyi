@@ -3125,6 +3125,8 @@ class StrategyContext:
         :param capacity: 需要保留的行数
         :return: 是否真的加长了(此前保留的不够)
         """
+        ...
+
     def history(
         self,
         symbol: str,
