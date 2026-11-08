@@ -1,8 +1,9 @@
 """终态订单必须仍可通过 get_order() 查到.
 
-此前 check_order_events 在订单进入终态(成交/撤单/拒单)时把它从
-``_known_orders`` 删除, 而它同时也已不在 ``ctx.active_orders`` 里,
+(订单账本改造前)旧实现的 check_order_events 在订单进入终态(成交/撤单/拒单)时
+把它从策略对象的在途字典里删除, 而它同时也已不在 ``ctx.active_orders`` 里,
 于是 get_order() 只查这两处必然返回 None——订单一旦终态就永久查不到。
+现在在途与终态留档都由 Rust 订单账本(``src/order_ledger.rs``)持有。
 """
 
 from pathlib import Path
@@ -188,9 +189,9 @@ class PickleStrategy(Strategy):
 
 
 def test_finalized_order_cache_is_not_checkpointed(tmp_path: Path) -> None:
-    """留档是纯运行期缓存, 不得进入 checkpoint.
+    """留档已移到引擎侧账本, 不在策略对象上, 因此不会进入策略快照.
 
-    它持有 Rust 侧的 Order(不可 pickle), 若随快照落盘, save_checkpoint 会直接
+    策略对象若带着 Rust 侧的 Order(不可 pickle)落盘, save_checkpoint 会直接
     抛 ``TypeError: cannot pickle 'builtins.Order' object``。
     """
     strategy = PickleStrategy()
@@ -204,11 +205,13 @@ def test_finalized_order_cache_is_not_checkpointed(tmp_path: Path) -> None:
     )
 
     restored: Any = result.strategy
-    assert restored._finalized_orders, "留档为空, 测试前提不成立"
+    assert restored.get_order(restored.order_id) is not None, (
+        "留档查不到, 测试前提不成立"
+    )
 
     state: dict[str, Any] = restored.__getstate__()
     assert "_finalized_orders" not in state
-    assert "_finalized_order_ids" not in state
+    assert "_known_orders" not in state
 
     # 走真实 checkpoint 路径: 留档若泄漏进快照, 这里就会抛。
     save_checkpoint(result.engine, restored, str(tmp_path / "ckpt.pkl"))  # type: ignore[arg-type]

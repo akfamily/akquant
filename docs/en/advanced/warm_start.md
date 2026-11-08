@@ -135,6 +135,7 @@ Built-in indicators (`SMA`, `EMA`, etc.) support pickle serialization. For custo
 7. **Strategy-level risk state continuity**: Strategy limits, strategy cashflow, daily-loss baseline, drawdown peak, and reduce-only activation state are persisted and restored.
 8. **Default timezone**: If `timezone` is not explicitly provided to `run_from_checkpoint`, default is `Asia/Shanghai`.
 9. **`self.I(factory=...)` factories must be picklable**: the snapshot serializes the strategy instance, and a local `lambda` cannot be pickled. Use a module-level function plus `functools.partial`.
+10. **`get_order` cannot see pre-checkpoint open orders until the first bar**: in `on_resume` / `on_start`, `get_order` for an order that was still open at checkpoint time returns `None` (just as `get_open_orders()` returns an empty list at that moment); it becomes queryable again from the first bar. Do not treat that `None` as "the order is gone" and submit it again.
 
 ## 5. Full Example
 

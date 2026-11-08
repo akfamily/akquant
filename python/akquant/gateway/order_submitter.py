@@ -508,7 +508,8 @@ class BrokerOrderSubmitter:
         """把前置风控拒单以 `Rejected` 委托事件回吐给策略.
 
         走 `on_order` + `on_reject` 而非错误回调: 与回测同口径——回测的风控拒单
-        经 `Event::ExecutionReport(Rejected)` 落到 `_emit_order_callback`, 策略靠
+        经 `Event::ExecutionReport(Rejected)` 由 Rust 订单账本产出 on_order +
+        on_reject(`src/order_ledger.rs`), 策略靠
         `on_reject` 感知。实盘若改用 `on_error`, 同一份策略代码就得写两套感知逻辑。
         """
         self._risk_reject_seq += 1
@@ -532,7 +533,7 @@ class BrokerOrderSubmitter:
         """把一笔 Rejected 委托派发给 on_order + on_reject.
 
         broker_live 的事件桥直调 `on_order`(broker_event_bridge.py), 不走回测那套
-        `_emit_order_callback` 的 Rejected→on_reject 级联, 故这里显式派发两者。
+        订单账本的 Rejected→on_reject 级联, 故这里显式派发两者。
         """
         for callback_name in ("on_order", "on_reject"):
             callback = getattr(self._strategy, callback_name, None)

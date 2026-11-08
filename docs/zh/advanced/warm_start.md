@@ -141,6 +141,7 @@ AKQuant 内置的指标（如 `SMA`, `EMA`）已经支持 Pickle 序列化。如
 7.  **策略级风控状态可恢复**：策略限额、策略现金流、日损基线、回撤峰值、仅平仓激活态等会随快照保存并恢复，便于断点续跑后保持风控行为连续。
 8.  **默认时区**：`run_from_checkpoint` 未显式传入 `timezone` 时，默认使用 `Asia/Shanghai`。
 9.  **`self.I(factory=...)` 的工厂必须可 `pickle`**：快照会序列化策略实例，局部的 `lambda` 无法 `pickle`。请改用模块级函数 + `functools.partial`。
+10. **续跑开始时 `get_order` 查不到存档前的在途单**：`on_resume` / `on_start` 里用 `get_order` 查存档时仍在途的订单返回 `None`（同一时刻 `get_open_orders()` 也返回空列表），从第一根 bar 起恢复可查。不要把这里的 `None` 当成“单已经没了”而重复下单。
 
 ## 5. 完整示例
 

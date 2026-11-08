@@ -7,6 +7,12 @@ from .log import build_log_extra, get_logger
 
 logger = get_logger("strategy")
 
+#: 自动加长的保底上限(0.3.82 的默认容量)。实际上限取它与策略显式声明的
+#: ``history_depth`` / ``warmup_period`` 中的最大值; 超过上限不再加长, 防止
+#: ``get_history(self.bars_held)`` 这类随时间增长的 count 让缓冲区在实盘里无界增长
+#: (加长是对全部标的、bar / tick / 窗口序列一起加长)。
+AUTO_GROW_LIMIT = 10000
+
 #: tick 序列可用的字段。tick 没有 open/high/low, 请求它们会静默返回退化 OHLC
 #: (price 冒充 high), 故显式拒绝。
 _TICK_ALLOWED_FIELDS = frozenset({"price", "close", "volume"})
@@ -94,6 +100,86 @@ def _resolve_history_cutoff(strategy: Any) -> Optional[int]:
     return int(cutoff)
 
 
+def _ensured_history_capacity(strategy: Any, ctx: Any) -> int:
+    """在 ``ctx`` 上已确保过的历史容量; 换了上下文(新一次运行)时为 0."""
+    ensured = strategy.__dict__.get("_history_capacity_ensured")
+    if ensured is None or ensured[0] is not ctx:
+        return 0
+    return int(ensured[1])
+
+
+def _note_history_capacity(strategy: Any, ctx: Any, capacity: int) -> None:
+    """记下在 ``ctx`` 上已确保过的历史容量(只增不减, 与缓冲区一致)."""
+    capacity = max(int(capacity), _ensured_history_capacity(strategy, ctx))
+    strategy._history_capacity_ensured = (ctx, capacity)
+
+
+def _ensure_history_depth(strategy: Any, count: int) -> None:
+    """取的历史比缓冲区保留的多时自动加长.
+
+    门槛是"在当前上下文上已确保过的容量", 不是 ``_history_depth``: 声明的深度
+    不一定已落到缓冲区, 而确保过的不再碰缓冲区, 免得每次取历史都拿写锁。
+
+    - 声明够(``count <= history_depth``)而容量没跟上: 静默补齐;
+    - 声明不够: 把保留长度加到 ``count`` 并告警一次(加长之前的数据补不回来,
+      此后满 ``count`` 根的 bar 起拿到完整数据)。多个策略共用一份缓冲区,
+      别的策略已加长过时不告警;
+    - 超过自动加长上限 ``max(AUTO_GROW_LIMIT, history_depth, warmup_period)``:
+      不加长, 单独告警一次, 照旧前面补 NaN。
+    """
+    needed = int(count)
+    ctx = strategy.ctx
+    if needed <= _ensured_history_capacity(strategy, ctx):
+        return
+    ensure = getattr(ctx, "ensure_history_capacity", None)
+    if ensure is None:
+        return
+    declared = int(strategy._history_depth)
+    limit = max(
+        AUTO_GROW_LIMIT, declared, int(getattr(strategy, "warmup_period", 0) or 0)
+    )
+    if needed > limit:
+        _warn_history_grow_limit(strategy, needed, limit)
+        return
+    grew = bool(ensure(needed))
+    _note_history_capacity(strategy, ctx, needed)
+    if needed <= declared:
+        return
+    strategy._history_depth = needed
+    if not grew or getattr(strategy, "_warned_history_depth_grown", False):
+        return
+    strategy._warned_history_depth_grown = True
+    logger.warning(
+        "取历史 count=%d 超过保留长度 %d: 已自动加长到 %d。加长之前的数据补不回来, "
+        "此后满 %d 根 bar 起才是完整数据; 请在 on_start 里调用 "
+        "self.set_history_depth(%d)(或回测传 history_depth=%d)提前设置",
+        needed,
+        declared,
+        needed,
+        needed,
+        needed,
+        needed,
+        extra=build_log_extra(phase="strategy"),
+    )
+
+
+def _warn_history_grow_limit(strategy: Any, needed: int, limit: int) -> None:
+    """要的历史超过自动加长上限: 只告警一次."""
+    if getattr(strategy, "_warned_history_grow_limit", False):
+        return
+    strategy._warned_history_grow_limit = True
+    logger.warning(
+        "取历史 count=%d 超过自动加长上限 %d: 不再自动加长, 超出保留长度的部分"
+        "补 NaN。确实需要这么长的历史, 请在 on_start 里调用 "
+        "self.set_history_depth(%d)(或回测传 history_depth=%d)显式设置",
+        needed,
+        limit,
+        needed,
+        needed,
+        extra=build_log_extra(phase="strategy"),
+    )
+
+
 def _log_missing_history_symbol(strategy: Any, symbol: str, field: str) -> None:
     """未登记 symbol 的全 NaN 历史留痕: 首次 WARNING 点名, 之后同 key 降 DEBUG.
 
@@ -130,8 +216,19 @@ def _log_missing_history_symbol(strategy: Any, symbol: str, field: str) -> None:
 
 
 def set_history_depth(strategy: Any, depth: int) -> None:
-    """设置历史数据回溯长度."""
+    """设置历史数据回溯长度.
+
+    运行中(已有上下文的回调里)调用时立即把共享历史缓冲区加到 ``depth``
+    (只增不减)。开跑前与 ``on_start`` 里设的深度由引擎在全部 ``on_start``
+    之后统一补齐, 那时策略还没有上下文。
+    """
     strategy._history_depth = depth
+    ctx = getattr(strategy, "ctx", None)
+    ensure = getattr(ctx, "ensure_history_capacity", None)
+    if ensure is None or int(depth) <= 0:
+        return
+    ensure(int(depth))
+    _note_history_capacity(strategy, ctx, int(depth))
 
 
 def set_rolling_window(strategy: Any, train_window: int, step: int) -> None:
@@ -171,6 +268,7 @@ def get_history(
     _validate_field_for_freq(normalized_field, freq)
     resolved_freq = _infer_freq(strategy, freq)
     history_cutoff = _resolve_history_cutoff(strategy)
+    _ensure_history_depth(strategy, count)
     arr = strategy.ctx.history(
         symbol, normalized_field, count, history_cutoff, resolved_freq
     )
@@ -217,6 +315,7 @@ def get_history_multi(
         _validate_field_for_freq(normalized_field, freq)
     resolved_freq = _infer_freq(strategy, freq)
     history_cutoff = _resolve_history_cutoff(strategy)
+    _ensure_history_depth(strategy, count)
     raw = strategy.ctx.history_multi(
         symbol, normalized_fields, count, history_cutoff, resolved_freq
     )

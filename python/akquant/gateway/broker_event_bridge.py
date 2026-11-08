@@ -127,7 +127,8 @@ class BrokerEventBridge:
     def _order_state_fingerprint(self, payload: Any) -> str:
         """委托状态指纹: 状态+已成交量+均价+拒单原因, **刻意不含时间戳**.
 
-        口径对齐回测侧 ``strategy_order_events.order_event_key``: 含时间戳的键
+        口径对齐回测侧订单账本的状态指纹
+        (``src/order_ledger.rs::order_event_key``): 含时间戳的键
         每次重推都会变、去重完全失效(这类缺陷最常见的写法); 只按订单号去重又会
         把 ``New -> PartiallyFilled -> Filled`` 这些真实的状态推进整批吞掉。
 

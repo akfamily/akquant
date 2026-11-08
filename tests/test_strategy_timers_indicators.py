@@ -1,10 +1,9 @@
 from typing import Any, cast
-from unittest.mock import MagicMock
 
 import akquant
 import pandas as pd
 import pytest
-from akquant.akquant import StrategyContext
+from _mock_ctx import mock_strategy_context
 from akquant.precomputed import PrecomputedIndicator
 from akquant.strategy import Strategy
 
@@ -46,7 +45,7 @@ def test_timer_registration() -> None:
     strategy = MyTimerStrategy()
 
     # Mock context and trading days
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     strategy.ctx = ctx
     strategy._trading_days = [
         pd.Timestamp("2023-01-01").tz_localize("Asia/Shanghai"),

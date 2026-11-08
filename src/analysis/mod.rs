@@ -3,6 +3,8 @@ pub mod python;
 pub mod result;
 pub mod strategy_stats;
 #[cfg(test)]
+mod excursion_tests;
+#[cfg(test)]
 pub mod tests;
 pub mod tracker;
 pub mod types;

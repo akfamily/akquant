@@ -84,8 +84,10 @@ def test_order_roundtrip_and_checkpoint_with_open_order(tmp_path: Path) -> None:
     )
     strat = r1.strategy
     assert r1.engine is not None
-    assert strat is not None and strat._known_orders, "前提：存档时有在途订单"
-    order = next(iter(strat._known_orders.values()))
+    assert strat is not None and strat.ctx is not None and strat.ctx.active_orders, (
+        "前提：存档时有在途订单"
+    )
+    order = strat.ctx.active_orders[0]
     o2 = pickle.loads(pickle.dumps(order))
     assert (o2.id, o2.symbol, o2.quantity, o2.status) == (
         order.id,

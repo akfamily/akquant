@@ -658,7 +658,10 @@ impl Engine {
             timezone_name: Some("Asia/Shanghai".to_string()),
             days_per_year: 252.0,
             risk_free_rate: 0.0,
-            history_buffer: Arc::new(RwLock::new(HistoryBuffer::new(10000))), // Default large capacity for MAE/MFE
+            // 默认只留 1 行: 用作"该标的有没有 bar / tick 序列"的标记(双流判断、停牌补 bar)。
+            // MAE / MFE 由持仓记录边走边算, 不依赖历史长度; 策略要取历史时按
+            // history_depth / warmup_period 扩容。
+            history_buffer: Arc::new(RwLock::new(HistoryBuffer::new(1))),
             window_aggregator: Arc::new(RwLock::new(crate::data::WindowAggregator::with_clock(
                 Some("Asia/Shanghai"),
                 28800,
@@ -677,6 +680,7 @@ impl Engine {
             progress_bar: None,
             strategy_contexts: vec![None],
             strategy_slot_strategies: vec![None],
+            order_ledgers: HashMap::new(),
             strategy_slots: vec![StrategySlot {
                 strategy_id: "_default".to_string(),
             }],
@@ -839,6 +843,16 @@ impl Engine {
             last_corp_action_date: self.last_corp_action_date,
             session_config: self.session_config.clone(),
             last_event_ts_in_day: self.last_event_ts_in_day,
+            order_ledgers: self
+                .order_ledgers
+                .iter()
+                .map(|(id, ledger)| {
+                    (
+                        id.clone(),
+                        ledger.lock().expect("order_ledger 锁被污染").snapshot(),
+                    )
+                })
+                .collect(),
         };
         let bytes =
             rmp_serde::to_vec(&snapshot).map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -892,6 +906,17 @@ impl Engine {
         self.last_event_ts_in_day = snapshot
             .last_event_ts_in_day
             .or((snapshot.current_time > 0).then_some(snapshot.current_time));
+        for ledger in self.order_ledgers.values() {
+            *ledger.lock().expect("order_ledger 锁被污染") =
+                crate::order_ledger::OrderLedger::default();
+        }
+        for (id, ledger) in snapshot.order_ledgers {
+            *self
+                .order_ledger_for(&id)
+                .lock()
+                .expect("order_ledger 锁被污染") =
+                crate::order_ledger::OrderLedger::restore(ledger);
+        }
         self.default_strategy_id = snapshot.strategy_risk_state.default_strategy_id;
         self.strategy_slots = snapshot
             .strategy_risk_state
@@ -995,7 +1020,15 @@ impl Engine {
             .expect("window_aggregator 写锁被污染");
         let mut events = Vec::with_capacity(bars.len());
         for bar in bars {
-            buffer.update(&bar);
+            if let Some((ts, high, low)) = buffer.update(&bar) {
+                self.state.order_manager.trade_tracker.observe_history_row(
+                    &bar.symbol,
+                    crate::analysis::HistorySeries::Bar,
+                    ts,
+                    high,
+                    low,
+                );
+            }
             // 预加载也要喂窗口聚合器, 否则启动时窗口历史为空、按周期注册的指标要
             // 重新预热(规格 7.2)。闭合出的窗口 bar 只写历史, 不派发回调。
             let closed = aggregator.update(&bar);
@@ -1651,6 +1684,32 @@ impl Engine {
 }
 
 impl Engine {
+    /// 主策略与全部槽位策略的 `on_start` 都执行完之后, 把共享历史缓冲区加到它们
+    /// 要求的最大深度(只增不减, 已有数据保留)。
+    ///
+    /// 开跑前那次 `configure_history_depth` 只读主策略、且早于主策略的 `on_start`:
+    /// 实盘里主策略的 `on_start` 在 `run()` 内触发, 槽位策略的 `on_start` 由 Python
+    /// 侧在 `run()` 之前调, 直接用 `Engine.run` 时同理 —— 这些地方设的深度都要靠
+    /// 这里补上, 否则缓冲区停在默认容量(1 行)。回测的 `on_start` 早在 `run()`
+    /// 之前、各策略深度已统一下发, 这里不会再加长。读法与开跑前那次相同。
+    fn ensure_history_depth_after_start(&mut self, py: Python<'_>, strategy: &StrategyHandle) {
+        let depth = std::iter::once(strategy.history_depth(py))
+            .chain(
+                self.strategy_slot_strategies
+                    .iter()
+                    .flatten()
+                    .map(|slot_strategy| slot_strategy.history_depth(py)),
+            )
+            .flatten()
+            .max();
+        if let Some(depth) = depth {
+            self.history_buffer
+                .write()
+                .expect("history_buffer 写锁被污染")
+                .ensure_capacity(depth);
+        }
+    }
+
     /// 用给定策略跑完一次会话(回测或实盘)。Python 的 `Engine.run` 是它的薄包装;
     /// Rust 侧可直接传入任意 [`StrategyHandler`](super::strategy_handler::StrategyHandler) 实现。
     pub(crate) fn run_with_strategy(
@@ -1711,6 +1770,7 @@ impl Engine {
         }
 
         strategy.on_start(py)?;
+        self.ensure_history_depth_after_start(py, strategy);
 
         // Progress Bar Initialization
         // 传入 symbol_whitelist: 过滤生效后被丢弃标的独占的时间戳不该计入

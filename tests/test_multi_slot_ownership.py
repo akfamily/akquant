@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any, Dict, List, cast
+from typing import Any, Dict, List
 
 import pandas as pd
-from akquant import Bar, OrderStatus, Strategy, run_backtest
-from akquant.strategy_order_events import assign_slot_ownership
+from akquant import Bar, Strategy, run_backtest
 
 TZ = "Asia/Shanghai"
 
@@ -96,17 +95,6 @@ class _Recorder(Strategy):
         self.seen_trades.append(trade.order_id)
 
 
-def _order(oid: str, owner: Any) -> SimpleNamespace:
-    return SimpleNamespace(
-        id=oid,
-        status=OrderStatus.New,
-        filled_quantity=0.0,
-        average_filled_price=None,
-        reject_reason="",
-        owner_strategy_id=owner,
-    )
-
-
 def _trade(oid: str, owner: Any) -> SimpleNamespace:
     return SimpleNamespace(
         trade_id=f"t-{oid}",
@@ -121,61 +109,6 @@ def _trade(oid: str, owner: Any) -> SimpleNamespace:
     )
 
 
-def test_orders_without_owner_go_to_default_slot_only() -> None:
-    """owner_strategy_id 为空(如实盘柜台侧产生的订单)或不在任何槽位的只派给默认槽位."""
-    main, slot = _Recorder(), _Recorder()
-    main._owner_strategy_id = "main"
-    slot._owner_strategy_id = "b"
-    assign_slot_ownership({"main": main, "b": slot}, "main")
-
-    active = [
-        _order("broker", None),
-        _order("blank", ""),
-        _order("unknown", "zzz"),
-        _order("mine-main", "main"),
-        _order("mine-b", "b"),
-    ]
-    trades = [_trade("broker", None), _trade("mine-b", "b")]
-    for strategy in (main, slot):
-        strategy.ctx = cast(
-            Any,
-            SimpleNamespace(
-                canceled_order_ids=[],
-                recent_rejected_orders=[],
-                recent_expired_orders=[],
-                orders=[],
-                active_orders=active,
-                recent_trades=trades,
-            ),
-        )
-        strategy._check_order_events()
-
-    assert main.seen_orders == ["broker", "blank", "unknown", "mine-main"]
-    assert slot.seen_orders == ["mine-b"]
-    assert main.seen_trades == ["broker"]
-    assert slot.seen_trades == ["mine-b"]
-
-
-def test_single_slot_receives_all_orders() -> None:
-    """单槽位不按 owner 过滤(柜台侧订单与任意 owner 都送达)."""
-    only = _Recorder()
-    only._owner_strategy_id = "main"
-    assign_slot_ownership({"main": only}, "main")
-    only.ctx = cast(
-        Any,
-        SimpleNamespace(
-            canceled_order_ids=[],
-            recent_rejected_orders=[],
-            recent_expired_orders=[],
-            orders=[],
-            active_orders=[_order("x", None), _order("y", "other")],
-            recent_trades=[],
-        ),
-    )
-    only._check_order_events()
-    assert only.seen_orders == ["x", "y"]
-
-
 def test_foreign_timer_flushes_order_events_without_on_timer() -> None:
     """别的槽位的定时器: 不调本槽位 on_timer, 但本步成交照常回调(否则会丢)."""
     timers: List[str] = []
@@ -186,15 +119,11 @@ def test_foreign_timer_flushes_order_events_without_on_timer() -> None:
 
     slot = _Slot()
     slot._owner_strategy_id = "b"
-    assign_slot_ownership({"main": _Recorder(), "b": slot}, "main")
+    # 订单账本(Rust 侧)在本步产出一笔属于本槽位的成交, 其余为空。
+    ledger_results: Any = iter([([], [_trade("mine-b", "b")], True)])
     ctx: Any = SimpleNamespace(
-        canceled_order_ids=[],
-        recent_rejected_orders=[],
-        recent_expired_orders=[],
+        order_events=lambda *args: next(ledger_results, None),
         recent_expiry_events=[],
-        orders=[],
-        active_orders=[],
-        recent_trades=[_trade("mine-b", "b")],
         current_time=0,
     )
     slot._on_foreign_timer_event_and_flush("t-main", ctx)

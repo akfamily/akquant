@@ -177,7 +177,7 @@ return GatewayBundle(
 
 终态集在核心侧的落点是 `python/akquant/live/_payload_utils.py`
 的 `_TERMINAL_STATUSES`，三个内置 broker 的 `_is_terminal_status()` 与之同口径；
-回测侧对应 `strategy_order_events._TERMINAL_ORDER_STATUSES`。`Expired` 是
+回测侧对应 `src/order_ledger.rs` 的 `is_terminal`。`Expired` 是
 日内单收盘作废、柜台把单判废这类场景，**别漏**：漏掉它等于把终态单当活单。
 
 三条容易踩的坑：

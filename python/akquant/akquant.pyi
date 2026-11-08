@@ -3096,6 +3096,37 @@ class StrategyContext:
         r"""运行时绩效统计（口径同 result.metrics）."""
         ...
 
+    def order_events(
+        self, stage: int, finalized_limit: int, trade_limit: int
+    ) -> typing.Optional[tuple[list[tuple[Order, bool]], list[Trade], bool]]:
+        r"""
+        本次订单事件检查要通知策略的回调(框架内部使用).
+
+        :param stage: 0 或 1
+        :param finalized_limit: 终态留档上限
+        :param trade_limit: 成交去重上限
+        :return: None(无事件) 或 ([(order, fire_reject), ...], [trade, ...], done)
+        """
+        ...
+
+    def find_order(self, order_id: str) -> typing.Optional[Order]:
+        r"""
+        按订单号查订单(本槽账本在途 → 上下文在途 → 终态留档).
+
+        :param order_id: 订单号
+        :return: 订单快照, 查不到为 None
+        """
+        ...
+
+    def ensure_history_capacity(self, capacity: int) -> bool:
+        r"""
+        把历史缓冲区的保留长度加到至少 ``capacity``(只增不减, 已有数据保留).
+
+        :param capacity: 需要保留的行数
+        :return: 是否真的加长了(此前保留的不够)
+        """
+        ...
+
     def history(
         self,
         symbol: str,

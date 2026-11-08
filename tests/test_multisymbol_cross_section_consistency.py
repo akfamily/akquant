@@ -1,9 +1,9 @@
 from collections import Counter, defaultdict
 from typing import Any
-from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
+from _mock_ctx import mock_strategy_context
 from akquant import Bar, CurrentClose, Strategy, run_backtest
 
 
@@ -493,7 +493,7 @@ def test_explicit_buy_quantity_is_rejected_without_resizing() -> None:
 def _build_validation_strategy() -> Strategy:
     """Build strategy with minimal mock context for validation tests."""
     strategy = TargetWeightsSplitStrategy(symbols=["AAA", "BBB"])
-    strategy.ctx = MagicMock()
+    strategy.ctx = mock_strategy_context()
     strategy.ctx.positions = {}
     strategy.ctx.cash = 100000.0
     strategy.ctx.get_position.return_value = 0.0

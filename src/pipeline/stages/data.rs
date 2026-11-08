@@ -55,7 +55,7 @@ impl DataProcessor {
         }
     }
 
-    fn fill_missing_bars(&self, engine: &Engine) {
+    fn fill_missing_bars(&self, engine: &mut Engine) {
         if self.last_timestamp == 0 {
             return;
         }
@@ -90,7 +90,19 @@ impl DataProcessor {
                         freq: None,
                         interval_start: None,
                     };
-                    buffer.update(&bar);
+                    if let Some((ts, high, low)) = buffer.update(&bar) {
+                        engine
+                            .state
+                            .order_manager
+                            .trade_tracker
+                            .observe_history_row(
+                                symbol,
+                                crate::analysis::HistorySeries::Bar,
+                                ts,
+                                high,
+                                low,
+                            );
+                    }
                 }
             }
         }
@@ -690,7 +702,19 @@ impl Processor for DataProcessor {
                     // Update History Buffer, 并把基础 bar 喂给窗口聚合器。闭合的窗口 bar
                     // 只写历史 + 暂存待派发: 不进 feed、不成为 Event、不动 last_prices。
                     if let Ok(mut buffer) = engine.history_buffer.write() {
-                        buffer.update(b);
+                        if let Some((ts, high, low)) = buffer.update(b) {
+                            engine
+                                .state
+                                .order_manager
+                                .trade_tracker
+                                .observe_history_row(
+                                    &b.symbol,
+                                    crate::analysis::HistorySeries::Bar,
+                                    ts,
+                                    high,
+                                    low,
+                                );
+                        }
                         let closed = engine
                             .window_aggregator
                             .write()
@@ -720,8 +744,20 @@ impl Processor for DataProcessor {
                     self.seen_symbols.insert(t.symbol.clone());
                     // tick 也写入历史缓冲区: 否则纯 tick 回测下 get_history 恒为空,
                     // 且是静默的(不报错也不工作)。tick 以退化 bar 写入。
-                    if let Ok(mut buffer) = engine.history_buffer.write() {
-                        buffer.update_tick(t);
+                    if let Ok(mut buffer) = engine.history_buffer.write()
+                        && let Some((ts, high, low)) = buffer.update_tick(t)
+                    {
+                        engine
+                            .state
+                            .order_manager
+                            .trade_tracker
+                            .observe_history_row(
+                                &t.symbol,
+                                crate::analysis::HistorySeries::Tick,
+                                ts,
+                                high,
+                                low,
+                            );
                     }
                 }
 

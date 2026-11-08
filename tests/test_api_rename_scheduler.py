@@ -8,13 +8,13 @@ from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pandas as pd
-from akquant.akquant import StrategyContext
+from _mock_ctx import mock_strategy_context
 from akquant.strategy import Strategy
 
 
 def _make_strategy(trading_days: list[str]) -> Strategy:
     strategy = Strategy.__new__(Strategy)
-    strategy.ctx = MagicMock(spec=StrategyContext)
+    strategy.ctx = mock_strategy_context()
     strategy.timezone = "Asia/Shanghai"
     strategy._trading_days = [
         pd.Timestamp(d).tz_localize("Asia/Shanghai") for d in trading_days
@@ -42,7 +42,7 @@ def test_add_daily_timer_renamed_to_schedule_daily() -> None:
 def test_schedule_daily_registers_one_timer_per_trading_day() -> None:
     """schedule_daily 应对每个交易日在指定时点注册一枚 timer(等价旧 API)."""
     strategy = Strategy.__new__(Strategy)
-    strategy.ctx = MagicMock(spec=StrategyContext)
+    strategy.ctx = mock_strategy_context()
     strategy.timezone = "Asia/Shanghai"
     strategy._trading_days = [
         pd.Timestamp("2023-01-03").tz_localize("Asia/Shanghai"),

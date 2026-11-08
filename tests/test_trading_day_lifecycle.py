@@ -831,7 +831,7 @@ class _HoldOnce(Strategy):
 class _BuyFirstThenSellAvailable(Strategy):
     """首根 bar 买 100 股，之后有可用持仓就全部卖出；记录每根 bar 的可用持仓.
 
-    首根 bar 下的单在第二根 bar 成交，存档前已处理完（``_known_orders`` 为空，
+    首根 bar 下的单在第二根 bar 成交，存档前已处理完（订单账本里已无在途订单，
     策略实例可 pickle）。模块顶层定义以便 pickle。
     """
 

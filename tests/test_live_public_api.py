@@ -9,8 +9,8 @@ def test_streaming_indicator_sink_is_public() -> None:
     assert StreamingIndicatorSink is Private
 
 
-def test_engine_rule_version_is_2_2_0() -> None:
-    """回测全局费率同样作用于基金(ETF), 规则版本为 2.2.0."""
+def test_engine_rule_version_is_2_3_0() -> None:
+    """MAE/MFE 改为持仓期间边走边算、历史/回看超出自动加长, 规则版本为 2.3.0."""
     import akquant
 
-    assert akquant.__engine_rule_version__ == "2.2.0"
+    assert akquant.__engine_rule_version__ == "2.3.0"

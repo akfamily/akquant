@@ -609,6 +609,8 @@ class MyStrategy(Strategy):
             self.sell(symbol=bar.symbol, quantity=100)
 ```
 
+**When `count` exceeds the retained length, the history grows automatically and warns once**: the retained length is `history_depth` / `warmup_period`. The first time `get_history` / `get_history_df` asks for a larger `count`, the framework grows the retained length to `count` and logs a warning with the value to set; data dropped before the growth cannot be recovered, so the window is complete only from `count` bars later. Call `self.set_history_depth(N)` in `on_start` as the warning suggests (this takes effect in both backtests and live sessions). NaN padding during warmup (not enough data yet) is normal and does not warn. Automatic growth is capped at the larger of 10000 and the `history_depth` / `warmup_period` you declared explicitly: beyond the cap it no longer grows, warns once on its own, and pads with NaN as before, so a `count` that keeps increasing (such as `get_history(self.bars_held)`) cannot grow the buffer without bound in a live session.
+
 ## 5. Orders & Execution
 
 ### 4.1 Order Lifecycle
@@ -994,7 +996,7 @@ class MultiSymbolIncrementalStrategy(Strategy):
 
 Notes:
 
-* `ind[0]` is the current bar's value (`.value` is an alias) and `ind[1]` is the previous bar. Out-of-range lookback returns `None` instead of raising, so a single `if val is None` check covers the warmup period.
+* `ind[0]` is the current bar's value (`.value` is an alias) and `ind[1]` is the previous bar. Out-of-range lookback returns `None` instead of raising, so a single `if val is None` check covers the warmup period. Asking for `ind[n]` with `n` beyond `lookback` (default 128) grows the buffer automatically and logs a warning once; size `lookback` as the warning suggests.
 * If one shared instance is reused across multiple symbols, AKQuant raises an explicit error and points users to `factory=`.
 * In `on_bar` / `on_tick`, `ind[0]` reads the current symbol; in callbacks that do not belong to a symbol (`on_timer`, `on_cross_section`, ...) read a multi-symbol indicator with `ind.of(symbol)[0]` — a bare read raises. See the [Custom Indicator Guide](./custom_indicator.md#indicator-of-symbol).
 * `warmup_bars` only consumes history before the active start boundary and does not double-consume the first active bar.

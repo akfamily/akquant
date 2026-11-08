@@ -31,7 +31,6 @@ class _Strategy:
         self.current_bar = SimpleNamespace(symbol="600000.SH")
         self.current_tick = None
         self._hold_bars = {"600000.SH": 3}
-        self._known_orders: dict[str, Any] = {}
 
 
 def test_sim_execution_reads_route_to_ctx() -> None:

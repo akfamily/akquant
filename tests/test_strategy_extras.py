@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import numpy as np
 import pandas as pd
 import pytest
+from _mock_ctx import mock_strategy_context, queue_order_events
 from akquant import (
     BacktestConfig,
     InstrumentConfig,
@@ -29,7 +30,6 @@ from akquant.akquant import (
     ExecutionMode,
     OrderStatus,
     PositionEffect,
-    StrategyContext,
     Tick,
     TimeInForce,
 )
@@ -84,7 +84,7 @@ def test_strategy_logging(caplog: Any) -> None:
     strategy = MyStrategy()
 
     # Mock context
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.get_position.return_value = 0.0
 
     # Mock Bar
@@ -111,7 +111,7 @@ def test_strategy_logging_includes_structured_context(caplog: Any) -> None:
     """Strategy logs should carry structured metadata for later formatting/export."""
     strategy = MyStrategy()
     cast(Any, strategy)._owner_strategy_id = "alpha"
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.get_position.return_value = 0.0
 
     ts = pd.Timestamp("2023-01-01 09:30:00", tz="Asia/Shanghai").value
@@ -146,7 +146,7 @@ def test_strategy_logging_live_profile_renders_context(
     configure_logging(LogConfig(profile="live", console=True, level="INFO"))
     strategy = MyStrategy()
     cast(Any, strategy)._owner_strategy_id = "alpha"
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.get_position.return_value = 0.0
 
     ts = pd.Timestamp("2023-01-01 09:30:00", tz="Asia/Shanghai").value
@@ -247,7 +247,7 @@ def test_strategy_logging_live_profile_renders_order_context(
 def test_strategy_properties() -> None:
     """Test properties."""
     strategy = MyStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.get_position.return_value = 0.0
 
     # Test Bar Properties
@@ -542,11 +542,9 @@ class TradeDedupeLimitStrategy(Strategy):
 def test_trade_callback_not_duplicated_on_bar() -> None:
     """Trade callback should be triggered once per bar event."""
     strategy = EventCounterStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.get_position.return_value = 0.0
-    ctx.canceled_order_ids = []
-    ctx.active_orders = []
-    ctx.recent_trades = [SimpleNamespace(order_id="o1")]
+    queue_order_events(ctx, ([], [SimpleNamespace(order_id="o1")], True))
 
     ts = pd.Timestamp("2023-01-01 09:30:00", tz="Asia/Shanghai").value
     bar = Bar(
@@ -565,11 +563,9 @@ def test_trade_callback_not_duplicated_on_bar() -> None:
 def test_tick_and_timer_process_order_events() -> None:
     """Tick and timer events should process trade callbacks."""
     strategy = EventCounterStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.get_position.return_value = 0.0
-    ctx.canceled_order_ids = []
-    ctx.active_orders = []
-    ctx.recent_trades = [SimpleNamespace(order_id="o1")]
+    queue_order_events(ctx, ([], [SimpleNamespace(order_id="o1")], True))
 
     ts_tick = pd.Timestamp("2023-01-01 09:30:01", tz="Asia/Shanghai").value
     tick = Tick(timestamp=ts_tick, price=103.0, volume=500.0, symbol="GOOG")
@@ -578,7 +574,7 @@ def test_tick_and_timer_process_order_events() -> None:
     assert strategy.tick_count == 1
     assert strategy.trade_count == 1
 
-    ctx.recent_trades = [SimpleNamespace(order_id="o2")]
+    queue_order_events(ctx, ([], [SimpleNamespace(order_id="o2")], True))
     strategy._on_timer_event("rebalance", ctx)
     assert strategy.timer_count == 1
     assert strategy.trade_count == 2
@@ -587,11 +583,9 @@ def test_tick_and_timer_process_order_events() -> None:
 def test_trade_callback_not_replayed_across_events() -> None:
     """Repeated recent_trades entries should not replay on_trade callback."""
     strategy = EventCounterStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.get_position.return_value = 0.0
-    ctx.canceled_order_ids = []
-    ctx.active_orders = []
-    ctx.recent_trades = [SimpleNamespace(order_id="o1")]
+    queue_order_events(ctx, ([], [SimpleNamespace(order_id="o1")], True))
 
     ts_tick = pd.Timestamp("2023-01-01 09:30:01", tz="Asia/Shanghai").value
     tick = Tick(timestamp=ts_tick, price=103.0, volume=500.0, symbol="GOOG")
@@ -603,31 +597,17 @@ def test_trade_callback_not_replayed_across_events() -> None:
     assert strategy.timer_count == 1
 
 
-def test_trade_dedupe_cache_limit_eviction_allows_replay() -> None:
-    """Dedupe cache should evict old keys once limit reached."""
+def test_trade_dedupe_cache_limit_is_passed_to_ledger() -> None:
+    """策略的 trade_dedupe_cache_size 每次检查都传给订单账本(淘汰逻辑见 Rust 测试)."""
     strategy = TradeDedupeLimitStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.get_position.return_value = 0.0
-    ctx.canceled_order_ids = []
-    ctx.active_orders = []
-
-    ctx.recent_trades = [SimpleNamespace(order_id="o1")]
     ts_tick = pd.Timestamp("2023-01-01 09:30:01", tz="Asia/Shanghai").value
     tick = Tick(timestamp=ts_tick, price=103.0, volume=500.0, symbol="GOOG")
     strategy._on_tick_event(tick, ctx)
-    assert strategy.trade_count == 1
-
-    ctx.recent_trades = [SimpleNamespace(order_id="o2")]
-    strategy._on_timer_event("t2", ctx)
-    assert strategy.trade_count == 2
-
-    ctx.recent_trades = [SimpleNamespace(order_id="o3")]
-    strategy._on_timer_event("t3", ctx)
-    assert strategy.trade_count == 3
-
-    ctx.recent_trades = [SimpleNamespace(order_id="o1")]
-    strategy._on_timer_event("t4", ctx)
-    assert strategy.trade_count == 4
+    stage, finalized_limit, trade_limit = ctx.order_events.call_args.args
+    assert (stage, trade_limit) == (0, 2)
+    assert finalized_limit == 10000
 
 
 class ClosedTradesSnapshotStrategy(Strategy):
@@ -878,25 +858,21 @@ def _build_ctx_with_order_and_trade(
     symbol: str = "AAPL",
 ) -> MagicMock:
     """Build a mocked strategy context with one active order and one trade."""
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.get_position.return_value = 0.0
-    ctx.canceled_order_ids = []
-    ctx.active_orders = [
-        SimpleNamespace(
-            id=order_id,
-            status="Submitted",
-            filled_quantity=0.0,
-            symbol=symbol,
-            client_order_id=client_order_id,
-        )
-    ]
-    ctx.recent_trades = [
-        SimpleNamespace(
-            order_id=order_id,
-            symbol=symbol,
-            client_order_id=client_order_id,
-        )
-    ]
+    order = SimpleNamespace(
+        id=order_id,
+        status="Submitted",
+        filled_quantity=0.0,
+        symbol=symbol,
+        client_order_id=client_order_id,
+    )
+    trade = SimpleNamespace(
+        order_id=order_id,
+        symbol=symbol,
+        client_order_id=client_order_id,
+    )
+    queue_order_events(ctx, ([(order, False)], [trade], True))
     return ctx
 
 
@@ -3456,7 +3432,7 @@ def test_timer_registration_not_duplicated_in_warm_start() -> None:
     """Internal start should not double-register timers when called repeatedly."""
     strategy = TimerIdempotencyStrategy()
     strategy._is_restored = True
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     strategy.ctx = ctx
     strategy._trading_days = [
         pd.Timestamp("2023-01-01").tz_localize("Asia/Shanghai"),
@@ -3476,7 +3452,7 @@ def test_timer_registration_not_duplicated_in_warm_start() -> None:
 def test_daily_timer_payload_processed_once_per_event() -> None:
     """Daily wrapped payload should trigger one timer callback per event."""
     strategy = TimerIdempotencyStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.canceled_order_ids = []
     ctx.active_orders = []
     ctx.recent_trades = []
@@ -3494,7 +3470,7 @@ def test_live_mode_timer_registration_not_duplicated() -> None:
     """Live mode timer registration should run once in internal start."""
     strategy = TimerIdempotencyStrategy()
     strategy._is_restored = True
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     _weekday_calendar(ctx)
     strategy.ctx = ctx
     strategy._trading_days = []
@@ -3518,7 +3494,7 @@ def test_on_start_timer_registration_is_deferred_until_context_ready() -> None:
     assert len(strategy._pending_schedules) == 1
     assert len(strategy._pending_daily_timers) == 1
 
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     _weekday_calendar(ctx)
     ctx.get_position.return_value = 0.0
     ctx.canceled_order_ids = []
@@ -3547,7 +3523,7 @@ def test_on_start_timer_registration_is_deferred_until_context_ready() -> None:
 def test_live_mode_daily_timer_reschedules_once_per_trigger() -> None:
     """Live mode daily timer should reschedule once per single trigger."""
     strategy = TimerIdempotencyStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     _weekday_calendar(ctx)
     ctx.canceled_order_ids = []
     ctx.active_orders = []
@@ -3569,7 +3545,7 @@ def test_live_mode_daily_timer_reschedules_once_per_trigger() -> None:
 def test_live_mode_daily_timer_logs_reschedule_failures(caplog: Any) -> None:
     """Live daily timer reschedule failures should be logged with strategy context."""
     strategy = TimerIdempotencyStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     _weekday_calendar(ctx)
     ctx.canceled_order_ids = []
     ctx.active_orders = []
@@ -3623,13 +3599,21 @@ class TimerOrderTradeMixedStrategy(Strategy):
 def test_mixed_events_order_on_daily_timer_in_live_mode() -> None:
     """Daily timer should process order/trade first, then timer, and reschedule once."""
     strategy = TimerOrderTradeMixedStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     _weekday_calendar(ctx)
-    ctx.canceled_order_ids = []
-    ctx.active_orders = [
-        SimpleNamespace(id="o1", status="Submitted", filled_quantity=0.0)
-    ]
-    ctx.recent_trades = [SimpleNamespace(order_id="o1")]
+    queue_order_events(
+        ctx,
+        (
+            [
+                (
+                    SimpleNamespace(id="o1", status="Submitted", filled_quantity=0.0),
+                    False,
+                )
+            ],
+            [SimpleNamespace(order_id="o1")],
+            True,
+        ),
+    )
     strategy.ctx = ctx
     strategy._trading_days = []
 
@@ -3648,28 +3632,54 @@ def test_mixed_events_order_on_daily_timer_in_live_mode() -> None:
 def test_mixed_events_partial_fill_then_cancel_sequence() -> None:
     """Partial fill and cancel should emit deterministic callbacks."""
     strategy = TimerOrderTradeMixedStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     _weekday_calendar(ctx)
-    ctx.canceled_order_ids = []
-    ctx.active_orders = [
-        SimpleNamespace(id="o2", status="Submitted", filled_quantity=0.0)
-    ]
-    ctx.recent_trades = []
     strategy.ctx = ctx
     strategy._trading_days = []
 
+    queue_order_events(
+        ctx,
+        (
+            [
+                (
+                    SimpleNamespace(id="o2", status="Submitted", filled_quantity=0.0),
+                    False,
+                )
+            ],
+            [],
+            True,
+        ),
+    )
     strategy._on_timer_event("__daily__|14:55:00|mixed_timer2", ctx)
 
-    ctx.canceled_order_ids = []
-    ctx.active_orders = [
-        SimpleNamespace(id="o2", status="Submitted", filled_quantity=1.0)
-    ]
-    ctx.recent_trades = [SimpleNamespace(order_id="o2")]
+    queue_order_events(
+        ctx,
+        (
+            [
+                (
+                    SimpleNamespace(id="o2", status="Submitted", filled_quantity=1.0),
+                    False,
+                )
+            ],
+            [SimpleNamespace(order_id="o2")],
+            True,
+        ),
+    )
     strategy._on_timer_event("__daily__|14:55:00|mixed_timer2", ctx)
 
-    ctx.canceled_order_ids = ["o2"]
-    ctx.active_orders = []
-    ctx.recent_trades = []
+    queue_order_events(
+        ctx,
+        (
+            [
+                (
+                    SimpleNamespace(id="o2", status="Cancelled", filled_quantity=1.0),
+                    False,
+                )
+            ],
+            [],
+            True,
+        ),
+    )
     strategy._on_timer_event("__daily__|14:55:00|mixed_timer2", ctx)
 
     assert strategy.order_count == 3
@@ -3690,7 +3700,7 @@ def test_mixed_events_partial_fill_then_cancel_sequence() -> None:
 def test_daily_timer_malformed_payload_falls_back_to_raw_timer() -> None:
     """Malformed daily payload should fallback to raw timer callback."""
     strategy = TimerOrderTradeMixedStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     _weekday_calendar(ctx)
     ctx.canceled_order_ids = []
     ctx.active_orders = []
@@ -3710,7 +3720,7 @@ def test_daily_timer_malformed_payload_falls_back_to_raw_timer() -> None:
 def test_daily_timer_invalid_time_fires_once_without_raw_fallback() -> None:
     """Invalid daily time should not duplicate timer callback."""
     strategy = TimerOrderTradeMixedStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     _weekday_calendar(ctx)
     ctx.canceled_order_ids = []
     ctx.active_orders = []
@@ -3730,10 +3740,7 @@ def test_daily_timer_invalid_time_fires_once_without_raw_fallback() -> None:
 def test_unknown_canceled_order_does_not_emit_order_callback() -> None:
     """Unknown canceled order id should not trigger on_order callback."""
     strategy = TimerOrderTradeMixedStrategy()
-    ctx = MagicMock(spec=StrategyContext)
-    ctx.canceled_order_ids = ["ghost_order"]
-    ctx.active_orders = []
-    ctx.recent_trades = []
+    ctx = mock_strategy_context()
     strategy.ctx = ctx
     strategy._trading_days = []
 
@@ -3804,10 +3811,8 @@ class FrameworkPreOpenStrategy(Strategy):
 def test_framework_hooks_session_day_reject_and_portfolio() -> None:
     """Reject/order/portfolio hooks fire on ticks; day hooks are not inferred."""
     strategy = FrameworkHooksStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.get_position.return_value = 0.0
-    ctx.canceled_order_ids = []
-    ctx.recent_trades = []
     ctx.positions = {"AAPL": 1.0}
     ctx.available_positions = {"AAPL": 1.0}
     rejected = SimpleNamespace(
@@ -3816,7 +3821,7 @@ def test_framework_hooks_session_day_reject_and_portfolio() -> None:
         filled_quantity=0.0,
         average_filled_price=None,
     )
-    ctx.active_orders = [rejected]
+    queue_order_events(ctx, ([(rejected, True)], [], True))
     ctx.cash = 1000.0
     ctx.session = "normal"
     ctx.current_time = pd.Timestamp("2023-01-01 09:30:00", tz="Asia/Shanghai").value
@@ -3842,24 +3847,31 @@ def test_framework_hooks_session_day_reject_and_portfolio() -> None:
 def test_framework_hooks_emits_reject_from_recent_rejected_orders() -> None:
     """Reject callback should be emitted from recent_rejected_orders snapshots."""
     strategy = FrameworkHooksStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.get_position.return_value = 0.0
-    ctx.canceled_order_ids = []
-    ctx.active_orders = []
-    ctx.recent_trades = []
     ctx.positions = {}
     ctx.available_positions = {}
     ctx.cash = 1000.0
     ctx.session = "normal"
     ctx.current_time = pd.Timestamp("2023-01-01 09:30:00", tz="Asia/Shanghai").value
-    ctx.recent_rejected_orders = [
-        SimpleNamespace(
-            id="rej_from_snapshot",
-            status=OrderStatus.Rejected,
-            filled_quantity=0.0,
-            average_filled_price=None,
-        )
-    ]
+    queue_order_events(
+        ctx,
+        (
+            [
+                (
+                    SimpleNamespace(
+                        id="rej_from_snapshot",
+                        status=OrderStatus.Rejected,
+                        filled_quantity=0.0,
+                        average_filled_price=None,
+                    ),
+                    True,
+                )
+            ],
+            [],
+            True,
+        ),
+    )
 
     tick = Tick(timestamp=ctx.current_time, price=100.0, volume=1.0, symbol="AAPL")
     strategy._on_tick_event(tick, ctx)
@@ -3877,7 +3889,7 @@ def test_framework_hooks_emits_reject_from_recent_rejected_orders() -> None:
 def test_portfolio_update_skips_clean_tick_without_changes() -> None:
     """Clean tick without price/position/order changes should not emit update."""
     strategy = FrameworkHooksStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.get_position.return_value = 0.0
     ctx.canceled_order_ids = []
     ctx.active_orders = []
@@ -3903,7 +3915,7 @@ def test_portfolio_update_skips_clean_tick_without_changes() -> None:
 def test_portfolio_update_emits_on_price_change_with_position() -> None:
     """Price move with open position should emit portfolio update."""
     strategy = FrameworkHooksStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.get_position.return_value = 1.0
     ctx.canceled_order_ids = []
     ctx.active_orders = []
@@ -3930,7 +3942,7 @@ def test_portfolio_update_respects_eps_threshold() -> None:
     """Small equity changes under eps should not emit updates."""
     strategy = FrameworkHooksStrategy()
     strategy.portfolio_update_eps = 5.0
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.get_position.return_value = 1.0
     ctx.canceled_order_ids = []
     ctx.active_orders = []
@@ -4082,7 +4094,7 @@ def test_runtime_config_assignment_syncs_alias_properties() -> None:
 def test_on_error_hook_called_and_exception_re_raised() -> None:
     """Errors in user callback should call on_error then re-raise."""
     strategy = ErrorHookStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.canceled_order_ids = []
     ctx.active_orders = []
     ctx.recent_trades = []
@@ -4104,7 +4116,7 @@ def test_on_error_hook_can_swallow_user_callback_exception() -> None:
     strategy = ErrorHookStrategy()
     strategy.error_mode = "legacy"
     strategy.re_raise_on_error = False
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.canceled_order_ids = []
     ctx.active_orders = []
     ctx.recent_trades = []
@@ -4125,7 +4137,7 @@ def test_error_mode_continue_overrides_re_raise_flag() -> None:
     strategy = ErrorHookStrategy()
     strategy.error_mode = "continue"
     strategy.re_raise_on_error = True
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.canceled_order_ids = []
     ctx.active_orders = []
     ctx.recent_trades = []
@@ -4146,7 +4158,7 @@ def test_error_mode_raise_overrides_re_raise_flag() -> None:
     strategy = ErrorHookStrategy()
     strategy.error_mode = "raise"
     strategy.re_raise_on_error = False
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.canceled_order_ids = []
     ctx.active_orders = []
     ctx.recent_trades = []
@@ -4167,7 +4179,7 @@ def test_runtime_config_continue_mode_swallow_exception() -> None:
     """runtime_config should drive error handling when legacy fields stay default."""
     strategy = ErrorHookStrategy()
     strategy.runtime_config = StrategyRuntimeConfig(error_mode="continue")
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.canceled_order_ids = []
     ctx.active_orders = []
     ctx.recent_trades = []
@@ -4188,7 +4200,7 @@ def test_legacy_error_mode_overrides_runtime_config() -> None:
     strategy = ErrorHookStrategy()
     strategy.runtime_config = StrategyRuntimeConfig(error_mode="raise")
     strategy.error_mode = "continue"
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.canceled_order_ids = []
     ctx.active_orders = []
     ctx.recent_trades = []
@@ -4358,7 +4370,7 @@ def test_run_backtest_runtime_config_override_false_keeps_strategy_config(
 def test_stop_internal_does_not_flush_on_after_trading_hook() -> None:
     """交易日钩子只由引擎生命周期事件触发：tick 不推断、停止阶段不补发."""
     strategy = FrameworkHooksStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.get_position.return_value = 0.0
     ctx.canceled_order_ids = []
     ctx.active_orders = []
@@ -4385,7 +4397,7 @@ def test_lifecycle_timers_drive_day_hooks_once_per_trading_day() -> None:
     start_ts = pd.Timestamp("2023-01-03 09:30:00", tz="Asia/Shanghai").value + 1
     end_ts = pd.Timestamp("2023-01-03 15:00:00", tz="Asia/Shanghai").value + 1
 
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.get_position.return_value = 0.0
     ctx.canceled_order_ids = []
     ctx.active_orders = []
@@ -5086,7 +5098,7 @@ def test_pre_open_timer_dispatch_uses_next_open_fill_policy_by_default() -> None
     strategy = FrameworkPreOpenStrategy()
     start_ts = pd.Timestamp("2023-01-03 09:30:00", tz="Asia/Shanghai").value
 
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.buy.return_value = "pre-open-order"
     ctx.cash = 1000.0
     ctx.positions = {}
@@ -5133,7 +5145,7 @@ def test_daily_timer_paths_parameterized(
 ) -> None:
     """Daily timer paths should produce stable callback and reschedule behavior."""
     strategy = TimerOrderTradeMixedStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     _weekday_calendar(ctx)
     ctx.canceled_order_ids = []
     ctx.active_orders = []
@@ -5295,7 +5307,7 @@ def test_strategy_short_cover_delegate_position_effect() -> None:
 def test_strategy_buy_auto_splits_cover_then_open() -> None:
     """buy(auto) should split short-cover and long-open legs using current position."""
     strategy = MyStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.get_position.return_value = -2.0
     # auto 拆腿改读可平持仓（已扣除同 bar 在途平仓单，见 #361）；此处无在途单，
     # 可平量与结算仓一致。
@@ -5323,7 +5335,7 @@ def test_strategy_buy_auto_splits_cover_then_open() -> None:
 def test_strategy_submit_order_accepts_close_today_position_effect() -> None:
     """submit_order should map close_today to the extended PositionEffect enum."""
     strategy = MyStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.buy.return_value = "oid-close-today"
     strategy.ctx = ctx
 
@@ -5394,7 +5406,7 @@ def test_strategy_rebalance_positions_supports_signed_targets() -> None:
             return f"oid-{symbol}"
 
     strategy = _TargetSpyStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.positions = {"AAA": 100.0, "BBB": 0.0}
     ctx.get_position.side_effect = lambda symbol: {"AAA": 100.0, "BBB": 0.0}.get(
         symbol, 0.0
@@ -5418,7 +5430,7 @@ def test_strategy_rebalance_positions_supports_signed_targets() -> None:
 def test_strategy_rebalance_positions_rejects_negative_targets_in_cash_mode() -> None:
     """Negative target positions should fail fast when short selling is unavailable."""
     strategy = MyStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.positions = {"AAA": 0.0}
     ctx.get_position.return_value = 0.0
     ctx.risk_config = SimpleNamespace(account_mode="cash", enable_short_sell=False)
@@ -5433,7 +5445,7 @@ def test_strategy_rebalance_positions_rejects_negative_targets_in_cash_mode() ->
 def test_strategy_rebalance_positions_rejects_when_short_is_disallowed() -> None:
     """Negative targets should respect strict broker short-sell capability checks."""
     strategy = MyStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.positions = {"AAA": 0.0}
     ctx.get_position.return_value = 0.0
     ctx.risk_config = SimpleNamespace(account_mode="margin", enable_short_sell=False)
@@ -5507,7 +5519,7 @@ def test_strategy_rebalance_positions_can_bypass_strict_short_capability() -> No
             return "oid"
 
     strategy = _TargetSpyStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.positions = {"AAA": 0.0}
     ctx.get_position.return_value = 0.0
     ctx.risk_config = SimpleNamespace(account_mode="margin", enable_short_sell=False)
@@ -5539,7 +5551,7 @@ def test_strategy_rebalance_positions_can_bypass_strict_short_capability() -> No
 def test_strategy_rebalance_positions_missing_price_mode_fail() -> None:
     """missing_price_mode=fail should reject symbols absent from price_map."""
     strategy = MyStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.positions = {"AAA": 10.0, "BBB": 0.0}
     ctx.get_position.side_effect = lambda symbol: {"AAA": 10.0, "BBB": 0.0}.get(
         symbol, 0.0
@@ -5612,7 +5624,7 @@ def test_strategy_rebalance_positions_missing_price_mode_skip() -> None:
             return "oid"
 
     strategy = _TargetSpyStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.positions = {"AAA": 10.0, "BBB": 0.0}
     ctx.get_position.side_effect = lambda symbol: {"AAA": 10.0, "BBB": 0.0}.get(
         symbol, 0.0
@@ -5686,7 +5698,7 @@ def test_strategy_rebalance_positions_missing_price_mode_ignore() -> None:
             return "oid"
 
     strategy = _TargetSpyStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.positions = {"AAA": 10.0, "BBB": 0.0}
     ctx.get_position.side_effect = lambda symbol: {"AAA": 10.0, "BBB": 0.0}.get(
         symbol, 0.0
@@ -5762,7 +5774,7 @@ def test_strategy_rebalance_positions_records_explainable_plan() -> None:
             return "oid"
 
     strategy = _TargetSpyStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.positions = {"AAA": 10.0, "BBB": 0.0}
     ctx.get_position.side_effect = lambda symbol: {"AAA": 10.0, "BBB": 0.0}.get(
         symbol, 0.0
@@ -5840,7 +5852,7 @@ def test_strategy_rebalance_positions_plan_tracks_skipped_legs() -> None:
             return "oid"
 
     strategy = _TargetSpyStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.positions = {"AAA": 10.0, "BBB": 0.0}
     ctx.get_position.side_effect = lambda symbol: {"AAA": 10.0, "BBB": 0.0}.get(
         symbol, 0.0
@@ -5883,7 +5895,7 @@ def test_strategy_rebalance_positions_plan_tracks_skipped_legs() -> None:
 def test_strategy_rebalance_positions_plan_tracks_reject_reason() -> None:
     """Plan should retain reject_reason when validation fails."""
     strategy = MyStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.positions = {"AAA": 0.0}
     ctx.get_position.return_value = 0.0
     ctx.risk_config = SimpleNamespace(account_mode="cash", enable_short_sell=False)
@@ -5924,10 +5936,10 @@ def test_strategy_submit_order_trailing_validation() -> None:
 def test_strategy_submit_order_records_broker_options_in_backtest_mode() -> None:
     """submit_order should accept broker_options and attach them to known orders."""
     strategy = MyStrategy()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     order = SimpleNamespace(id="oid-broker-options")
     ctx.buy.return_value = order.id
-    ctx.active_orders = [order]
+    ctx.find_order.return_value = order
     strategy.ctx = ctx
 
     order_id = strategy.submit_order(
