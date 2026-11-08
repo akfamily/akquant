@@ -679,6 +679,18 @@ mod tests {
         assert_eq!(sig(&ev), vec![st("A", OrderStatus::Cancelled, false)]);
     }
 
+    /// ④ 已在账本里的订单再次出现在本轮新单列表中, 不能被当作新单再保护一轮:
+    /// 它随后进入终态快照时仍要按⑧通知(回退验证补充: 不检查 known 的改坏没有端到端场景能触发)。
+    #[test]
+    fn known_order_represented_as_new_is_not_pending() {
+        let mut l = OrderLedger::default();
+        let new = [order("A", OrderStatus::New, 0)];
+        l.stage_b(b(&new, &[], &[], &[]), None, LIMITS);
+        let fin = [order("A", OrderStatus::Cancelled, 0)];
+        let (ev, _) = l.stage_b(b(&new, &[], &[], &fin), None, LIMITS);
+        assert_eq!(sig(&ev), vec![st("A", OrderStatus::Cancelled, false)]);
+    }
+
     /// ⑧ 消失且无从判断: 不通知, 按账本旧快照留档。
     #[test]
     fn disappeared_silently_is_finalized_without_event() {

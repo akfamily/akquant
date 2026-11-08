@@ -6,7 +6,7 @@ Extracted from the live runner for direct unit testing and reuse by the
 
 from typing import Any, Dict
 
-#: 终态状态文本(小写)。与回测侧 ``strategy_order_events._TERMINAL_ORDER_STATUSES``
+#: 终态状态文本(小写)。与回测侧 ``src/order_ledger.rs`` 的 ``is_terminal``
 #: 保持同一口径——两边都必须含 ``expired``, 否则日内单收盘作废后仍被当活单。
 _TERMINAL_STATUSES = {"filled", "cancelled", "canceled", "rejected", "expired"}
 

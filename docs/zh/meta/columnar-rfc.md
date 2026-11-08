@@ -114,7 +114,7 @@ trait Clock           { fn now(&self) -> i64; fn timers(); }     // 随事件推
 
 1. **定规矩**：新增核心逻辑不出现 PyO3，PyO3 只放在各模块的 `python.rs`（`engine/`、`execution/`、`analysis/`、`calendar/` 已是这个结构）。
 2. **策略派发 trait 化**（✅ 2026-11-06）：引擎只经 `src/engine/strategy_handler.rs` 的 `StrategyHandler` 调用策略，Python 策略是实现之一（`PyStrategy`）；`Engine::run_with_strategy` 可以直接运行 Rust 原生策略，`StrategyContext::submit_order` 是纯 Rust 下单入口；有原生策略跑完整会话的单测。
-3. **按热点把策略语义下沉到 Rust**：Python 策略层约 1.1 万行（订单事件、OCO/括号单、`I()`、sizer、warmup、调度、本地止损……）。先下沉订单事件检查和框架钩子。
+3. **按热点把策略语义下沉到 Rust**：Python 策略层约 1.1 万行（订单事件、OCO/括号单、`I()`、sizer、warmup、调度、本地止损……）。先下沉订单事件检查和框架钩子。订单事件检查已下沉（2026-11-08，`src/order_ledger.rs`）；下一块是 `on_bar_event` 的簿记（持仓 bar 计数、warmup 计数）。
 4. **出现 Rust 使用方时**，再决定是否单独发布核心 crate、Rust 策略如何加载（Rust 没有稳定 ABI，跨 `.so` 传 trait 对象不安全）。
 
 ### 6.3 现状与下一步
