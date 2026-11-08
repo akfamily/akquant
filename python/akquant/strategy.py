@@ -732,6 +732,10 @@ class Strategy:
         # (optimize.py 多进程会 pickle 策略), 且属于会话级运行时状态。
         if "_live_subscription_forwarder" in state:
             del state["_live_subscription_forwarder"]
+        # 已确保过的历史容量绑着上下文对象(见 strategy_history), 是会话级运行时状态;
+        # 续跑时缓冲区按存档恢复、开跑前还会重配容量, 须重新确认。
+        if "_history_capacity_ensured" in state:
+            del state["_history_capacity_ensured"]
         # 交易日钩子的按交易日去重日期(_framework_*_done_date)随存档保存: 续跑时
         # 同一交易日已触发过的钩子不再触发(引擎侧也会跳过存档时刻之前的生命周期事件)。
         if "_framework_last_portfolio_state" in state:

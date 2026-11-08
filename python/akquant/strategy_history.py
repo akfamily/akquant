@@ -94,19 +94,43 @@ def _resolve_history_cutoff(strategy: Any) -> Optional[int]:
     return int(cutoff)
 
 
-def _ensure_history_depth(strategy: Any, count: int) -> None:
-    """取的历史比保留的多时自动加长, 并告警一次.
+def _ensured_history_capacity(strategy: Any, ctx: Any) -> int:
+    """在 ``ctx`` 上已确保过的历史容量; 换了上下文(新一次运行)时为 0."""
+    ensured = strategy.__dict__.get("_history_capacity_ensured")
+    if ensured is None or ensured[0] is not ctx:
+        return 0
+    return int(ensured[1])
 
-    此前缓冲区只保留 ``history_depth`` 根, ``count`` 更大时前面永远补 NaN, 且没有
-    任何提示。现在第一次超出时把保留长度加到 ``count``(之前的数据已补不回来,
-    此后满 ``count`` 根的 bar 起拿到完整数据)。只有缓冲区真的不够时才告警:
-    多个策略共用一份缓冲区, 别的策略已加长过时不算。
+
+def _note_history_capacity(strategy: Any, ctx: Any, capacity: int) -> None:
+    """记下在 ``ctx`` 上已确保过的历史容量(只增不减, 与缓冲区一致)."""
+    capacity = max(int(capacity), _ensured_history_capacity(strategy, ctx))
+    strategy._history_capacity_ensured = (ctx, capacity)
+
+
+def _ensure_history_depth(strategy: Any, count: int) -> None:
+    """取的历史比缓冲区保留的多时自动加长.
+
+    门槛是"在当前上下文上已确保过的容量", 不是 ``_history_depth``: 声明的深度
+    不一定已落到缓冲区, 而确保过的不再碰缓冲区, 免得每次取历史都拿写锁。
+
+    - 声明够(``count <= history_depth``)而容量没跟上: 静默补齐;
+    - 声明不够: 把保留长度加到 ``count`` 并告警一次(加长之前的数据补不回来,
+      此后满 ``count`` 根的 bar 起拿到完整数据)。多个策略共用一份缓冲区,
+      别的策略已加长过时不告警。
     """
     needed = int(count)
-    if needed <= int(strategy._history_depth):
+    ctx = strategy.ctx
+    if needed <= _ensured_history_capacity(strategy, ctx):
         return
-    grew = bool(strategy.ctx.ensure_history_capacity(needed))
-    previous = int(strategy._history_depth)
+    ensure = getattr(ctx, "ensure_history_capacity", None)
+    if ensure is None:
+        return
+    declared = int(strategy._history_depth)
+    grew = bool(ensure(needed))
+    _note_history_capacity(strategy, ctx, needed)
+    if needed <= declared:
+        return
     strategy._history_depth = needed
     if not grew or getattr(strategy, "_warned_history_depth_grown", False):
         return
@@ -116,7 +140,7 @@ def _ensure_history_depth(strategy: Any, count: int) -> None:
         "此后满 %d 根 bar 起才是完整数据; 请在 on_start 里调用 "
         "self.set_history_depth(%d)(或回测传 history_depth=%d)提前设置",
         needed,
-        previous,
+        declared,
         needed,
         needed,
         needed,
@@ -161,8 +185,19 @@ def _log_missing_history_symbol(strategy: Any, symbol: str, field: str) -> None:
 
 
 def set_history_depth(strategy: Any, depth: int) -> None:
-    """设置历史数据回溯长度."""
+    """设置历史数据回溯长度.
+
+    运行中(已有上下文的回调里)调用时立即把共享历史缓冲区加到 ``depth``
+    (只增不减)。开跑前与 ``on_start`` 里设的深度由引擎在全部 ``on_start``
+    之后统一补齐, 那时策略还没有上下文。
+    """
     strategy._history_depth = depth
+    ctx = getattr(strategy, "ctx", None)
+    ensure = getattr(ctx, "ensure_history_capacity", None)
+    if ensure is None or int(depth) <= 0:
+        return
+    ensure(int(depth))
+    _note_history_capacity(strategy, ctx, int(depth))
 
 
 def set_rolling_window(strategy: Any, train_window: int, step: int) -> None:

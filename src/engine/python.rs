@@ -1684,6 +1684,32 @@ impl Engine {
 }
 
 impl Engine {
+    /// 主策略与全部槽位策略的 `on_start` 都执行完之后, 把共享历史缓冲区加到它们
+    /// 要求的最大深度(只增不减, 已有数据保留)。
+    ///
+    /// 开跑前那次 `configure_history_depth` 只读主策略、且早于主策略的 `on_start`:
+    /// 实盘里主策略的 `on_start` 在 `run()` 内触发, 槽位策略的 `on_start` 由 Python
+    /// 侧在 `run()` 之前调, 直接用 `Engine.run` 时同理 —— 这些地方设的深度都要靠
+    /// 这里补上, 否则缓冲区停在默认容量(1 行)。回测的 `on_start` 早在 `run()`
+    /// 之前、各策略深度已统一下发, 这里不会再加长。读法与开跑前那次相同。
+    fn ensure_history_depth_after_start(&mut self, py: Python<'_>, strategy: &StrategyHandle) {
+        let depth = std::iter::once(strategy.history_depth(py))
+            .chain(
+                self.strategy_slot_strategies
+                    .iter()
+                    .flatten()
+                    .map(|slot_strategy| slot_strategy.history_depth(py)),
+            )
+            .flatten()
+            .max();
+        if let Some(depth) = depth {
+            self.history_buffer
+                .write()
+                .expect("history_buffer 写锁被污染")
+                .ensure_capacity(depth);
+        }
+    }
+
     /// 用给定策略跑完一次会话(回测或实盘)。Python 的 `Engine.run` 是它的薄包装;
     /// Rust 侧可直接传入任意 [`StrategyHandler`](super::strategy_handler::StrategyHandler) 实现。
     pub(crate) fn run_with_strategy(
@@ -1744,6 +1770,7 @@ impl Engine {
         }
 
         strategy.on_start(py)?;
+        self.ensure_history_depth_after_start(py, strategy);
 
         // Progress Bar Initialization
         // 传入 symbol_whitelist: 过滤生效后被丢弃标的独占的时间戳不该计入
