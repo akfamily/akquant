@@ -373,8 +373,11 @@ mod tests {
     use crate::engine::Engine;
     use crate::event::Event;
     use crate::model::timer::{LIFECYCLE_AFTER_TRADING, lifecycle_payload};
-    use crate::model::{Order, OrderSide, OrderType, Timer, TradingSession};
+    use crate::model::{Order, OrderSide, OrderStatus, OrderType, Timer, TradingSession};
+    use crate::pipeline::processor::Processor;
     use chrono::NaiveDate;
+    use pyo3::prelude::*;
+    use pyo3::types::PyList;
     use rust_decimal_macros::dec;
 
     fn stock_engine() -> Engine {
@@ -433,5 +436,134 @@ mod tests {
             engine.order_creation_sessions.get("o1"),
             Some(&TradingSession::Closed)
         );
+    }
+
+    /// 只记录撤单调用的撮合器替身: 用来观察 ChannelProcessor 对延迟撤单的处理。
+    struct RecordingClient {
+        cancels: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl crate::execution::ExecutionClient for RecordingClient {
+        fn on_order(&mut self, _order: Order) {}
+        fn on_cancel(&mut self, order_id: &str) {
+            self.cancels.lock().unwrap().push(order_id.to_string());
+        }
+        fn on_event(&mut self, _event: &Event, _ctx: &crate::context::EngineContext) -> Vec<Event> {
+            Vec::new()
+        }
+    }
+
+    type Cancels = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
+    /// 装上撤单记录替身与收集流事件的回调, 返回 (撤单记录, 流事件列表)。
+    fn instrumented_engine(py: pyo3::Python<'_>) -> (Engine, Cancels, pyo3::Py<PyList>) {
+        let mut engine = stock_engine();
+        let cancels: Cancels = Default::default();
+        engine.execution_model = Box::new(RecordingClient {
+            cancels: cancels.clone(),
+        });
+        let events = PyList::empty(py);
+        engine.stream_callback = Some(events.getattr("append").unwrap().unbind());
+        engine.stream_run_id = Some("test".to_string());
+        (engine, cancels, events.unbind())
+    }
+
+    fn run_channel(engine: &mut Engine, py: pyo3::Python<'_>) {
+        let strategy = crate::engine::strategy_handler::PyStrategy::handle(py.None());
+        super::ChannelProcessor
+            .process(engine, py, &strategy)
+            .unwrap();
+    }
+
+    /// 流事件里 order 类事件的状态序列(按发出顺序)。
+    fn order_stream_statuses(py: pyo3::Python<'_>, events: &pyo3::Py<PyList>) -> Vec<String> {
+        events
+            .bind(py)
+            .iter()
+            .filter(|ev| {
+                ev.get_item("event_type")
+                    .and_then(|t| t.extract::<String>())
+                    .is_ok_and(|t| t == "order")
+            })
+            .map(|ev| {
+                ev.get_item("payload")
+                    .and_then(|p| p.get_item("status"))
+                    .and_then(|s| s.extract::<String>())
+                    .unwrap()
+            })
+            .collect()
+    }
+
+    fn market_buy(id: &str) -> Order {
+        Order::test_new(id, "600000.SH", OrderSide::Buy, OrderType::Market, dec!(100))
+    }
+
+    #[test]
+    fn deferred_cancel_applies_when_order_is_validated() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let (mut engine, cancels, events) = instrumented_engine(py);
+            engine.deferred_cancels.insert("o1".to_string());
+            engine
+                .event_manager
+                .send(Event::OrderValidated(market_buy("o1")))
+                .unwrap();
+
+            run_channel(&mut engine, py);
+
+            let order = engine
+                .state
+                .order_manager
+                .active_orders
+                .iter()
+                .find(|o| o.id == "o1")
+                .expect("订单已登记为挂单");
+            assert_eq!(order.status, OrderStatus::Cancelled);
+            // 撤单回报经 apply_execution_report 处理后发出 order 流事件
+            assert_eq!(order_stream_statuses(py, &events), vec!["Cancelled"]);
+            assert_eq!(*cancels.lock().unwrap(), vec!["o1".to_string()]);
+            assert!(engine.deferred_cancels.is_empty());
+        });
+    }
+
+    #[test]
+    fn deferred_cancel_of_rejected_order_is_dropped_silently() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let (mut engine, cancels, _events) = instrumented_engine(py);
+            engine.deferred_cancels.insert("o2".to_string());
+            let mut rejected = market_buy("o2");
+            rejected.status = OrderStatus::Rejected;
+            engine
+                .event_manager
+                .send(Event::ExecutionReport(rejected, None))
+                .unwrap();
+
+            run_channel(&mut engine, py);
+
+            // 拒单已结束: 不再交给撮合器撤单(否则会告警 unknown order)
+            assert!(cancels.lock().unwrap().is_empty());
+            assert!(engine.deferred_cancels.is_empty());
+            assert_eq!(
+                engine.state.order_manager.current_step_rejected_orders.len(),
+                1
+            );
+        });
+    }
+
+    #[test]
+    fn deferred_cancel_of_unknown_order_is_flushed_to_execution_model() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let (mut engine, cancels, events) = instrumented_engine(py);
+            engine.deferred_cancels.insert("ghost".to_string());
+
+            run_channel(&mut engine, py);
+
+            // 事件处理完仍不认识: 交给撮合器(由它照旧告警), 然后清空
+            assert_eq!(*cancels.lock().unwrap(), vec!["ghost".to_string()]);
+            assert!(engine.deferred_cancels.is_empty());
+            assert!(order_stream_statuses(py, &events).is_empty());
+        });
     }
 }

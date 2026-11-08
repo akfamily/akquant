@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 import akquant as aq
 import pandas as pd
@@ -170,11 +170,66 @@ def test_cancel_in_same_on_bar(caplog: pytest.LogCaptureFixture) -> None:
     assert _unknown_cancel_warnings(caplog) == []
 
 
-def test_cancel_same_bar_with_current_close_fill() -> None:
+def test_cancel_same_bar_with_current_close_fill(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """当根收盘就能成交的设置下同回调下单撤单: 也不成交."""
     strategy = _CancelSameBar()
-    result = _run(strategy, fill_policy=CurrentClose())
+    with caplog.at_level(logging.WARNING, logger="akquant"):
+        result = _run(strategy, fill_policy=CurrentClose())
     _assert_cancelled_never_filled(strategy, result)
+    assert _unknown_cancel_warnings(caplog) == []
+
+
+#: 跨槽位测试里两个策略共享的订单号(下单方写、撤单方读)。
+_SHARED_ORDER: Dict[str, str] = {}
+
+
+class _SlotPlacer(_Recorder):
+    """主策略(先派发): 第 1 根 bar 下市价单, 把订单号留给另一个槽位."""
+
+    def act(self, bar: Bar) -> None:
+        if self.k == 1:
+            self.oid = self.buy(SYMBOL, 100).primary
+            _SHARED_ORDER["oid"] = self.oid
+
+
+class _SlotCanceller(Strategy):
+    """另一个槽位(后派发): 同一步的 on_bar 里撤主策略刚下的单."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.k = 0
+        self.cancelled_in_step: Optional[int] = None
+        self.seen_orders: List[str] = []
+
+    def on_bar(self, bar: Bar) -> None:
+        self.k += 1
+        oid = _SHARED_ORDER.get("oid")
+        if oid and self.cancelled_in_step is None:
+            self.cancel_order(oid)
+            self.cancelled_in_step = self.k
+
+    def on_order(self, order: Any) -> None:
+        self.seen_orders.append(_status_name(order.status))
+
+
+def test_cancel_across_slots_in_same_step(caplog: pytest.LogCaptureFixture) -> None:
+    """槽位 B 在同一步撤槽位 A 刚下的单: A 收到 New → Cancelled, B 什么也收不到."""
+    _SHARED_ORDER.clear()
+    placer = _SlotPlacer()
+    canceller = _SlotCanceller()
+    with caplog.at_level(logging.WARNING, logger="akquant"):
+        result = _run(placer, strategies_by_slot={"slot_b": canceller})
+    assert canceller.cancelled_in_step == 1  # 与下单同一步
+    assert placer.statuses == ["New", "Cancelled"]
+    assert canceller.seen_orders == []
+    assert all(p == 0.0 for p in placer.pos_seen), placer.pos_seen
+    orders = result.orders_df
+    assert len(orders) == 1
+    assert orders["status"].iloc[0] == "cancelled"
+    assert float(orders["filled_quantity"].iloc[0]) == 0.0
+    assert _unknown_cancel_warnings(caplog) == []
 
 
 class _CancelInTimer(_Recorder):
@@ -252,8 +307,7 @@ def test_cancel_risk_rejected_order_is_silent(
     strategy = _CancelRejected()
     with caplog.at_level(logging.WARNING, logger="akquant"):
         result = _run(strategy, initial_cash=100_000.0)
-    assert "Rejected" in strategy.statuses
-    assert "Filled" not in strategy.statuses
+    assert strategy.statuses == ["New", "Rejected"]
     assert all(p == 0.0 for p in strategy.pos_seen)
     assert result.orders_df["status"].iloc[0] == "rejected"
     assert _unknown_cancel_warnings(caplog) == []

@@ -2562,11 +2562,11 @@ impl Engine {
         }
         // 派发顺序 = pending 在前(它们更早闭合), tail 在后, 且只派发一次。
         bars.extend(tail);
-        if bars.is_empty() {
-            return Ok(());
-        }
+        // 空列表时 dispatch_window_bars 直接返回 Ok。
         let result = self.dispatch_window_bars(py, strategy, bars);
-        // 收尾派发之后不再有 ChannelProcessor: 这里下的单不会进引擎, 撤单按原样告警。
+        // 收尾之后不再有 ChannelProcessor: 收尾派发里下的单不会进引擎, 撤单按原样
+        // 告警; 中断(KeyboardInterrupt)时上一步回调留下的延迟撤单也在这里清掉。
+        // 无论有没有窗口要派发都要清。
         self.flush_deferred_cancels();
         result
     }
