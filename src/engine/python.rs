@@ -667,6 +667,7 @@ impl Engine {
                 28800,
             ))),
             pending_window_bars: Vec::new(),
+            deferred_cancels: HashSet::new(),
             initial_cash,
             active_start_time_ns: None,
             event_manager: EventManager::new(),

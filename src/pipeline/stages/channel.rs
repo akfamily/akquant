@@ -233,9 +233,22 @@ impl Processor for ChannelProcessor {
                         ) {
                             engine.execution_model.mark_created_off_bar(&order.id);
                         }
+                        let order_id = order.id.clone();
                         engine.state.order_manager.add_active_order(order);
+                        // 同一次回调里下单又撤单(issue #440): 撮合之前立即撤掉。
+                        engine.apply_deferred_cancel(&order_id);
                     }
                     Event::ExecutionReport(order, trade) => {
+                        // 风控拒单等已结束的单: 同回调里的撤单不必再做, 也不告警。
+                        if matches!(
+                            order.status,
+                            OrderStatus::Filled
+                                | OrderStatus::Cancelled
+                                | OrderStatus::Rejected
+                                | OrderStatus::Expired
+                        ) {
+                            engine.deferred_cancels.remove(&order.id);
+                        }
                         apply_execution_report(
                             engine,
                             py,
@@ -344,6 +357,9 @@ impl Processor for ChannelProcessor {
                 break;
             }
         }
+
+        // 事件全部处理完仍不认识的撤单订单号: 按原样告警并清空。
+        engine.flush_deferred_cancels();
 
         flush_accumulated_trades(engine, &mut trades_to_process);
 

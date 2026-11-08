@@ -9,8 +9,8 @@ def test_streaming_indicator_sink_is_public() -> None:
     assert StreamingIndicatorSink is Private
 
 
-def test_engine_rule_version_is_2_3_0() -> None:
-    """MAE/MFE 改为持仓期间边走边算、历史/回看超出自动加长, 规则版本为 2.3.0."""
+def test_engine_rule_version_is_2_3_1() -> None:
+    """同一次回调里下单又撤单不再被忽略(issue #440), 规则版本为 2.3.1."""
     import akquant
 
-    assert akquant.__engine_rule_version__ == "2.3.0"
+    assert akquant.__engine_rule_version__ == "2.3.1"
