@@ -11,7 +11,7 @@ use pyo3::types::PyDict;
 use pyo3_stub_gen::derive::*;
 use rust_decimal::prelude::*;
 use std::collections::{BinaryHeap, HashMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use uuid::Uuid;
 
 // use crate::analysis::{BacktestResult, PositionSnapshot};
@@ -323,6 +323,9 @@ pub struct Engine {
     /// 各槽位绑定的策略; `None` 表示该槽位用 `run()` 传入的主策略。
     pub(crate) strategy_slot_strategies: Vec<Option<StrategyHandle>>,
     pub(crate) strategy_slots: Vec<StrategySlot>,
+    /// 各策略槽的订单账本(按槽位策略 id), 与该槽的上下文共享同一个 Arc;
+    /// 随存档保存(见 `crate::order_ledger`)。
+    pub(crate) order_ledgers: HashMap<String, Arc<Mutex<crate::order_ledger::OrderLedger>>>,
     pub(crate) active_strategy_slot: usize,
     pub(crate) default_strategy_id: Option<String>,
     /// 已告警过的“所属策略不在任何槽位”的定时器 owner(每个 owner 只告警一次)。
@@ -1209,6 +1212,36 @@ impl Engine {
             .map(ToOwned::to_owned)
     }
 
+    /// 该槽位策略的订单账本, 没有就新建。
+    pub(crate) fn order_ledger_for(
+        &mut self,
+        strategy_id: &str,
+    ) -> Arc<Mutex<crate::order_ledger::OrderLedger>> {
+        self.order_ledgers
+            .entry(strategy_id.to_string())
+            .or_default()
+            .clone()
+    }
+
+    /// 该槽位的订单 / 成交归属规则; 只有一个槽位时为 None(不过滤)。
+    pub(crate) fn slot_ownership(
+        &self,
+        slot_index: usize,
+    ) -> Option<crate::order_ledger::SlotOwnership> {
+        let mine = self.strategy_slots.get(slot_index)?.strategy_id.clone();
+        let default_id = self
+            .default_strategy_id
+            .clone()
+            .filter(|id| !id.trim().is_empty())
+            .or_else(|| self.strategy_slots.first().map(|s| s.strategy_id.clone()))?;
+        let slot_ids = self
+            .strategy_slots
+            .iter()
+            .map(|s| s.strategy_id.clone())
+            .collect();
+        crate::order_ledger::SlotOwnership::new(mine, default_id, slot_ids)
+    }
+
     pub(crate) fn ensure_strategy_slot_exists(&mut self) {
         if self.strategy_slots.is_empty() {
             let strategy_id = self
@@ -1711,6 +1744,11 @@ impl Engine {
             .strategy_slots
             .get(slot_index)
             .map(|slot| slot.strategy_id.clone());
+        let ledger_key = strategy_id
+            .clone()
+            .unwrap_or_else(|| "_default".to_string());
+        let order_ledger = self.order_ledger_for(&ledger_key);
+        let slot_ownership = self.slot_ownership(slot_index);
         let ctx = self.create_context(
             active_orders,
             step_trades,
@@ -1719,6 +1757,8 @@ impl Engine {
             previous_cash,
             previous_account_metrics,
             sessions,
+            order_ledger,
+            slot_ownership,
         );
         let py_ctx = Py::new(py, ctx).unwrap();
         let persistent_ref = py_ctx.clone_ref(py);
@@ -2022,6 +2062,8 @@ impl Engine {
         previous_cash: Decimal,
         previous_account_metrics: AccountMetrics,
         sessions: crate::context::ContextSessions,
+        order_ledger: Arc<Mutex<crate::order_ledger::OrderLedger>>,
+        slot_ownership: Option<crate::order_ledger::SlotOwnership>,
     ) -> StrategyContext {
         let account_metrics = self.current_account_metrics();
         let stats_state = crate::analysis::StatsState {
@@ -2101,6 +2143,8 @@ impl Engine {
             sessions,
             stats_state,
             stats_equity: account_metrics.equity,
+            order_ledger: Some(order_ledger),
+            slot_ownership,
         })
     }
 

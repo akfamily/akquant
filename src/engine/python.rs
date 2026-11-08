@@ -680,6 +680,7 @@ impl Engine {
             progress_bar: None,
             strategy_contexts: vec![None],
             strategy_slot_strategies: vec![None],
+            order_ledgers: HashMap::new(),
             strategy_slots: vec![StrategySlot {
                 strategy_id: "_default".to_string(),
             }],
@@ -842,6 +843,16 @@ impl Engine {
             last_corp_action_date: self.last_corp_action_date,
             session_config: self.session_config.clone(),
             last_event_ts_in_day: self.last_event_ts_in_day,
+            order_ledgers: self
+                .order_ledgers
+                .iter()
+                .map(|(id, ledger)| {
+                    (
+                        id.clone(),
+                        ledger.lock().expect("order_ledger 锁被污染").snapshot(),
+                    )
+                })
+                .collect(),
         };
         let bytes =
             rmp_serde::to_vec(&snapshot).map_err(|e| PyValueError::new_err(e.to_string()))?;
@@ -895,6 +906,17 @@ impl Engine {
         self.last_event_ts_in_day = snapshot
             .last_event_ts_in_day
             .or((snapshot.current_time > 0).then_some(snapshot.current_time));
+        for ledger in self.order_ledgers.values() {
+            *ledger.lock().expect("order_ledger 锁被污染") =
+                crate::order_ledger::OrderLedger::default();
+        }
+        for (id, ledger) in snapshot.order_ledgers {
+            *self
+                .order_ledger_for(&id)
+                .lock()
+                .expect("order_ledger 锁被污染") =
+                crate::order_ledger::OrderLedger::restore(ledger);
+        }
         self.default_strategy_id = snapshot.strategy_risk_state.default_strategy_id;
         self.strategy_slots = snapshot
             .strategy_risk_state

@@ -241,6 +241,7 @@ mod tests {
                 },
             },
             last_event_ts_in_day: Some(123456000),
+            order_ledgers: HashMap::new(),
         };
 
         // 旧格式存档: msgpack 数组缺少末尾三个交易日进度字段, 读入时应为 None
@@ -344,5 +345,43 @@ mod tests {
             crate::calendar::resolver::build_sessions(cfg.session_specs().unwrap()).unwrap();
         assert_eq!(built.len(), 1);
         assert_eq!(built[0].0, "600000");
+    }
+
+    /// 订单账本按槽位策略 id 由引擎持有: 上下文重建后仍是同一本账, 并随存档往返。
+    #[test]
+    fn order_ledger_is_shared_per_slot_and_checkpointed() {
+        use crate::model::{Order, OrderSide, OrderType};
+        use rust_decimal_macros::dec;
+        pyo3::Python::initialize();
+        let mut engine = Engine::new();
+        let ledger = engine.order_ledger_for("_default");
+        let again = engine.order_ledger_for("_default");
+        assert!(std::sync::Arc::ptr_eq(&ledger, &again));
+
+        let order = Order::test_new("A", "X", OrderSide::Buy, OrderType::Limit, dec!(100));
+        {
+            let mut l = ledger.lock().unwrap();
+            l.stage_b(
+                crate::order_ledger::StageBInput {
+                    new_orders: std::slice::from_ref(&order),
+                    active: &[],
+                    trades: &[],
+                    finalized: &[],
+                },
+                None,
+                crate::order_ledger::LedgerLimits {
+                    finalized: 10,
+                    trade: 10,
+                },
+            );
+        }
+        pyo3::Python::attach(|py| {
+            let bytes = engine.get_state_bytes(py).unwrap();
+            let mut restored = Engine::new();
+            restored.load_state_bytes(&bytes).unwrap();
+            let l = restored.order_ledger_for("_default");
+            let l = l.lock().unwrap();
+            assert_eq!(l.find("A", &[]).map(|o| o.id), Some("A".to_string()));
+        });
     }
 }

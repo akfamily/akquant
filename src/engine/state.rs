@@ -68,6 +68,9 @@ pub struct EngineSnapshot {
     /// 定时器会把时钟推过最后一根行情，不能用 `current_time` 代替。
     #[serde(default)]
     pub last_event_ts_in_day: Option<i64>,
+    /// 各策略槽的订单账本(在途订单与已通知成交); 旧存档无此字段, 恢复为空。
+    #[serde(default)]
+    pub order_ledgers: HashMap<String, crate::order_ledger::OrderLedgerSnapshot>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]

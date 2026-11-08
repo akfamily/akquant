@@ -18,7 +18,7 @@ use pyo3_stub_gen::derive::*;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock, Weak};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 use uuid::Uuid;
 
 /// 引擎上下文 (Engine Context)
@@ -151,6 +151,10 @@ pub struct ContextInit {
     pub stats_state: crate::analysis::StatsState,
     /// 当前账户权益（Decimal，统计用，避免经 f64 的 account_equity 损失精度）。
     pub stats_equity: Decimal,
+    /// 本槽订单账本(与引擎共享); None 时新建一本(Python 直接构造上下文、单测)。
+    pub order_ledger: Option<Arc<Mutex<crate::order_ledger::OrderLedger>>>,
+    /// 多槽位归属规则; None 表示不过滤。
+    pub slot_ownership: Option<crate::order_ledger::SlotOwnership>,
 }
 
 /// 策略查询交易日与时段所需的状态（见 [`StrategyContext::session_of`]）。
@@ -560,6 +564,9 @@ pub struct StrategyContext {
     pub stats_state: crate::analysis::StatsState,
     /// 当前账户权益（Decimal），与 stats_state 配套。
     pub stats_equity: Decimal,
+    /// 本槽订单账本(与引擎共享), 见 [`StrategyContext::order_events`]。
+    pub(crate) order_ledger: Arc<Mutex<crate::order_ledger::OrderLedger>>,
+    pub(crate) slot_ownership: Option<crate::order_ledger::SlotOwnership>,
 }
 
 impl StrategyContext {
@@ -613,6 +620,8 @@ impl StrategyContext {
             sessions: init.sessions,
             stats_state: init.stats_state,
             stats_equity: init.stats_equity,
+            order_ledger: init.order_ledger.unwrap_or_default(),
+            slot_ownership: init.slot_ownership,
         }
     }
 
@@ -858,7 +867,96 @@ impl StrategyContext {
             sessions: ContextSessions::default(),
             stats_state: Default::default(),
             stats_equity: Decimal::ZERO,
+            order_ledger: Arc::default(),
+            slot_ownership: None,
         })
+    }
+
+    /// 本次订单事件检查要通知策略的回调(框架内部使用).
+    ///
+    /// ``stage=0`` 处理主动撤单 / 拒单 / 过期; 这一段没有要通知的订单时, 在同一次
+    /// 调用里接着处理新单 / 在途变化 / 离开在途 / 成交并返回 ``done=True``。
+    /// ``stage=1`` 处理后一段(此时读本轮新单, 含第一段回调里下的单)。
+    ///
+    /// :param stage: 0 或 1
+    /// :param finalized_limit: 终态留档上限
+    /// :param trade_limit: 成交去重上限
+    /// :return: None(无事件) 或 (``[(order, fire_reject), ...]``, ``[trade, ...]``, done)
+    #[allow(clippy::type_complexity)]
+    fn order_events(
+        &self,
+        stage: u8,
+        finalized_limit: usize,
+        trade_limit: usize,
+    ) -> PyResult<Option<(Vec<(Order, bool)>, Vec<Trade>, bool)>> {
+        use crate::order_ledger::{LedgerLimits, StageAInput, StageBInput};
+        let limits = LedgerLimits {
+            finalized: finalized_limit,
+            trade: trade_limit,
+        };
+        let ownership = self.slot_ownership.as_ref();
+        let mut ledger = self.order_ledger.lock().expect("order_ledger 锁被污染");
+        let stage_b = |ledger: &mut crate::order_ledger::OrderLedger| {
+            ledger.stage_b(
+                StageBInput {
+                    new_orders: &self.orders,
+                    active: &self.active_orders,
+                    trades: &self.recent_trades,
+                    finalized: &self.recent_finalized_orders,
+                },
+                ownership,
+                limits,
+            )
+        };
+        let pack = |events: Vec<crate::order_ledger::OrderEvent>| {
+            events
+                .into_iter()
+                .map(|e| (e.order, e.fire_reject))
+                .collect::<Vec<_>>()
+        };
+        match stage {
+            0 => {
+                let first = ledger.stage_a(
+                    StageAInput {
+                        canceled_ids: &self.canceled_order_ids,
+                        active: &self.active_orders,
+                        rejected: &self.recent_rejected_orders,
+                        expired: &self.recent_expired_orders,
+                    },
+                    ownership,
+                    limits,
+                );
+                if !first.is_empty() {
+                    return Ok(Some((pack(first), Vec::new(), false)));
+                }
+                let (events, trades) = stage_b(&mut ledger);
+                if events.is_empty() && trades.is_empty() {
+                    return Ok(None);
+                }
+                Ok(Some((pack(events), trades, true)))
+            }
+            1 => {
+                let (events, trades) = stage_b(&mut ledger);
+                if events.is_empty() && trades.is_empty() {
+                    return Ok(None);
+                }
+                Ok(Some((pack(events), trades, true)))
+            }
+            other => Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "order_events 的 stage 只能是 0 或 1, 收到 {other}"
+            ))),
+        }
+    }
+
+    /// 按订单号查订单(本槽账本在途 → 上下文在途 → 终态留档).
+    ///
+    /// :param order_id: 订单号
+    /// :return: 订单快照, 查不到为 None
+    fn find_order(&self, order_id: &str) -> Option<Order> {
+        self.order_ledger
+            .lock()
+            .expect("order_ledger 锁被污染")
+            .find(order_id, &self.active_orders)
     }
 
     /// 把历史缓冲区的保留长度加到至少 ``capacity``(只增不减, 已有数据保留).
@@ -1607,6 +1705,8 @@ mod tests {
             sessions,
             stats_state: Default::default(),
             stats_equity: Decimal::ZERO,
+            order_ledger: None,
+            slot_ownership: None,
         })
     }
 
