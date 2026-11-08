@@ -52,6 +52,8 @@ mod tests {
         pyo3::Python::initialize();
 
         let mut engine = Engine::new();
+        // 要检查补出的多行历史: 默认容量只留 1 行, 这里显式扩容
+        engine.configure_history_depth(10);
         engine
             .instruments
             .insert("A".to_string(), create_instrument("A"));

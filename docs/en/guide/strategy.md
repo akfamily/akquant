@@ -994,7 +994,7 @@ class MultiSymbolIncrementalStrategy(Strategy):
 
 Notes:
 
-* `ind[0]` is the current bar's value (`.value` is an alias) and `ind[1]` is the previous bar. Out-of-range lookback returns `None` instead of raising, so a single `if val is None` check covers the warmup period.
+* `ind[0]` is the current bar's value (`.value` is an alias) and `ind[1]` is the previous bar. Out-of-range lookback returns `None` instead of raising, so a single `if val is None` check covers the warmup period. Asking for `ind[n]` with `n` beyond `lookback` (default 128) grows the buffer automatically and logs a warning once; size `lookback` as the warning suggests.
 * If one shared instance is reused across multiple symbols, AKQuant raises an explicit error and points users to `factory=`.
 * In `on_bar` / `on_tick`, `ind[0]` reads the current symbol; in callbacks that do not belong to a symbol (`on_timer`, `on_cross_section`, ...) read a multi-symbol indicator with `ind.of(symbol)[0]` — a bare read raises. See the [Custom Indicator Guide](./custom_indicator.md#indicator-of-symbol).
 * `warmup_bars` only consumes history before the active start boundary and does not double-consume the first active bar.

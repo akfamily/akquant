@@ -3096,6 +3096,13 @@ class StrategyContext:
         r"""运行时绩效统计（口径同 result.metrics）."""
         ...
 
+    def ensure_history_capacity(self, capacity: int) -> bool:
+        r"""
+        把历史缓冲区的保留长度加到至少 ``capacity``(只增不减, 已有数据保留).
+
+        :param capacity: 需要保留的行数
+        :return: 是否真的加长了(此前保留的不够)
+        """
     def history(
         self,
         symbol: str,

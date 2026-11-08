@@ -494,9 +494,10 @@ impl OrderManager {
             // MAE/MFE 数值(golden 基线锁定的正是这条路径)。修复前只读 bar 容器,
             // 纯 tick 回测下恒为 None, MAE/MFE/max_drawdown_pct 静默变 0。
             let history_guard = history_buffer.read().unwrap();
-            let symbol_history = history_guard
-                .get_history(&trade.symbol)
-                .or_else(|| history_guard.get_tick_history(&trade.symbol));
+            let histories = crate::analysis::ExcursionHistories {
+                bar: history_guard.get_history(&trade.symbol),
+                tick: history_guard.get_tick_history(&trade.symbol),
+            };
 
             // Calculate Portfolio Value for % metrics
             let portfolio_value = calculate_account_metrics(
@@ -512,7 +513,7 @@ impl OrderManager {
                 &trade,
                 multiplier,
                 order_tag,
-                symbol_history,
+                Some(histories),
                 portfolio_value,
             );
 

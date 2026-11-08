@@ -16,6 +16,159 @@ pub struct TradeEntry {
     pub timestamp: i64,
     pub tag: String,
     pub entry_portfolio_value: Decimal,
+    /// 持仓期间在 bar / tick 序列上累计的极值(见 [`Excursion`]); 放在末尾并带
+    /// default, 旧快照仍可反序列化(缺失时平仓只按开仓价与平仓价计)。
+    #[serde(default)]
+    pub bar_excursion: Option<Excursion>,
+    #[serde(default)]
+    pub tick_excursion: Option<Excursion>,
+}
+
+/// 历史序列种类: MAE / MFE 只看 bar 与 tick 序列(不看多周期窗口序列)。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistorySeries {
+    Bar,
+    Tick,
+}
+
+/// 成交时该标的可用的历史序列, 不存在为 None。
+///
+/// 开仓时用它补上"时间戳不早于开仓时刻、已写入历史"的行(通常就是成交所在的那根
+/// bar); 平仓时按改造前的取法选序列: 有 bar 序列用 bar, 否则用 tick。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ExcursionHistories<'a> {
+    pub bar: Option<&'a SymbolHistory>,
+    pub tick: Option<&'a SymbolHistory>,
+}
+
+/// 一笔未平持仓在一条序列上的累计极值, 用于平仓时算 MAE / MFE / 持仓内最大回撤。
+///
+/// 改造前是平仓时回头扫描历史缓冲区, 而缓冲区只保留 `history_depth` 根(默认
+/// 10000), 持仓更久时开仓后那段行情已被淘汰, 结果被悄悄截断。现在从开仓起每写入
+/// 一行就累计一次, 算法与原扫描逐位相同: 初值取开仓价, 依次吸收每行的最高 / 最低价,
+/// 平仓时再吸收平仓价。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Excursion {
+    max_high: f64,
+    min_low: f64,
+    /// 多头: 持仓以来的最高价(回撤从它算起); 空头: 最低价。
+    extreme: f64,
+    max_drawdown: f64,
+}
+
+impl Excursion {
+    fn new(entry_price: f64) -> Self {
+        Self {
+            max_high: entry_price,
+            min_low: entry_price,
+            extreme: entry_price,
+            max_drawdown: 0.0,
+        }
+    }
+
+    /// 吸收一行行情(最高价 `high`、最低价 `low`)。
+    fn observe(&mut self, long: bool, high: f64, low: f64) {
+        if high > self.max_high {
+            self.max_high = high;
+        }
+        if low < self.min_low {
+            self.min_low = low;
+        }
+        if long {
+            // 多头回撤: 从持仓以来的最高价回落到本行最低价
+            if high > self.extreme {
+                self.extreme = high;
+            }
+            if self.extreme > 0.0 {
+                let dd = (self.extreme - low) / self.extreme;
+                if dd > self.max_drawdown {
+                    self.max_drawdown = dd;
+                }
+            }
+        } else {
+            // 空头回撤: 从持仓以来的最低价反弹到本行最高价
+            if low < self.extreme {
+                self.extreme = low;
+            }
+            if self.extreme > 0.0 {
+                let dd = (high - self.extreme) / self.extreme;
+                if dd > self.max_drawdown {
+                    self.max_drawdown = dd;
+                }
+            }
+        }
+    }
+
+    /// 吸收平仓价后返回 (MAE %, MFE %, 持仓内最大回撤 %)。
+    fn finish(mut self, long: bool, entry_price: f64, exit_price: f64) -> (f64, f64, f64) {
+        self.observe(long, exit_price, exit_price);
+        if long {
+            (
+                (self.min_low - entry_price) / entry_price * 100.0,
+                (self.max_high - entry_price) / entry_price * 100.0,
+                self.max_drawdown * 100.0,
+            )
+        } else {
+            (
+                (entry_price - self.max_high) / entry_price * 100.0,
+                (entry_price - self.min_low) / entry_price * 100.0,
+                self.max_drawdown * 100.0,
+            )
+        }
+    }
+
+    /// 拆股: 价格按比例换算(回撤是比例, 不变), 与开仓价的换算一致。
+    fn rescale(&mut self, ratio: f64) {
+        if ratio > 0.0 {
+            self.max_high /= ratio;
+            self.min_low /= ratio;
+            self.extreme /= ratio;
+        }
+    }
+}
+
+/// 开仓时的初始累计状态: 从开仓价起, 吸收序列里时间戳不早于开仓时刻的行。
+fn opening_excursion(
+    history: Option<&SymbolHistory>,
+    long: bool,
+    entry_price: f64,
+    entry_time: i64,
+) -> Excursion {
+    let mut excursion = Excursion::new(entry_price);
+    if let Some(hist) = history {
+        let start = match hist.timestamps.binary_search(&entry_time) {
+            Ok(i) | Err(i) => i,
+        };
+        for i in start..hist.timestamps.len() {
+            excursion.observe(long, hist.highs[i], hist.lows[i]);
+        }
+    }
+    excursion
+}
+
+/// 平仓时的 (MAE %, MFE %, 持仓内最大回撤 %)。没有传历史(到期结算、强制平仓)
+/// 时记 0, 与改造前一致; 序列选择同改造前: 有 bar 序列用 bar, 否则用 tick。
+fn closing_excursion(
+    entry: &TradeEntry,
+    histories: Option<&ExcursionHistories<'_>>,
+    long: bool,
+    exit_price: f64,
+) -> (f64, f64, f64) {
+    let Some(histories) = histories else {
+        return (0.0, 0.0, 0.0);
+    };
+    let state = if histories.bar.is_some() {
+        entry.bar_excursion.as_ref()
+    } else if histories.tick.is_some() {
+        entry.tick_excursion.as_ref()
+    } else {
+        return (0.0, 0.0, 0.0);
+    };
+    let entry_price = entry.price.to_f64().unwrap_or_default();
+    state
+        .cloned()
+        .unwrap_or_else(|| Excursion::new(entry_price))
+        .finish(long, entry_price, exit_price)
 }
 
 /// 一笔平仓的汇总更新；两个方向的平仓分支共用（以前是两段相同的代码）。
@@ -143,10 +296,60 @@ impl TradeTracker {
         }
     }
 
+    /// 该标的的 bar / tick 序列写入了一行: 更新它所有未平持仓的累计极值。
+    ///
+    /// 只吸收时间戳不早于开仓时刻的行(与改造前按开仓时刻截取历史一致)。
+    pub fn observe_history_row(
+        &mut self,
+        symbol: &str,
+        series: HistorySeries,
+        timestamp: i64,
+        high: f64,
+        low: f64,
+    ) {
+        for (inventory, long) in [
+            (self.long_inventory.get_mut(symbol), true),
+            (self.short_inventory.get_mut(symbol), false),
+        ] {
+            let Some(queue) = inventory else {
+                continue;
+            };
+            for entry in queue.iter_mut() {
+                if timestamp < entry.timestamp {
+                    continue;
+                }
+                let state = match series {
+                    HistorySeries::Bar => entry.bar_excursion.as_mut(),
+                    HistorySeries::Tick => entry.tick_excursion.as_mut(),
+                };
+                if let Some(state) = state {
+                    state.observe(long, high, low);
+                }
+            }
+        }
+    }
+
     pub fn on_split(&mut self, symbol: &str, ratio: Decimal) {
         let safe_ratio = ratio.abs();
         if safe_ratio <= Decimal::ZERO {
             return;
+        }
+        let ratio_f64 = safe_ratio.to_f64().unwrap_or(0.0);
+        for queue in [
+            self.long_inventory.get_mut(symbol),
+            self.short_inventory.get_mut(symbol),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            for entry in queue.iter_mut() {
+                for state in [entry.bar_excursion.as_mut(), entry.tick_excursion.as_mut()]
+                    .into_iter()
+                    .flatten()
+                {
+                    state.rescale(ratio_f64);
+                }
+            }
         }
 
         if let Some(queue) = self.long_inventory.get_mut(symbol) {
@@ -195,7 +398,7 @@ impl TradeTracker {
         trade: &Trade,
         multiplier: Decimal,
         order_tag: Option<&str>,
-        history: Option<&SymbolHistory>,
+        histories: Option<ExcursionHistories<'_>>,
         portfolio_value: Decimal,
     ) {
         let symbol = trade.symbol.clone();
@@ -254,109 +457,13 @@ impl TradeTracker {
                         let to_f64 = |d: Decimal| d.to_f64().unwrap_or_default();
 
                         // Calculate MAE/MFE and Max Drawdown
-                        let mut mae = 0.0;
-                        let mut mfe = 0.0;
-                        let mut max_dd_pct = 0.0;
-
-                        if let Some(hist) = history {
-                            // Short trade:
-                            // MAE (Adverse) = Max High during trade
-                            // MFE (Favorable) = Min Low during trade
-                            let start_ts = match_entry.timestamp;
-                            let end_ts = timestamp;
-
-                            // Find indices
-                            let start_idx = match hist.timestamps.binary_search(&start_ts) {
-                                Ok(i) => i,
-                                Err(i) => i,
-                            };
-                            let end_idx = match hist.timestamps.binary_search(&end_ts) {
-                                Ok(i) => i,
-                                Err(i) => i, // Include up to end_ts
-                            };
-
-                            // Iterate
-                            let entry_px_f64 = to_f64(match_entry.price);
-                            let mut max_high = entry_px_f64;
-                            let mut min_low = entry_px_f64;
-
-                            let mut valley_low = entry_px_f64; // For Short Drawdown: lowest price seen so far (max profit)
-                            let mut current_max_dd = 0.0;
-
-                            let search_start = start_idx;
-                            let search_end = end_idx + 1; // inclusive of end_idx
-
-                            if search_start < hist.timestamps.len() {
-                                let limit = search_end.min(hist.timestamps.len());
-                                for i in search_start..limit {
-                                    let h = hist.highs[i];
-                                    let l = hist.lows[i];
-
-                                    if h > max_high {
-                                        max_high = h;
-                                    }
-                                    if l < min_low {
-                                        min_low = l;
-                                    }
-
-                                    // Short Drawdown Logic:
-                                    // Drawdown is from the lowest price seen so far (valley).
-                                    // If price rises from valley, that's drawdown.
-                                    if l < valley_low {
-                                        valley_low = l;
-                                    }
-                                    // Calculate drawdown at this bar's high (worst case in this bar)
-                                    // DD = (High - Valley) / Valley
-                                    if valley_low > 0.0 {
-                                        let dd = (h - valley_low) / valley_low;
-                                        if dd > current_max_dd {
-                                            current_max_dd = dd;
-                                        }
-                                    }
-                                }
-                            }
-
-                            // If no bars in between (same bar entry/exit), assume entry/exit prices are bounds
-                            if max_high == -f64::INFINITY {
-                                let p = to_f64(price);
-                                max_high = entry_px_f64.max(p);
-                                min_low = entry_px_f64.min(p);
-
-                                // Check DD with exit price
-                                if p < valley_low {
-                                    valley_low = p;
-                                }
-                                if valley_low > 0.0 {
-                                    let dd = (p - valley_low) / valley_low;
-                                    if dd > current_max_dd {
-                                        current_max_dd = dd;
-                                    }
-                                }
-                            } else {
-                                // Also consider exit price
-                                let p = to_f64(price);
-                                max_high = max_high.max(p);
-                                min_low = min_low.min(p);
-
-                                if p < valley_low {
-                                    valley_low = p;
-                                }
-                                if valley_low > 0.0 {
-                                    let dd = (p - valley_low) / valley_low;
-                                    if dd > current_max_dd {
-                                        current_max_dd = dd;
-                                    }
-                                }
-                            }
-
-                            // Short:
-                            // MAE: (Entry - MaxHigh) / Entry. (e.g. 100 - 110 / 100 = -10%)
-                            mae = (entry_px_f64 - max_high) / entry_px_f64 * 100.0;
-                            // MFE: (Entry - MinLow) / Entry. (e.g. 100 - 90 / 100 = +10%)
-                            mfe = (entry_px_f64 - min_low) / entry_px_f64 * 100.0;
-
-                            max_dd_pct = current_max_dd * 100.0;
-                        }
+                        // MAE / MFE / 持仓内最大回撤: 用持仓期间边走边算的极值
+                        let (mae, mfe, max_dd_pct) = closing_excursion(
+                            match_entry,
+                            histories.as_ref(),
+                            false,
+                            to_f64(price),
+                        );
 
                         Arc::make_mut(&mut self.closed_trades).push(ClosedTrade {
                             symbol: symbol.clone(),
@@ -413,6 +520,18 @@ impl TradeTracker {
                             timestamp,
                             tag: tag.clone(),
                             entry_portfolio_value: portfolio_value,
+                            bar_excursion: Some(opening_excursion(
+                                histories.as_ref().and_then(|h| h.bar),
+                                true,
+                                price.to_f64().unwrap_or_default(),
+                                timestamp,
+                            )),
+                            tick_excursion: Some(opening_excursion(
+                                histories.as_ref().and_then(|h| h.tick),
+                                true,
+                                price.to_f64().unwrap_or_default(),
+                                timestamp,
+                            )),
                         });
                 }
             }
@@ -456,106 +575,9 @@ impl TradeTracker {
                         let to_f64 = |d: Decimal| d.to_f64().unwrap_or_default();
 
                         // Calculate MAE/MFE
-                        let mut mae = 0.0;
-                        let mut mfe = 0.0;
-                        let mut max_dd_pct = 0.0;
-
-                        if let Some(hist) = history {
-                            // Long trade:
-                            // MAE (Adverse) = Min Low during trade
-                            // MFE (Favorable) = Max High during trade
-                            let start_ts = match_entry.timestamp;
-                            let end_ts = timestamp;
-
-                            let start_idx = match hist.timestamps.binary_search(&start_ts) {
-                                Ok(i) => i,
-                                Err(i) => i,
-                            };
-                            let end_idx = match hist.timestamps.binary_search(&end_ts) {
-                                Ok(i) => i,
-                                Err(i) => i,
-                            };
-
-                            let entry_px_f64 = to_f64(match_entry.price);
-                            let mut max_high = entry_px_f64;
-                            let mut min_low = entry_px_f64;
-
-                            let mut peak_high = entry_px_f64; // For Long Drawdown: highest price seen so far (max profit)
-                            let mut current_max_dd = 0.0;
-
-                            let search_start = start_idx;
-                            let search_end = end_idx + 1;
-
-                            if search_start < hist.timestamps.len() {
-                                let limit = search_end.min(hist.timestamps.len());
-                                for i in search_start..limit {
-                                    let h = hist.highs[i];
-                                    let l = hist.lows[i];
-
-                                    if h > max_high {
-                                        max_high = h;
-                                    }
-                                    if l < min_low {
-                                        min_low = l;
-                                    }
-
-                                    // Long Drawdown Logic:
-                                    // Drawdown is from the highest price seen so far (peak).
-                                    // If price falls from peak, that's drawdown.
-                                    if h > peak_high {
-                                        peak_high = h;
-                                    }
-                                    // Calculate drawdown at this bar's low (worst case in this bar)
-                                    // DD = (Peak - Low) / Peak
-                                    if peak_high > 0.0 {
-                                        let dd = (peak_high - l) / peak_high;
-                                        if dd > current_max_dd {
-                                            current_max_dd = dd;
-                                        }
-                                    }
-                                }
-                            }
-
-                            if max_high == -f64::INFINITY {
-                                let p = to_f64(price);
-                                max_high = entry_px_f64.max(p);
-                                min_low = entry_px_f64.min(p);
-
-                                // Check DD with exit price
-                                if p > peak_high {
-                                    peak_high = p;
-                                }
-                                if peak_high > 0.0 {
-                                    let dd = (peak_high - p) / peak_high;
-                                    if dd > current_max_dd {
-                                        current_max_dd = dd;
-                                    }
-                                }
-                            } else {
-                                let p = to_f64(price);
-                                max_high = max_high.max(p);
-                                min_low = min_low.min(p);
-
-                                // Check DD with exit price
-                                if p > peak_high {
-                                    peak_high = p;
-                                }
-                                if peak_high > 0.0 {
-                                    let dd = (peak_high - p) / peak_high;
-                                    if dd > current_max_dd {
-                                        current_max_dd = dd;
-                                    }
-                                }
-                            }
-
-                            // Long:
-                            // MAE: (MinLow - Entry) / Entry. (e.g. 90 - 100 / 100 = -10%)
-                            mae = (min_low - entry_px_f64) / entry_px_f64 * 100.0;
-                            // MFE: (MaxHigh - Entry) / Entry. (e.g. 110 - 100 / 100 = +10%)
-                            mfe = (max_high - entry_px_f64) / entry_px_f64 * 100.0;
-
-                            max_dd_pct = current_max_dd * 100.0;
-                        }
+                        // MAE / MFE / 持仓内最大回撤: 用持仓期间边走边算的极值
+                        let (mae, mfe, max_dd_pct) =
+                            closing_excursion(match_entry, histories.as_ref(), true, to_f64(price));
 
                         Arc::make_mut(&mut self.closed_trades).push(ClosedTrade {
                             symbol: symbol.clone(),
@@ -610,6 +632,18 @@ impl TradeTracker {
                             timestamp,
                             tag: tag.clone(),
                             entry_portfolio_value: portfolio_value,
+                            bar_excursion: Some(opening_excursion(
+                                histories.as_ref().and_then(|h| h.bar),
+                                false,
+                                price.to_f64().unwrap_or_default(),
+                                timestamp,
+                            )),
+                            tick_excursion: Some(opening_excursion(
+                                histories.as_ref().and_then(|h| h.tick),
+                                false,
+                                price.to_f64().unwrap_or_default(),
+                                timestamp,
+                            )),
                         });
                 }
             }

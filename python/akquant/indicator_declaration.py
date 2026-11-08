@@ -18,12 +18,15 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Deque, Dict, NamedTuple, Optional, Tuple, cast
 
 from .akquant import clone_indicator as _clone_rust_indicator
+from .log import get_logger
 
 #: 标签未知(基础周期不可解析)时 ``set_provisional`` 记的占位标签; 不发流事件。
 UNKNOWN_LABEL = -1
 
 #: 回溯缓冲默认深度。足够绝大多数形态判断(交叉、背离、N 根新高)。
 DEFAULT_LOOKBACK = 128
+
+_logger = get_logger("strategy")
 
 
 def _normalize_value(value: Any) -> Any:
@@ -179,6 +182,8 @@ class IndicatorDeclaration:
 
     # --- 序列回溯 ---
     lookback: int = DEFAULT_LOOKBACK
+    #: 回看超出 lookback 自动加长时是否已告警过(只告警一次)
+    lookback_grown_warned: bool = False
     #: symbol -> 最近 lookback 个**已确认**取值(含未就绪时的 None)
     history: Dict[str, Deque[Any]] = field(default_factory=dict)
 
@@ -238,6 +243,28 @@ class IndicatorDeclaration:
             buffer = deque(maxlen=max(1, int(self.lookback)))
             self.history[symbol] = buffer
         buffer.append(value)
+
+    def ensure_lookback(self, symbol: str, offset: int) -> Optional[int]:
+        """``offset`` 超出 ``lookback`` 时把所有 symbol 的回溯缓冲加长到够用.
+
+        有临时值时 ``[n]`` 取的是已确认序列的第 n-1 个(见 :meth:`value_at`)。
+        加长前已淘汰的值补不回来。
+
+        :return: 加长前的 ``lookback``; 没有加长时为 ``None``
+        """
+        index = int(offset)
+        if index < 0:
+            return None
+        if symbol in self.provisional and index > 0:
+            index -= 1
+        needed = index + 1
+        if needed <= int(self.lookback):
+            return None
+        previous = int(self.lookback)
+        self.lookback = needed
+        for key, buffer in list(self.history.items()):
+            self.history[key] = deque(buffer, maxlen=needed)
+        return previous
 
     def value_at(self, symbol: str, offset: int) -> Any:
         """取该 symbol 前 ``offset`` 根的取值; 越界返回 ``None``.
@@ -406,8 +433,28 @@ class IndicatorBinding:
         return str(resolved)
 
     def __getitem__(self, offset: int) -> Any:
-        """``ind[0]`` 当前值, ``ind[n]`` 前 n 根; 越界返回 ``None``."""
-        return self._declaration().value_at(self._resolved_symbol(), offset)
+        """``ind[0]`` 当前值, ``ind[n]`` 前 n 根; 越界返回 ``None``.
+
+        ``n`` 超出 ``lookback`` 时自动加长并告警一次(此前是永远返回 ``None``,
+        与预热期还没有值分不开)。
+        """
+        declaration = self._declaration()
+        symbol = self._resolved_symbol()
+        previous = declaration.ensure_lookback(symbol, offset)
+        if previous is not None and not declaration.lookback_grown_warned:
+            declaration.lookback_grown_warned = True
+            _logger.warning(
+                "指标 %s 回看 [%d] 超出 lookback=%d: 已自动加长到 %d。加长之前的值"
+                "补不回来, 此后满 %d 根 bar 起才有值; 请在声明时写 "
+                "self.I(..., lookback=%d)",
+                self._name,
+                int(offset),
+                previous,
+                declaration.lookback,
+                declaration.lookback,
+                declaration.lookback,
+            )
+        return declaration.value_at(symbol, offset)
 
     def __len__(self) -> int:
         """当前 symbol 已积累的回溯长度."""

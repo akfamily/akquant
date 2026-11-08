@@ -658,7 +658,10 @@ impl Engine {
             timezone_name: Some("Asia/Shanghai".to_string()),
             days_per_year: 252.0,
             risk_free_rate: 0.0,
-            history_buffer: Arc::new(RwLock::new(HistoryBuffer::new(10000))), // Default large capacity for MAE/MFE
+            // 默认只留 1 行: 用作"该标的有没有 bar / tick 序列"的标记(双流判断、停牌补 bar)。
+            // MAE / MFE 由持仓记录边走边算, 不依赖历史长度; 策略要取历史时按
+            // history_depth / warmup_period 扩容。
+            history_buffer: Arc::new(RwLock::new(HistoryBuffer::new(1))),
             window_aggregator: Arc::new(RwLock::new(crate::data::WindowAggregator::with_clock(
                 Some("Asia/Shanghai"),
                 28800,
@@ -995,7 +998,15 @@ impl Engine {
             .expect("window_aggregator 写锁被污染");
         let mut events = Vec::with_capacity(bars.len());
         for bar in bars {
-            buffer.update(&bar);
+            if let Some((ts, high, low)) = buffer.update(&bar) {
+                self.state.order_manager.trade_tracker.observe_history_row(
+                    &bar.symbol,
+                    crate::analysis::HistorySeries::Bar,
+                    ts,
+                    high,
+                    low,
+                );
+            }
             // 预加载也要喂窗口聚合器, 否则启动时窗口历史为空、按周期注册的指标要
             // 重新预热(规格 7.2)。闭合出的窗口 bar 只写历史, 不派发回调。
             let closed = aggregator.update(&bar);

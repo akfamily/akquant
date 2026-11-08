@@ -138,6 +138,15 @@ impl SymbolHistory {
         }
     }
 
+    /// 最新一行的 (时间戳, 最高价, 最低价)。
+    fn last_row(&self) -> Option<(i64, f64, f64)> {
+        Some((
+            *self.timestamps.back()?,
+            *self.highs.back()?,
+            *self.lows.back()?,
+        ))
+    }
+
     /// 当前视图(序列本身)。
     pub fn view(&self) -> HistoryView<'_> {
         HistoryView {
@@ -365,6 +374,26 @@ impl HistoryBuffer {
         self.window_data.clear();
     }
 
+    /// 把容量加到至少 `capacity`(只增不减): 已有数据保留, 之后不再按旧容量淘汰,
+    /// 上一视图不受影响(序列本身没变)。返回是否真的加长了。
+    ///
+    /// 策略取的历史比保留的多时由它自动加长(见 `StrategyContext::ensure_history_capacity`)。
+    pub fn ensure_capacity(&mut self, capacity: usize) -> bool {
+        if capacity <= self.default_capacity {
+            return false;
+        }
+        self.default_capacity = capacity;
+        for history in self
+            .data
+            .values_mut()
+            .chain(self.tick_data.values_mut())
+            .chain(self.window_data.values_mut())
+        {
+            history.capacity = history.capacity.max(capacity);
+        }
+        true
+    }
+
     pub fn set_capacity_preserve_existing(&mut self, capacity: usize) {
         self.default_capacity = capacity;
         if capacity == 0 {
@@ -387,9 +416,10 @@ impl HistoryBuffer {
         }
     }
 
-    pub fn update(&mut self, bar: &Bar) {
+    /// 写入一根 bar; 返回写入的 (时间戳, 最高价, 最低价), 未写入(容量为 0)时为 None。
+    pub fn update(&mut self, bar: &Bar) -> Option<(i64, f64, f64)> {
         if self.default_capacity == 0 {
-            return;
+            return None;
         }
 
         let capacity = self.default_capacity;
@@ -401,6 +431,7 @@ impl HistoryBuffer {
                 .or_insert_with(|| SymbolHistory::new(capacity)),
         };
         history.push(bar);
+        history.last_row()
     }
 
     /// `update` 的 tick 版本, 语义与之对称, 但落到独立的 `tick_data` 容器.
@@ -410,9 +441,10 @@ impl HistoryBuffer {
     /// **不写入 `data`**: tick 以退化 OHLC (`open=high=low=close=price`) 写入,
     /// 若与 bar 共用同一个 `SymbolHistory`, 高频 tick 会把历史 bar 挤出窗口,
     /// 且完全静默——取到的值看起来就是合法价格, 指标照算, 结果却全错。
-    pub fn update_tick(&mut self, tick: &Tick) {
+    /// 写入一个 tick; 返回值同 [`HistoryBuffer::update`](tick 的最高价 = 最低价 = 成交价)。
+    pub fn update_tick(&mut self, tick: &Tick) -> Option<(i64, f64, f64)> {
         if self.default_capacity == 0 {
-            return;
+            return None;
         }
 
         let capacity = self.default_capacity;
@@ -424,6 +456,7 @@ impl HistoryBuffer {
                 .or_insert_with(|| SymbolHistory::new(capacity)),
         };
         history.push_tick(tick);
+        history.last_row()
     }
 
     /// `update` 的窗口版本: 落到 `window_data[(symbol, freq)]`。`bar.freq` 为 None 时忽略
@@ -919,6 +952,35 @@ mod tests {
     }
 
     #[test]
+    fn ensure_capacity_only_grows_and_reports_growth() {
+        let mut buffer = HistoryBuffer::new(2);
+        for ts in 1..=3 {
+            buffer.update(&make_bar(ts, ts * 10, None));
+        }
+        assert_eq!(buffer.get_history("TEST").unwrap().closes, vec![20.0, 30.0]);
+        // 不大于现有容量: 不变, 返回 false
+        assert!(!buffer.ensure_capacity(2));
+        assert!(!buffer.ensure_capacity(1));
+        assert_eq!(buffer.default_capacity, 2);
+        // 加长: 已有数据保留, 之后不再淘汰
+        assert!(buffer.ensure_capacity(4));
+        assert_eq!(buffer.default_capacity, 4);
+        for ts in 4..=5 {
+            buffer.update(&make_bar(ts, ts * 10, None));
+        }
+        assert_eq!(
+            buffer.get_history("TEST").unwrap().closes,
+            vec![20.0, 30.0, 40.0, 50.0]
+        );
+        // 加长后新建的序列也用新容量
+        buffer.update_window(&make_window_bar(5, 50, "5min"));
+        assert_eq!(
+            buffer.get_window_history("TEST", "5min").unwrap().capacity,
+            4
+        );
+    }
+
+    #[test]
     fn snapshot_without_window_field_restores_empty_window_series() {
         let json = r#"{"data":{},"tick_data":{},"default_capacity":16}"#;
         let snapshot: HistoryBufferSnapshot = serde_json::from_str(json).unwrap();
@@ -1058,10 +1120,15 @@ mod tests {
                             .insert(("TEST".to_string(), freq.to_string()), before);
                     }
                 }
-                90..=95 => {
+                90..=92 => {
                     let capacity = [0_usize, 1, 2, 3, 5, 8][next(6) as usize];
                     buffer.set_capacity_preserve_existing(capacity);
                     reference.clear();
+                }
+                93..=95 => {
+                    // 只增不减地加长: 序列与上一视图都不变
+                    let capacity = [1_usize, 4, 6, 9][next(4) as usize];
+                    buffer.ensure_capacity(capacity);
                 }
                 96..=97 => {
                     let restored = HistoryBuffer::from(HistoryBufferSnapshot::from(&buffer));

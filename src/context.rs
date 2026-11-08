@@ -861,6 +861,23 @@ impl StrategyContext {
         })
     }
 
+    /// 把历史缓冲区的保留长度加到至少 ``capacity``(只增不减, 已有数据保留).
+    ///
+    /// 策略取的历史比保留的多时由框架调用; 多个策略共用一份缓冲区, 别的策略已经
+    /// 加长过时这里什么也不做。
+    ///
+    /// :param capacity: 需要保留的行数
+    /// :return: 是否真的加长了(此前保留的不够)
+    fn ensure_history_capacity(&self, capacity: usize) -> bool {
+        match &self.history_buffer {
+            Some(buffer) => buffer
+                .write()
+                .expect("history_buffer 写锁被污染")
+                .ensure_capacity(capacity),
+            None => false,
+        }
+    }
+
     /// 获取历史数据.
     ///
     /// :param symbol: 标的代码

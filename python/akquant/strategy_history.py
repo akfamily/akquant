@@ -94,6 +94,37 @@ def _resolve_history_cutoff(strategy: Any) -> Optional[int]:
     return int(cutoff)
 
 
+def _ensure_history_depth(strategy: Any, count: int) -> None:
+    """取的历史比保留的多时自动加长, 并告警一次.
+
+    此前缓冲区只保留 ``history_depth`` 根, ``count`` 更大时前面永远补 NaN, 且没有
+    任何提示。现在第一次超出时把保留长度加到 ``count``(之前的数据已补不回来,
+    此后满 ``count`` 根的 bar 起拿到完整数据)。只有缓冲区真的不够时才告警:
+    多个策略共用一份缓冲区, 别的策略已加长过时不算。
+    """
+    needed = int(count)
+    if needed <= int(strategy._history_depth):
+        return
+    grew = bool(strategy.ctx.ensure_history_capacity(needed))
+    previous = int(strategy._history_depth)
+    strategy._history_depth = needed
+    if not grew or getattr(strategy, "_warned_history_depth_grown", False):
+        return
+    strategy._warned_history_depth_grown = True
+    logger.warning(
+        "取历史 count=%d 超过保留长度 %d: 已自动加长到 %d。加长之前的数据补不回来, "
+        "此后满 %d 根 bar 起才是完整数据; 请在 on_start 里调用 "
+        "self.set_history_depth(%d)(或回测传 history_depth=%d)提前设置",
+        needed,
+        previous,
+        needed,
+        needed,
+        needed,
+        needed,
+        extra=build_log_extra(phase="strategy"),
+    )
+
+
 def _log_missing_history_symbol(strategy: Any, symbol: str, field: str) -> None:
     """未登记 symbol 的全 NaN 历史留痕: 首次 WARNING 点名, 之后同 key 降 DEBUG.
 
@@ -171,6 +202,7 @@ def get_history(
     _validate_field_for_freq(normalized_field, freq)
     resolved_freq = _infer_freq(strategy, freq)
     history_cutoff = _resolve_history_cutoff(strategy)
+    _ensure_history_depth(strategy, count)
     arr = strategy.ctx.history(
         symbol, normalized_field, count, history_cutoff, resolved_freq
     )
@@ -217,6 +249,7 @@ def get_history_multi(
         _validate_field_for_freq(normalized_field, freq)
     resolved_freq = _infer_freq(strategy, freq)
     history_cutoff = _resolve_history_cutoff(strategy)
+    _ensure_history_depth(strategy, count)
     raw = strategy.ctx.history_multi(
         symbol, normalized_fields, count, history_cutoff, resolved_freq
     )
