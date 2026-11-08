@@ -7,6 +7,7 @@ from typing import Any, List, Tuple
 
 import akquant as aq
 import pandas as pd
+from _mock_ctx import mock_strategy_context
 from akquant import Bar, Strategy, run_backtest
 
 TZ = "Asia/Shanghai"
@@ -644,9 +645,6 @@ def test_next_occurrence_out_of_calendar_returns_none() -> None:
 
 def test_live_weekly_monthly_register_next_and_reschedule() -> None:
     """实盘（无 _trading_days）weekly/monthly 不再直接返回：登记下一次，触发后重排."""
-    from unittest.mock import MagicMock
-
-    from akquant.akquant import StrategyContext
 
     class P(Strategy):
         def __init__(self) -> None:
@@ -657,7 +655,7 @@ def test_live_weekly_monthly_register_next_and_reschedule() -> None:
             self.fired.append(payload)
 
     s = P()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.canceled_order_ids = []
     ctx.active_orders = []
     ctx.recent_trades = []
@@ -741,10 +739,7 @@ def test_live_daily_timer_delivered_early_reschedules_to_next_trading_day(
     monkeypatch: Any,
 ) -> None:
     """墙钟略早于目标、ctx.current_time 等于目标时，重排到下一交易日（不重复触发）."""
-    from unittest.mock import MagicMock
-
     import akquant.strategy_scheduler as sched
-    from akquant.akquant import StrategyContext
 
     class P(Strategy):
         def __init__(self) -> None:
@@ -759,7 +754,7 @@ def test_live_daily_timer_delivered_early_reschedules_to_next_trading_day(
         sched, "_wall_clock", lambda tz: target - pd.Timedelta(milliseconds=5)
     )
     s = P()
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.canceled_order_ids = []
     ctx.active_orders = []
     ctx.recent_trades = []

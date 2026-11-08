@@ -41,6 +41,10 @@ class _AsyncCancelCtx:
             )
         ]
 
+    def find_order(self, order_id: str) -> Any:
+        """按 id 查单(同 Rust 上下文: 每次返回新的包装对象)."""
+        return next((o for o in self.active_orders if o.id == order_id), None)
+
     def cancel_order(self, order_id: str) -> None:
         """记录撤单调用, 但本拍不确认(不写入 canceled_order_ids)."""
         self.cancel_calls.append(order_id)

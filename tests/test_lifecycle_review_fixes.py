@@ -7,6 +7,7 @@ from typing import Any, List, Tuple
 
 import akquant
 import pandas as pd
+from _mock_ctx import mock_strategy_context
 from akquant import Bar, Strategy, run_backtest
 
 TZ = "Asia/Shanghai"
@@ -469,11 +470,8 @@ def test_always_open_with_explicit_calendar_uses_calendar_days() -> None:
 
 
 def _live_ctx(all_days: bool) -> Any:
-    from unittest.mock import MagicMock
 
-    from akquant.akquant import StrategyContext
-
-    ctx = MagicMock(spec=StrategyContext)
+    ctx = mock_strategy_context()
     ctx.canceled_order_ids = []
     ctx.active_orders = []
     ctx.recent_trades = []

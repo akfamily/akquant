@@ -1,10 +1,13 @@
 """同一订单的同一状态不得重复触发 on_order.
 
-``check_order_events`` 每个 bar/tick 事件都会跑一遍, 而 ``_emit_order_callback``
-对 ``on_order`` 是**无条件调用**(``on_reject`` 早有 ``_framework_rejected_order_ids``
-去重, ``on_order`` 没有等价物)。于是只要一张单还留在 ``ctx.recent_rejected_orders``
-里, 它每个 bar 都会再推一次 —— 这正是测试反馈里 "order、trade 回调没做隔离, 是全量
-推送的" 与 "没做时间限制, 非交易时间也在返回" 的一个来源(同一张单跨交易日反复出现,
+``check_order_events`` 每个 bar/tick 事件都会跑一遍, 而(订单账本改造前)旧实现的
+``_emit_order_callback`` 对 ``on_order`` 是**无条件调用**(``on_reject`` 早有
+``_framework_rejected_order_ids`` 去重, ``on_order`` 没有等价物)。现在去重由
+Rust 订单账本(``src/order_ledger.rs``)按状态指纹完成。于是只要一张单还留在
+``ctx.recent_rejected_orders`` 里, 它每个 bar 都会再推一次 —— 这正是测试反馈里
+"order、trade 回调没做隔离, 是全量推送的" 与
+"没做时间限制, 非交易时间也在返回" 的一个来源
+(同一张单跨交易日反复出现,
 看起来就像盘后还在推送新回报)。
 
 **去重键必须是状态指纹**(订单标识 + 状态 + 已成交量), **不能含时间戳** ——

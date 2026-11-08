@@ -1,5 +1,4 @@
 import datetime as dt
-from collections import deque
 from collections.abc import Iterable
 from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
@@ -594,12 +593,6 @@ def ensure_framework_state(strategy: Any) -> None:
         strategy._framework_last_portfolio_state = None
     if not hasattr(strategy, "_framework_portfolio_dirty"):
         strategy._framework_portfolio_dirty = True
-    if not hasattr(strategy, "_framework_rejected_order_ids"):
-        strategy._framework_rejected_order_ids = set()
-    if not hasattr(strategy, "_framework_order_event_keys"):
-        strategy._framework_order_event_keys = set()
-    if not hasattr(strategy, "_framework_order_event_key_order"):
-        strategy._framework_order_event_key_order = deque()
     if not hasattr(strategy, "_framework_expiry_event_keys"):
         strategy._framework_expiry_event_keys = set()
     if not hasattr(strategy, "_framework_live_stop_dispatched"):

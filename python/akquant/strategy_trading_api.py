@@ -80,11 +80,16 @@ def get_open_orders(strategy: Any, symbol: Optional[str] = None) -> List[Any]:
 
 
 def get_order(strategy: Any, order_id: str) -> Optional[Any]:
-    """获取指定订单详情."""
+    """获取指定订单详情(本槽账本在途 → 上下文在途 → 终态留档)."""
+    ctx = getattr(strategy, "ctx", None)
+    find_order = getattr(ctx, "find_order", None)
+    if find_order is None:
+        return None
+    order = find_order(str(order_id))
+    if order is None:
+        return None
     canceled_order_ids = {
-        str(oid)
-        for oid in getattr(getattr(strategy, "ctx", None), "canceled_order_ids", [])
-        if oid
+        str(oid) for oid in getattr(ctx, "canceled_order_ids", []) if oid
     }
     pending_canceled_ids: Set[str] = getattr(
         strategy, "_pending_canceled_order_ids", set()
@@ -93,43 +98,13 @@ def get_order(strategy: Any, order_id: str) -> Optional[Any]:
         pending_canceled_ids = set()
         setattr(strategy, "_pending_canceled_order_ids", pending_canceled_ids)
     canceled_order_ids.update(str(oid) for oid in pending_canceled_ids if oid)
-
-    if order_id in strategy._known_orders:
-        order = strategy._known_orders[order_id]
-        if order_id in canceled_order_ids:
-            try:
-                order.status = OrderStatus.Cancelled
-            except Exception:
-                pass
-        _attach_broker_options(strategy, order_id, order)
-        return order
-
-    if strategy.ctx:
-        for o in strategy.ctx.active_orders:
-            if o.id == order_id:
-                if order_id in canceled_order_ids:
-                    try:
-                        o.status = OrderStatus.Cancelled
-                    except Exception:
-                        pass
-                _attach_broker_options(strategy, order_id, o)
-                return o
-
-    # 终态订单已离开在途账本(_known_orders / ctx.active_orders), 回退查留档,
-    # 否则订单一旦成交/撤单/被拒就永久查不到。
-    finalized = getattr(strategy, "_finalized_orders", None)
-    if isinstance(finalized, dict):
-        order = finalized.get(order_id)
-        if order is not None:
-            if order_id in canceled_order_ids:
-                try:
-                    order.status = OrderStatus.Cancelled
-                except Exception:
-                    pass
-            _attach_broker_options(strategy, order_id, order)
-            return order
-
-    return None
+    if str(order_id) in canceled_order_ids:
+        try:
+            order.status = OrderStatus.Cancelled
+        except Exception:
+            pass
+    _attach_broker_options(strategy, order_id, order)
+    return order
 
 
 def _record_broker_options(
@@ -1956,7 +1931,7 @@ def _sim_capabilities(strategy: Any) -> Dict[str, Any]:
 
 
 def _remember_pending_cancel(strategy: Any, order_id: str) -> None:
-    """记录撤单意图, 按 FIFO 淘汰(同 remember_trade_key).
+    """记录撤单意图, 按 FIFO 淘汰(同订单账本的成交去重).
 
     ``ctx.canceled_order_ids`` 只是当拍增量, 该集合负责让撤单意图跨拍生效;
     paper 模式走 SimExecution 且可长跑, 因此必须有上限。

@@ -58,7 +58,6 @@ from ..strategy_framework_hooks import (
     normalize_dual_stream_declaration,
 )
 from ..strategy_loader import resolve_strategy_input
-from ..strategy_order_events import assign_slot_ownership
 from ..strategy_runtime_config import apply_strategy_runtime_config
 from ..strategy_window import configure_engine_window_subscriptions
 from ..utils import format_metric_value
@@ -334,7 +333,8 @@ def _instruments_to_snapshots(
 class _StrategyCallbackFanout:
     """多槽位 broker_live 的柜台回调路由器.
 
-    与回测/paper 的槽位语义一致(``strategy_order_events._slot_filter``):
+    与回测/paper 的槽位语义一致(``Rust 订单账本的槽位归属规则
+    (src/order_ledger.rs::SlotOwnership)``):
     订单、成交、执行回报与 OCO/Bracket 协调(``_process_order_groups``)按
     ``owner_strategy_id`` 只派给所属槽位, owner 为空或不在任何槽位的归默认
     槽位; 账户回调 ``on_portfolio_update`` 是全账户的, 广播给全部槽位。
@@ -1349,10 +1349,6 @@ class LiveRunner:
         setattr(strategy_instance, "_owner_strategy_id", effective_strategy_id)
         for slot_id, slot_strategy in slot_strategy_instances.items():
             setattr(slot_strategy, "_owner_strategy_id", slot_id)
-        assign_slot_ownership(
-            {effective_strategy_id: strategy_instance, **slot_strategy_instances},
-            effective_strategy_id,
-        )
 
         default_ready = getattr(self, "trading_mode", "paper") != "broker_live"
         for target in [strategy_instance, *slot_strategy_instances.values()]:

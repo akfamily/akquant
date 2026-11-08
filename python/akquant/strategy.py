@@ -30,7 +30,6 @@ from pydantic import create_model
 
 from .akquant import (
     Bar,
-    Order,
     StrategyContext,
     Tick,
     TimeInForce,
@@ -92,18 +91,6 @@ from .strategy_order_events import (
 )
 from .strategy_order_events import (
     flush_terminal_expiry_events as _flush_terminal_expiry_events_impl,
-)
-from .strategy_order_events import (
-    key_value as _key_value_impl,
-)
-from .strategy_order_events import (
-    remember_trade_key as _remember_trade_key_impl,
-)
-from .strategy_order_events import (
-    trade_dedupe_cache_limit as _trade_dedupe_cache_limit_impl,
-)
-from .strategy_order_events import (
-    trade_event_key as _trade_event_key_impl,
 )
 from .strategy_position import Position
 from .strategy_preload import PHASE_RUN, replay_preload_history
@@ -385,13 +372,8 @@ class Strategy:
     _ml_pending_window_index: int
     _ml_pending_window_start_bar: Optional[int]
     _ml_pending_window_end_bar: Optional[int]
-    _known_orders: Dict[str, Order]
-    _finalized_orders: Dict[str, Order]
-    _finalized_order_ids: Deque[str]
     _pending_canceled_order_ids: set[str]
     _pending_canceled_order_id_queue: Deque[str]
-    _seen_trade_keys: set[Tuple[Any, ...]]
-    _seen_trade_key_order: Deque[Tuple[Any, ...]]
     timezone: str = "Asia/Shanghai"
     #: 每个 (标的, 绘图类型) 最多保留的存活对象数，超出淘汰最早创建的
     #: （同 Pine max_labels_count）
@@ -423,9 +405,6 @@ class Strategy:
     _framework_pre_open_done_date: Optional[dt.date]
     _framework_last_portfolio_state: Any
     _framework_portfolio_dirty: bool
-    _framework_rejected_order_ids: set[str]
-    _framework_order_event_keys: set[Tuple[Any, ...]]
-    _framework_order_event_key_order: Deque[Tuple[Any, ...]]
     _framework_expiry_event_keys: set[Tuple[Any, ...]]
     _framework_live_stop_dispatched: bool
     _framework_in_pre_open_phase: bool
@@ -595,17 +574,12 @@ class Strategy:
         instance._live_market_data_owner = False
         instance._warned_live_subscriptions = set()
         instance._last_prices = {}
-        instance._known_orders = {}
-        instance._finalized_orders = {}
-        instance._finalized_order_ids = deque()
         # 撤单意图: 必须在此初始化。三处使用点都写作
         # ``getattr(strategy, "_pending_canceled_order_ids", set())``, 该惯用法在
         # 属性缺失时返回一个**临时** set, 其后的 isinstance 检查恒真 ⇒ setattr 永不
         # 执行 ⇒ add 落到临时集合上随即丢弃。字段预先存在才能让 add 真正生效。
         instance._pending_canceled_order_ids = set()
         instance._pending_canceled_order_id_queue = deque()
-        instance._seen_trade_keys = set()
-        instance._seen_trade_key_order = deque()
         instance._hold_bars = defaultdict(int)
         instance._last_position_signs = defaultdict(float)
         # per-symbol warmup 门槛计数(与全局 _bar_count 分离, 见该字段注释)。
@@ -688,9 +662,6 @@ class Strategy:
         instance._framework_pre_open_done_date = None
         instance._framework_last_portfolio_state = None
         instance._framework_portfolio_dirty = True
-        instance._framework_rejected_order_ids = set()
-        instance._framework_order_event_keys = set()
-        instance._framework_order_event_key_order = deque()
         instance._framework_expiry_event_keys = set()
         instance._framework_live_stop_dispatched = False
         instance._framework_in_pre_open_phase = False
@@ -767,18 +738,6 @@ class Strategy:
             del state["_framework_last_portfolio_state"]
         if "_framework_portfolio_dirty" in state:
             del state["_framework_portfolio_dirty"]
-        if "_framework_rejected_order_ids" in state:
-            del state["_framework_rejected_order_ids"]
-        # on_order 的状态指纹去重集合同属会话内派生态: 刻意**不**随存档带走。
-        # 热启动后 ctx 里的在途/终态订单会重新出现一轮, 此时宁可多推一次
-        # on_order(让恢复后的策略看到当前订单状态), 也不要因为旧 key 残留而
-        # 把恢复后的第一次状态通报整批吞掉。
-        for _order_dedupe_key in (
-            "_framework_order_event_keys",
-            "_framework_order_event_key_order",
-        ):
-            if _order_dedupe_key in state:
-                del state[_order_dedupe_key]
         # 实盘收尾标志同属会话内派生态: 续跑是一段新会话, 理应能再收尾一次。
         if "_framework_live_stop_dispatched" in state:
             del state["_framework_live_stop_dispatched"]
@@ -797,12 +756,6 @@ class Strategy:
             del state["_framework_current_order"]
         if "_framework_current_trade" in state:
             del state["_framework_current_trade"]
-        # 终态订单留档: 纯运行期缓存, 且持有不可 pickle 的 Rust Order 对象,
-        # 必须排除在快照之外(恢复后按需重新累积)。
-        if "_finalized_orders" in state:
-            del state["_finalized_orders"]
-        if "_finalized_order_ids" in state:
-            del state["_finalized_order_ids"]
         if "_indicator_recorder" in state:
             del state["_indicator_recorder"]
         if "_order_group_lock" in state:
@@ -881,19 +834,11 @@ class Strategy:
         self._framework_current_trade = None
         self._is_restored = True  # 标记为已恢复状态
         self._start_initialized = False
-        if not hasattr(self, "_seen_trade_keys"):
-            self._seen_trade_keys = set()
         if not hasattr(self, "_incremental_indicators"):
             self._incremental_indicators = {}
         if not hasattr(self, "_window_subscriptions"):
             self._window_subscriptions = []
         self._window_subscriptions_frozen = False
-        if not hasattr(self, "_seen_trade_key_order"):
-            self._seen_trade_key_order = deque()
-        if not hasattr(self, "_finalized_orders"):
-            self._finalized_orders = {}
-        if not hasattr(self, "_finalized_order_ids"):
-            self._finalized_order_ids = deque()
         if not hasattr(self, "_pending_canceled_order_ids"):
             self._pending_canceled_order_ids = set()
         if not hasattr(self, "_pending_canceled_order_id_queue"):
@@ -2742,18 +2687,6 @@ class Strategy:
     def _check_order_events(self) -> None:
         _check_order_events_impl(self)
 
-    def _trade_event_key(self, trade: Any) -> Tuple[Any, ...]:
-        return _trade_event_key_impl(self, trade)
-
-    def _key_value(self, value: Any) -> Any:
-        return _key_value_impl(value)
-
-    def _remember_trade_key(self, key: Tuple[Any, ...]) -> bool:
-        return _remember_trade_key_impl(self, key)
-
-    def _trade_dedupe_cache_limit(self) -> int:
-        return _trade_dedupe_cache_limit_impl(self)
-
     def _on_bar_event(self, bar: Bar, ctx: StrategyContext) -> None:
         _on_bar_event_impl(self, bar, ctx)
 
@@ -3270,8 +3203,8 @@ class Strategy:
         Returns:
             Order: 订单对象，如果未找到则返回 None
         """
-        # 经执行后端(与 get_position/get_account 一致): 回测 SimExecution→ctx/
-        # _known_orders, broker_live BrokerExecution→柜台挂单扫描(否则恒 None)。
+        # 经执行后端(与 get_position/get_account 一致): 回测 SimExecution→
+        # 上下文的订单账本, broker_live BrokerExecution→柜台挂单扫描(否则恒 None)。
         return self.execution.get_order(order_id)
 
     def get_account(self) -> Dict[str, Any]:
