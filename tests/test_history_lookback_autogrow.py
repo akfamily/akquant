@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 import pytest
 from akquant import Bar, Strategy
+from akquant.indicator_declaration import IndicatorDeclaration
+from akquant.strategy_history import _ensure_history_depth
 
 
 def _frame(closes: List[float]) -> pd.DataFrame:
@@ -164,3 +166,134 @@ def test_indicator_index_within_lookback_does_not_warn(
         _run(Probe, CLOSES[:8])
 
     assert _warnings(caplog, "lookback") == []
+
+
+# --- 自动加长的上限: max(10000, 策略显式声明的深度) ---
+
+
+class _LimitCtx:
+    """只记录 ensure_history_capacity 调用的假上下文."""
+
+    def __init__(self) -> None:
+        self.calls: List[int] = []
+
+    def ensure_history_capacity(self, capacity: int) -> bool:
+        self.calls.append(capacity)
+        return True
+
+
+class _Bare(Strategy):
+    def on_bar(self, bar: Bar) -> None:
+        pass
+
+
+def _bare(depth: int, warmup: int = 0) -> Any:
+    strategy: Any = _Bare()
+    strategy._history_depth = depth
+    strategy.warmup_period = warmup
+    strategy.ctx = _LimitCtx()
+    return strategy
+
+
+def test_get_history_over_limit_does_not_grow_and_warns_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """要的超过自动加长上限: 不加长、单独告警一次, 照旧前面补 NaN."""
+    seen: dict[int, np.ndarray] = {}
+
+    class Probe(Strategy):
+        def on_start(self) -> None:
+            self.set_history_depth(10)
+            self.k = 0
+
+        def on_bar(self, bar: Bar) -> None:
+            self.k += 1
+            if self.k in (20, 30, 40):
+                seen[self.k] = self.get_history(count=10001, symbol="X")
+
+    with caplog.at_level(logging.WARNING, logger="akquant"):
+        _run(Probe, CLOSES[:40])
+
+    for k, window in seen.items():
+        assert len(window) == 10001
+        # 缓冲区仍只留 10 根
+        np.testing.assert_array_equal(window[-10:], np.array(CLOSES[k - 10 : k]))
+        assert int(np.isnan(window).sum()) == 10001 - 10
+    hits = _warnings(caplog, "count=10001")
+    assert len(hits) == 1, hits
+    assert "自动加长上限 10000" in hits[0]
+    assert "set_history_depth(10001)" in hits[0]
+    assert _warnings(caplog, "已自动加长") == []
+
+
+def test_history_limit_boundary_is_default_capacity() -> None:
+    """没声明更大深度时, 上限是 10000: 10000 加长, 10001 不加长."""
+    strategy = _bare(depth=10)
+    _ensure_history_depth(strategy, 10001)
+    assert strategy.ctx.calls == []
+    _ensure_history_depth(strategy, 10000)
+    assert strategy.ctx.calls == [10000]
+
+
+@pytest.mark.parametrize(
+    ("depth", "warmup", "warns"),
+    [(12000, 0, False), (10, 12000, True)],
+    ids=["history_depth", "warmup_period"],
+)
+def test_explicit_larger_declaration_lifts_limit(
+    caplog: pytest.LogCaptureFixture, depth: int, warmup: int, warns: bool
+) -> None:
+    """显式声明更大的 history_depth / warmup_period 时, 可以加长到 10000 以上."""
+    strategy = _bare(depth=depth, warmup=warmup)
+    with caplog.at_level(logging.WARNING, logger="akquant"):
+        _ensure_history_depth(strategy, 11000)
+
+    assert strategy.ctx.calls == [11000]
+    assert _warnings(caplog, "上限") == []
+    assert len(_warnings(caplog, "已自动加长到 11000")) == (1 if warns else 0)
+
+
+def test_indicator_index_over_limit_does_not_grow_and_warns_once(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """指标回看超过自动加长上限: 不加长、单独告警一次, 照旧返回 None."""
+    seen: List[Any] = []
+    lengths: List[int] = []
+
+    class Probe(Strategy):
+        def on_start(self) -> None:
+            self.sma = self.I(aq.SMA(2), lookback=3)
+
+        def on_bar(self, bar: Bar) -> None:
+            seen.append(self.sma[10001])
+            lengths.append(len(self.sma))
+
+    with caplog.at_level(logging.WARNING, logger="akquant"):
+        _run(Probe, CLOSES[:30])
+
+    assert seen == [None] * 30
+    assert max(lengths) == 3
+    hits = _warnings(caplog, "lookback")
+    assert len(hits) == 1, hits
+    assert "自动加长上限 10000" in hits[0]
+    assert "lookback=10002" in hits[0]
+
+
+def test_indicator_limit_boundary() -> None:
+    """指标的上限是 max(10000, 声明的 lookback): 10000 加长, 10001 不加长."""
+    declaration = IndicatorDeclaration(lookback=3)
+    declaration.push_value("X", 1.0)
+    declaration.ensure_lookback("X", 10000, "sma")
+    assert declaration.lookback == 3
+    declaration.ensure_lookback("X", 9999, "sma")
+    assert declaration.lookback == 10000
+    # 加长到上限后不再加长
+    declaration.ensure_lookback("X", 10000, "sma")
+    assert declaration.lookback == 10000
+
+    # 声明的 lookback 本身大于 10000 时照常可用, 但不再往上自动加长
+    large = IndicatorDeclaration(lookback=12000)
+    large.ensure_lookback("X", 11999, "sma")
+    assert large.lookback == 12000
+    large.ensure_lookback("X", 12000, "sma")
+    assert large.lookback == 12000

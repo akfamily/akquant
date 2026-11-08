@@ -85,7 +85,9 @@ that the requested frequency was actually subscribed.
 - If `ind[n]` asks for `n` beyond `lookback`, the buffer grows automatically and a
   warning is logged once; values dropped before the growth cannot be recovered, so
   `ind[n]` has a value from `n+1` bars later. Declare `self.I(..., lookback=n+1)` as the
-  warning suggests
+  warning suggests. Automatic growth is capped at the larger of 10000 and the declared
+  `lookback`; beyond the cap it no longer grows, warns once on its own, and keeps
+  returning `None`
 
 A not-ready value is always `None` (both a native indicator with an unfilled window and a
 precomputed indicator whose asof lookup misses are normalized to `None`), so a single

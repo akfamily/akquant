@@ -78,7 +78,8 @@ class MaCross(Strategy):
 - 回溯深度由 `lookback` 界定（默认 128），底层是有界环形缓冲：实盘是无限流，
   无界缓冲必然泄漏
 - `ind[n]` 的 `n` 超出 `lookback` 时自动加长并告警一次：加长之前的值补不回来，此后满
-  `n+1` 根 bar 起才有值。请按告警在声明时写 `self.I(..., lookback=n+1)`
+  `n+1` 根 bar 起才有值。请按告警在声明时写 `self.I(..., lookback=n+1)`。自动加长的上限是
+  10000 与声明的 `lookback` 中的较大值，超过上限不再加长，单独告警一次，照旧返回 `None`
 
 未就绪时取值为 `None`（原生指标未满窗、预计算指标 asof 落空都归一成 `None`），
 因此判空统一写 `if value is None`，不必再区分 `NaN`。

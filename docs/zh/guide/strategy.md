@@ -766,7 +766,7 @@ AKQuant 提供了两种风格的策略开发接口：
 
 *   **`self.get_history(count, ...)`**: 返回 `numpy.ndarray`，性能最高，适合计算指标。
 *   **`self.get_history_df(count, ...)`**: 返回 `pandas.DataFrame`，包含 OHLCV，适合复杂分析。
-*   **`count` 超过保留长度时会自动加长并告警一次**：保留长度取 `history_depth` / `warmup_period`。`count` 更大时，框架第一次遇到就把保留长度加到 `count`，并打一条告警给出该设的值；加长之前已丢掉的数据补不回来，此后满 `count` 根 bar 起才是完整数据。请按告警在 `on_start` 里调用 `self.set_history_depth(N)` 提前设置（回测与实盘都生效）。预热期数据还不够（前面补 NaN）是正常情况，不会告警。
+*   **`count` 超过保留长度时会自动加长并告警一次**：保留长度取 `history_depth` / `warmup_period`。`count` 更大时，框架第一次遇到就把保留长度加到 `count`，并打一条告警给出该设的值；加长之前已丢掉的数据补不回来，此后满 `count` 根 bar 起才是完整数据。请按告警在 `on_start` 里调用 `self.set_history_depth(N)` 提前设置（回测与实盘都生效）。预热期数据还不够（前面补 NaN）是正常情况，不会告警。自动加长有上限：取 10000 与显式声明的 `history_depth` / `warmup_period` 中的较大值；`count` 超过上限时不再加长，单独告警一次，照旧前面补 NaN，以免 `get_history(self.bars_held)` 这类随时间增长的 `count` 让实盘里的缓冲区无限增长。
 
 **`freq` 参数（tick/bar 双流下按需选择粒度）**
 

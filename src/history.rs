@@ -378,6 +378,8 @@ impl HistoryBuffer {
     /// 上一视图不受影响(序列本身没变)。返回是否真的加长了。
     ///
     /// 策略取的历史比保留的多时由它自动加长(见 `StrategyContext::ensure_history_capacity`)。
+    /// 这里不设上限: 自动加长的上限(max(10000, 策略声明的深度))由 Python 侧调用方
+    /// 把关(`strategy_history._ensure_history_depth`), 显式声明的深度照设不误。
     pub fn ensure_capacity(&mut self, capacity: usize) -> bool {
         if capacity <= self.default_capacity {
             return false;

@@ -7,6 +7,12 @@ from .log import build_log_extra, get_logger
 
 logger = get_logger("strategy")
 
+#: 自动加长的保底上限(0.3.82 的默认容量)。实际上限取它与策略显式声明的
+#: ``history_depth`` / ``warmup_period`` 中的最大值; 超过上限不再加长, 防止
+#: ``get_history(self.bars_held)`` 这类随时间增长的 count 让缓冲区在实盘里无界增长
+#: (加长是对全部标的、bar / tick / 窗口序列一起加长)。
+AUTO_GROW_LIMIT = 10000
+
 #: tick 序列可用的字段。tick 没有 open/high/low, 请求它们会静默返回退化 OHLC
 #: (price 冒充 high), 故显式拒绝。
 _TICK_ALLOWED_FIELDS = frozenset({"price", "close", "volume"})
@@ -117,7 +123,9 @@ def _ensure_history_depth(strategy: Any, count: int) -> None:
     - 声明够(``count <= history_depth``)而容量没跟上: 静默补齐;
     - 声明不够: 把保留长度加到 ``count`` 并告警一次(加长之前的数据补不回来,
       此后满 ``count`` 根的 bar 起拿到完整数据)。多个策略共用一份缓冲区,
-      别的策略已加长过时不告警。
+      别的策略已加长过时不告警;
+    - 超过自动加长上限 ``max(AUTO_GROW_LIMIT, history_depth, warmup_period)``:
+      不加长, 单独告警一次, 照旧前面补 NaN。
     """
     needed = int(count)
     ctx = strategy.ctx
@@ -127,6 +135,12 @@ def _ensure_history_depth(strategy: Any, count: int) -> None:
     if ensure is None:
         return
     declared = int(strategy._history_depth)
+    limit = max(
+        AUTO_GROW_LIMIT, declared, int(getattr(strategy, "warmup_period", 0) or 0)
+    )
+    if needed > limit:
+        _warn_history_grow_limit(strategy, needed, limit)
+        return
     grew = bool(ensure(needed))
     _note_history_capacity(strategy, ctx, needed)
     if needed <= declared:
@@ -143,6 +157,23 @@ def _ensure_history_depth(strategy: Any, count: int) -> None:
         declared,
         needed,
         needed,
+        needed,
+        needed,
+        extra=build_log_extra(phase="strategy"),
+    )
+
+
+def _warn_history_grow_limit(strategy: Any, needed: int, limit: int) -> None:
+    """要的历史超过自动加长上限: 只告警一次."""
+    if getattr(strategy, "_warned_history_grow_limit", False):
+        return
+    strategy._warned_history_grow_limit = True
+    logger.warning(
+        "取历史 count=%d 超过自动加长上限 %d: 不再自动加长, 超出保留长度的部分"
+        "补 NaN。确实需要这么长的历史, 请在 on_start 里调用 "
+        "self.set_history_depth(%d)(或回测传 history_depth=%d)显式设置",
+        needed,
+        limit,
         needed,
         needed,
         extra=build_log_extra(phase="strategy"),

@@ -19,6 +19,7 @@ from typing import Any, Callable, Deque, Dict, NamedTuple, Optional, Tuple, cast
 
 from .akquant import clone_indicator as _clone_rust_indicator
 from .log import get_logger
+from .strategy_history import AUTO_GROW_LIMIT
 
 #: 标签未知(基础周期不可解析)时 ``set_provisional`` 记的占位标签; 不发流事件。
 UNKNOWN_LABEL = -1
@@ -184,6 +185,8 @@ class IndicatorDeclaration:
     lookback: int = DEFAULT_LOOKBACK
     #: 回看超出 lookback 自动加长时是否已告警过(只告警一次)
     lookback_grown_warned: bool = False
+    #: 回看超出自动加长上限时是否已告警过(只告警一次)
+    lookback_limit_warned: bool = False
     #: symbol -> 最近 lookback 个**已确认**取值(含未就绪时的 None)
     history: Dict[str, Deque[Any]] = field(default_factory=dict)
 
@@ -244,27 +247,61 @@ class IndicatorDeclaration:
             self.history[symbol] = buffer
         buffer.append(value)
 
-    def ensure_lookback(self, symbol: str, offset: int) -> Optional[int]:
+    def ensure_lookback(self, symbol: str, offset: int, name: str) -> None:
         """``offset`` 超出 ``lookback`` 时把所有 symbol 的回溯缓冲加长到够用.
 
         有临时值时 ``[n]`` 取的是已确认序列的第 n-1 个(见 :meth:`value_at`)。
-        加长前已淘汰的值补不回来。
+        加长前已淘汰的值补不回来。第一次加长时告警一次。
 
-        :return: 加长前的 ``lookback``; 没有加长时为 ``None``
+        门槛直接比 ``lookback``: 它就是回溯缓冲(``deque``)的实际长度, 不存在
+        "声明了而缓冲没跟上"的情况。
+
+        需要的长度超过自动加长上限 ``max(AUTO_GROW_LIMIT, 声明的 lookback)`` 时
+        不加长、单独告警一次, 照旧返回 ``None``: 防止 ``ind[self.bars_held]`` 这类
+        随时间增长的下标让缓冲在实盘里无界增长。自动加长只会加到这个上限以内,
+        所以拿当前 ``lookback`` 算出的上限与拿声明值算的相同。
+
+        :param name: 指标名, 只用于告警文案
         """
         index = int(offset)
         if index < 0:
-            return None
+            return
         if symbol in self.provisional and index > 0:
             index -= 1
         needed = index + 1
-        if needed <= int(self.lookback):
-            return None
         previous = int(self.lookback)
+        if needed <= previous:
+            return
+        limit = max(AUTO_GROW_LIMIT, previous)
+        if needed > limit:
+            if not self.lookback_limit_warned:
+                self.lookback_limit_warned = True
+                _logger.warning(
+                    "指标 %s 回看 [%d] 超过自动加长上限 %d: 不再自动加长, 照旧返回 "
+                    "None。确实需要回看这么远, 请在声明时写 self.I(..., lookback=%d)",
+                    name,
+                    int(offset),
+                    limit,
+                    needed,
+                )
+            return
         self.lookback = needed
         for key, buffer in list(self.history.items()):
             self.history[key] = deque(buffer, maxlen=needed)
-        return previous
+        if self.lookback_grown_warned:
+            return
+        self.lookback_grown_warned = True
+        _logger.warning(
+            "指标 %s 回看 [%d] 超出 lookback=%d: 已自动加长到 %d。加长之前的值"
+            "补不回来, 此后满 %d 根 bar 起才有值; 请在声明时写 "
+            "self.I(..., lookback=%d)",
+            name,
+            int(offset),
+            previous,
+            needed,
+            needed,
+            needed,
+        )
 
     def value_at(self, symbol: str, offset: int) -> Any:
         """取该 symbol 前 ``offset`` 根的取值; 越界返回 ``None``.
@@ -436,24 +473,14 @@ class IndicatorBinding:
         """``ind[0]`` 当前值, ``ind[n]`` 前 n 根; 越界返回 ``None``.
 
         ``n`` 超出 ``lookback`` 时自动加长并告警一次(此前是永远返回 ``None``,
-        与预热期还没有值分不开)。
+        与预热期还没有值分不开); 超过自动加长上限时不加长, 见
+        :meth:`IndicatorDeclaration.ensure_lookback`。
         """
         declaration = self._declaration()
         symbol = self._resolved_symbol()
-        previous = declaration.ensure_lookback(symbol, offset)
-        if previous is not None and not declaration.lookback_grown_warned:
-            declaration.lookback_grown_warned = True
-            _logger.warning(
-                "指标 %s 回看 [%d] 超出 lookback=%d: 已自动加长到 %d。加长之前的值"
-                "补不回来, 此后满 %d 根 bar 起才有值; 请在声明时写 "
-                "self.I(..., lookback=%d)",
-                self._name,
-                int(offset),
-                previous,
-                declaration.lookback,
-                declaration.lookback,
-                declaration.lookback,
-            )
+        # 快路径: 下标在 lookback 之内时不可能需要加长(有临时值时需要的更少)。
+        if int(offset) >= declaration.lookback:
+            declaration.ensure_lookback(symbol, offset, self._name)
         return declaration.value_at(symbol, offset)
 
     def __len__(self) -> int:
