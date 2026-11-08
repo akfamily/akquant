@@ -19,6 +19,7 @@ pub mod margin;
 pub mod market;
 pub mod model;
 pub mod order_manager;
+pub mod order_ledger;
 pub mod pipeline;
 mod portfolio;
 mod risk;
