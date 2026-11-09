@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.84] - 2026-11-09
+
 > **规则版本 2.3.1**：同一次回调里下单后又撤掉这张单的策略，回测结果会变（此前撤单被忽略、订单照常成交）；带在途订单存档续跑的策略，续跑段的订单回调不再重复。
 
 ### Fixed
