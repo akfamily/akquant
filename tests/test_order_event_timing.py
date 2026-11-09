@@ -5,7 +5,8 @@
 - 在撤单回调里补下的单, 同一次检查就收到 on_order(New);
 - 在成交回调里下的单, 下一次检查才收到;
 - 在回调里对已在引擎里的单发出撤单, 下一次检查才处理。
-另有一条: 带在途订单存档续跑, 回调序列与不中断一致(在途单不重复通知)。
+另有两条: 带在途订单存档续跑, 回调序列与不中断一致(在途单不重复通知;
+续跑段里撤单后不再收到一次旧状态的 New)。
 
 记录列表叫 ``events`` 而不是 ``log``: ``Strategy.log`` 是框架方法。
 """
@@ -211,3 +212,40 @@ def test_checkpoint_resume_does_not_renotify_open_orders(tmp_path: Path) -> None
     )
     assert resumed.strategy.events == full.strategy.events  # type: ignore[union-attr]
     assert resumed.strategy.events.count("first New") == 1  # type: ignore[union-attr]
+
+
+class ResumeCancelProbe(ResumeProbe):
+    """模块顶层定义以便 pickle; 同 ResumeProbe, 但第 8 根撤掉第 1 根下的单."""
+
+    def on_bar(self, bar: Bar) -> None:
+        """记录 bar 序号, 第 1 根下单, 第 8 根撤单."""
+        super().on_bar(bar)
+        if self.k == 8:
+            self.cancel_order(self.first)
+
+
+def test_checkpoint_resume_cancel_not_renotified(tmp_path: Path) -> None:
+    """带在途订单存档续跑后撤单: 撤单之后不再收到一次旧状态 New, 序列与不中断一致."""
+    full = aq.run_backtest(
+        data=_frame(10), strategy=ResumeCancelProbe, symbols="X", show_progress=False
+    )
+
+    data = _frame(10)
+    first = aq.run_backtest(
+        data=data.iloc[:4],
+        strategy=ResumeCancelProbe,
+        symbols="X",
+        show_progress=False,
+    )
+    ckpt = tmp_path / "ckpt.pkl"
+    save_checkpoint(first.engine, first.strategy, str(ckpt))  # type: ignore[arg-type]
+    resumed = run_from_checkpoint(
+        checkpoint_path=str(ckpt),
+        data=data.iloc[4:],
+        symbols=["X"],
+        show_progress=False,
+    )
+    events: List[str] = resumed.strategy.events  # type: ignore[union-attr]
+    assert "first Cancelled" in full.strategy.events  # type: ignore[union-attr]
+    assert events == full.strategy.events, events  # type: ignore[union-attr]
+    assert events.count("first New") == 1, events

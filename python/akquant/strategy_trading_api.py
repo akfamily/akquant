@@ -98,7 +98,12 @@ def get_order(strategy: Any, order_id: str) -> Optional[Any]:
         pending_canceled_ids = set()
         setattr(strategy, "_pending_canceled_order_ids", pending_canceled_ids)
     canceled_order_ids.update(str(oid) for oid in pending_canceled_ids if oid)
-    if str(order_id) in canceled_order_ids:
+    # 已请求撤单只改显示未完成的单; 已成交/已撤/已拒/已过期的终态单原样返回。
+    if str(order_id) in canceled_order_ids and getattr(order, "status", None) in (
+        OrderStatus.New,
+        OrderStatus.Submitted,
+        OrderStatus.PartiallyFilled,
+    ):
         try:
             order.status = OrderStatus.Cancelled
         except Exception:

@@ -294,6 +294,14 @@ pub struct Engine {
     /// 本时间步闭合、尚未派发给策略的窗口 bar。DataProcessor 写入, StrategyProcessor
     /// 在基础事件回调之后取走派发。
     pub(crate) pending_window_bars: Vec<Bar>,
+    /// 策略回调撤的、引擎此刻还不认识的订单号(见 [`Engine::request_strategy_cancel`])。
+    ///
+    /// 回测下单经事件队列送达, 要到回调之后的 `ChannelProcessor` 过完风控才登记为
+    /// 挂单; 同一次回调里撤这张单时它还在队列里。这里先记下, 由 `ChannelProcessor`
+    /// 在订单通过风控时立即撤掉、被风控拒掉时静默作罢、事件处理完仍不认识时按原样
+    /// 告警并清空。每次策略回调之后紧跟一个 `ChannelProcessor`, 因此它只在一步之内
+    /// 存在, 步与步之间恒为空, 不进存档。
+    pub(crate) deferred_cancels: HashSet<String>,
     pub(crate) initial_cash: Decimal,
     #[pyo3(get, set)]
     pub active_start_time_ns: Option<i64>,
@@ -2440,16 +2448,7 @@ impl Engine {
                     Self::take_context_outputs(py, &py_ctx);
                 crate::pipeline::stages::strategy::apply_pending_engine_plans(self, pending_plans);
                 for id in canceled_ids {
-                    self.execution_model.on_cancel(&id);
-                    if let Some(cancelled) = self
-                        .state
-                        .order_manager
-                        .cancel_active_order(&id, self.clock.timestamp().unwrap_or(0))
-                    {
-                        let _ = self
-                            .event_manager
-                            .send(Event::ExecutionReport(cancelled, None));
-                    }
+                    self.request_strategy_cancel(id);
                 }
                 // 只有多策略才需要在 slot 间累加(单策略下无后续 slot 会读它)。
                 // 取本 slot Context 的 `orders` 而非上面的 `new_orders`: 原因同
@@ -2471,6 +2470,62 @@ impl Engine {
             }
         }
         Ok(())
+    }
+
+    /// 撤掉一张已登记在挂单里的订单: 通知撮合器、改订单状态、发撤单回报。
+    /// 订单不在 `active_orders` 里时什么也不做, 返回 `false`。
+    fn cancel_registered_order(&mut self, order_id: &str) -> bool {
+        if !self
+            .state
+            .order_manager
+            .active_orders
+            .iter()
+            .any(|o| o.id == order_id)
+        {
+            return false;
+        }
+        self.execution_model.on_cancel(order_id);
+        if let Some(cancelled) = self
+            .state
+            .order_manager
+            .cancel_active_order(order_id, self.clock.timestamp().unwrap_or(0))
+        {
+            let _ = self
+                .event_manager
+                .send(Event::ExecutionReport(cancelled, None));
+        }
+        true
+    }
+
+    /// 处理策略回调里的一笔撤单(基础事件与窗口 bar 两条派发路径共用)。
+    ///
+    /// 订单已是挂单时立即撤; 否则多半是同一次回调里刚下、还在事件队列里的单
+    /// (issue #440), 记入 [`Engine::deferred_cancels`], 由 `ChannelProcessor` 在它
+    /// 通过风控时撤掉。此时不告警: 真不认识的订单号要等事件处理完才能断定。
+    pub(crate) fn request_strategy_cancel(&mut self, order_id: String) {
+        if !self.cancel_registered_order(&order_id) {
+            self.deferred_cancels.insert(order_id);
+        }
+    }
+
+    /// 订单刚通过风控、登记为挂单: 若策略在同一次回调里已撤它, 立即撤掉(撮合之前)。
+    pub(crate) fn apply_deferred_cancel(&mut self, order_id: &str) {
+        if self.deferred_cancels.remove(order_id) {
+            self.cancel_registered_order(order_id);
+        }
+    }
+
+    /// 事件处理完仍未出现的订单号: 按修复前的方式交给撮合器(它照旧告警
+    /// unknown / non-cancellable), 然后清空。
+    pub(crate) fn flush_deferred_cancels(&mut self) {
+        if self.deferred_cancels.is_empty() {
+            return;
+        }
+        let mut ids: Vec<String> = self.deferred_cancels.drain().collect();
+        ids.sort_unstable();
+        for id in ids {
+            self.execution_model.on_cancel(&id);
+        }
     }
 
     /// 会话结束时闭合全部尾部未满窗口并派发(规格 5.3)。
@@ -2507,10 +2562,13 @@ impl Engine {
         }
         // 派发顺序 = pending 在前(它们更早闭合), tail 在后, 且只派发一次。
         bars.extend(tail);
-        if bars.is_empty() {
-            return Ok(());
-        }
-        self.dispatch_window_bars(py, strategy, bars)
+        // 空列表时 dispatch_window_bars 直接返回 Ok。
+        let result = self.dispatch_window_bars(py, strategy, bars);
+        // 收尾之后不再有 ChannelProcessor: 收尾派发里下的单不会进引擎, 撤单按原样
+        // 告警; 中断(KeyboardInterrupt)时上一步回调留下的延迟撤单也在这里清掉。
+        // 无论有没有窗口要派发都要清。
+        self.flush_deferred_cancels();
+        result
     }
 
     /// 把 recent_expiry_events 逐条发成 `expiry` 流事件(日常路径与收尾补结算共用)。

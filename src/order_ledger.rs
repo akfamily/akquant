@@ -103,8 +103,8 @@ pub struct StageBInput<'a> {
 }
 
 /// 订单状态指纹(原 Python `order_event_key`); 数值取 normalize 后比较。
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct OrderEventKey {
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct OrderEventKey {
     id: String,
     status: OrderStatus,
     filled_quantity: Decimal,
@@ -246,12 +246,20 @@ pub struct OrderLedger {
     finalized_ids: VecDeque<String>,
 }
 
-/// 存档内容: 只保存在途订单与已通知过的成交(与原实现随策略 pickle 的范围一致;
-/// 状态指纹、on_reject 记录、终态留档不保存, 续跑时宁可多通知一次)。
+/// 存档内容: 在途订单、已通知过的成交、状态指纹(FIFO 顺序)与已触发 on_reject 的订单号,
+/// 续跑后已通知过的订单状态不再重复通知(撤单的同一次检查里, 上下文在途快照中该单仍是
+/// 撤单前的状态, 只靠状态指纹挡住); 终态留档不保存。
+///
+/// msgpack 按位置编码, 新字段只能追加在末尾并带 `#[serde(default)]`:
+/// 0.3.83 的存档只有前两个字段, 读入后新字段为空。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct OrderLedgerSnapshot {
     pub known: Vec<Order>,
     pub trade_keys: Vec<TradeKey>,
+    #[serde(default)]
+    pub order_event_keys: Vec<OrderEventKey>,
+    #[serde(default)]
+    pub rejected_notified: Vec<String>,
 }
 
 impl OrderLedger {
@@ -390,6 +398,12 @@ impl OrderLedger {
                 .filter_map(|id| self.known.get(id).cloned())
                 .collect(),
             trade_keys: self.trade_keys.order.iter().cloned().collect(),
+            order_event_keys: self.order_event_keys.order.iter().cloned().collect(),
+            rejected_notified: {
+                let mut ids: Vec<String> = self.rejected_notified.iter().cloned().collect();
+                ids.sort();
+                ids
+            },
         }
     }
 
@@ -402,6 +416,12 @@ impl OrderLedger {
             ledger.trade_keys.set.insert(key.clone());
             ledger.trade_keys.order.push_back(key);
         }
+        for key in snapshot.order_event_keys {
+            ledger
+                .order_event_keys
+                .insert(key, ORDER_EVENT_DEDUPE_LIMIT);
+        }
+        ledger.rejected_notified.extend(snapshot.rejected_notified);
         ledger
     }
 
@@ -876,10 +896,11 @@ mod tests {
         assert!(l.find("nope", &active).is_none());
     }
 
-    /// 存档只保存在途订单与成交指纹: 往返后不重复通知在途单、不重复回调旧成交,
-    /// 但状态指纹与 on_reject 记录不保留。
+    /// 存档保存在途订单、成交指纹、状态指纹与 on_reject 记录: 往返后在途单与旧成交
+    /// 不重复; 已通知过的状态不再通知(撤单的同一次检查里, 在途快照中该单仍是 New);
+    /// 已触发过 on_reject 的单不再触发。
     #[test]
-    fn snapshot_roundtrip_keeps_known_and_trade_keys_only() {
+    fn snapshot_roundtrip_keeps_notified_state() {
         let mut l = OrderLedger::default();
         let active = [
             order("A", OrderStatus::New, 0),
@@ -888,24 +909,80 @@ mod tests {
         l.stage_b(b(&[], &active, &[trade("t1", "x")], &[]), None, LIMITS);
         let rejected = [order("R", OrderStatus::Rejected, 0)];
         l.stage_a(a(&[], &[], &rejected, &[]), None, LIMITS);
-        let bytes = rmp_serde::to_vec(&l.snapshot()).unwrap();
+        let snap = l.snapshot();
+        let bytes = rmp_serde::to_vec(&snap).unwrap();
         let mut r = OrderLedger::restore(rmp_serde::from_slice(&bytes).unwrap());
-        let (ev, out) = r.stage_b(b(&[], &active, &[trade("t1", "x")], &[]), None, LIMITS);
-        assert!(ev.is_empty(), "在途单不重复通知");
-        assert!(out.is_empty(), "旧成交不重复回调");
-        let ev = r.stage_a(a(&[], &[], &rejected, &[]), None, LIMITS);
+        let again = r.snapshot();
         assert_eq!(
-            sig(&ev),
-            vec![st("R", OrderStatus::Rejected, true)],
-            "指纹与 on_reject 记录不随存档"
-        );
-        assert_eq!(
-            r.snapshot()
+            again
                 .known
                 .iter()
                 .map(|o| o.id.as_str())
                 .collect::<Vec<_>>(),
             vec!["A", "B", "R"]
         );
+        assert_eq!(
+            again.order_event_keys, snap.order_event_keys,
+            "指纹保持 FIFO 顺序"
+        );
+        assert_eq!(again.rejected_notified, vec!["R".to_string()]);
+        let (ev, out) = r.stage_b(b(&[], &active, &[trade("t1", "x")], &[]), None, LIMITS);
+        assert!(ev.is_empty(), "在途单不重复通知");
+        assert!(out.is_empty(), "旧成交不重复回调");
+        // 撤 A: 引擎尚未处理撤单, 同一次检查的在途快照里 A 仍是 New
+        let ev = r.stage_a(a(&["A".to_string()], &active, &[], &[]), None, LIMITS);
+        assert_eq!(sig(&ev), vec![st("A", OrderStatus::Cancelled, false)]);
+        let (ev, _) = r.stage_b(b(&[], &active, &[], &[]), None, LIMITS);
+        assert!(
+            ev.is_empty(),
+            "撤单之后不再通知一次旧状态 New: {:?}",
+            sig(&ev)
+        );
+        let ev = r.stage_a(a(&[], &[], &rejected, &[]), None, LIMITS);
+        assert!(ev.is_empty(), "已通知过的拒单状态不重复: {:?}", sig(&ev));
+        let mut changed = order("R", OrderStatus::Rejected, 0);
+        changed.reject_reason = "other".to_string();
+        let ev = r.stage_a(a(&[], &[], &[changed], &[]), None, LIMITS);
+        assert_eq!(
+            sig(&ev),
+            vec![st("R", OrderStatus::Rejected, false)],
+            "on_reject 每单只一次, 跨存档也是"
+        );
+    }
+
+    /// 0.3.83 的存档(只有 known 与 trade_keys 两个字段)仍能读入, 新字段为空。
+    #[test]
+    fn legacy_two_field_snapshot_still_decodes() {
+        #[derive(Serialize)]
+        struct LegacySnapshot {
+            known: Vec<Order>,
+            trade_keys: Vec<TradeKey>,
+        }
+        let mut l = OrderLedger::default();
+        let active = [order("A", OrderStatus::New, 0)];
+        l.stage_b(b(&[], &active, &[trade("t1", "x")], &[]), None, LIMITS);
+        let snap = l.snapshot();
+        assert!(!snap.order_event_keys.is_empty());
+        let legacy = LegacySnapshot {
+            known: snap.known.clone(),
+            trade_keys: snap.trade_keys.clone(),
+        };
+        let bytes = rmp_serde::to_vec(&legacy).unwrap();
+        let decoded: OrderLedgerSnapshot = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(
+            decoded
+                .known
+                .iter()
+                .map(|o| o.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["A"]
+        );
+        assert_eq!(decoded.trade_keys, snap.trade_keys);
+        assert!(decoded.order_event_keys.is_empty());
+        assert!(decoded.rejected_notified.is_empty());
+        let mut r = OrderLedger::restore(decoded);
+        let (ev, out) = r.stage_b(b(&[], &active, &[trade("t1", "x")], &[]), None, LIMITS);
+        assert!(ev.is_empty(), "在途单不重复通知");
+        assert!(out.is_empty(), "旧成交不重复回调");
     }
 }

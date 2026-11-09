@@ -84,6 +84,11 @@ impl Processor for StrategyProcessor {
         py: Python<'_>,
         strategy: &crate::engine::strategy_handler::StrategyHandle,
     ) -> PyResult<ProcessorResult> {
+        // 上一次策略回调留下的延迟撤单已由紧随其后的 ChannelProcessor 处理完。
+        debug_assert!(
+            engine.deferred_cancels.is_empty(),
+            "deferred_cancels 应在每次策略回调之后的 ChannelProcessor 里清空"
+        );
         if let Some(event) = engine.current_event.clone() {
             engine.ensure_strategy_slot_exists();
             engine.ensure_strategy_context_capacity();
@@ -120,16 +125,7 @@ impl Processor for StrategyProcessor {
                 apply_pending_engine_plans(engine, plans);
 
                 for id in canceled_ids {
-                    engine.execution_model.on_cancel(&id);
-                    if let Some(cancelled_order) = engine
-                        .state
-                        .order_manager
-                        .cancel_active_order(&id, engine.clock.timestamp().unwrap_or(0))
-                    {
-                        let _ = engine
-                            .event_manager
-                            .send(Event::ExecutionReport(cancelled_order, None));
-                    }
+                    engine.request_strategy_cancel(id);
                 }
                 // 只有多策略才需要在 slot 间累加(单策略下无后续 slot 会读它),
                 // 避免为单策略回测多付一次 Vec 克隆。

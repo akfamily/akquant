@@ -667,6 +667,7 @@ impl Engine {
                 28800,
             ))),
             pending_window_bars: Vec::new(),
+            deferred_cancels: HashSet::new(),
             initial_cash,
             active_start_time_ns: None,
             event_manager: EventManager::new(),
@@ -1718,6 +1719,9 @@ impl Engine {
         strategy: &StrategyHandle,
         show_progress: bool,
     ) -> PyResult<String> {
+        // 延迟撤单只在一步之内存在: 上一次 run() 若因异常中途退出可能留有残余,
+        // 这些订单号属于已结束的会话, 丢弃而不是带进本次运行。
+        self.deferred_cancels.clear();
         // 会话解析器（交易日归属、收盘时刻）在数据循环前构造，配置错误在这里报出。
         self.ensure_session_resolver()?;
         // 每次运行一次：未传交易日历、按工作日推算时告警（节假日会被当作交易日）。
