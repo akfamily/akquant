@@ -215,7 +215,7 @@ res = run_backtest(data=pl_df, strategy=...)         # 快速测试仍可传内�
 
 **待决**
 
-1. `on_bars(batch)` 批量回调是否作为一等 API，以及在哪一期引入。
+1. ~~`on_bars(batch)` 批量回调是否作为一等 API，以及在哪一期引入。~~ 已定（#441）：作为一等 API 引入，`Strategy.on_bars(batch: BarBatch)` 每个时间片回调一次，在 Python 框架层实现（收集 + 框架定时器），与列式分期无关；批次里仍是逐根物化的 `Bar` 对象，列式批次（零拷贝视图）留待解耦第 3 步。
 2. 旧 catalog 是否迁移到规范格式。
 
 ## 14. 风险与对策

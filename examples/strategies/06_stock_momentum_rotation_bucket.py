@@ -1,44 +1,39 @@
-"""多股票轮动策略示例（收齐同 timestamp 后执行）."""
+"""多股票轮动策略示例（on_bars：每个时间片的 bar 到齐后执行一次）.
 
-from collections import defaultdict
+不要在 on_bar 里自己数“攒满 N 根”再执行：有标的停牌或缺 bar 时那一片凑不齐，
+整片都不会触发。on_bars 由框架判断时间片何时结束，缺的标的列在 batch.missing。
+"""
+
+import math
 
 import akquant as aq
 import akshare as ak
 import pandas as pd
-from akquant import Bar, IntParam, Strategy
+from akquant import BarBatch, IntParam, Strategy
 
 
 class BucketMomentumRotationStrategy(Strategy):
-    """收齐同一时间片所有标的后执行横截面轮动."""
+    """每个时间片的 bar 到齐后执行一次横截面轮动."""
 
     lookback_period = IntParam(20, ge=1, le=500, title="动量回看周期")
 
     def on_start(self) -> None:
-        """设置轮动标的列表、数据预热长度与同 timestamp 收齐缓存."""
+        """设置轮动标的列表与数据预热长度."""
         self.symbols = ["sh600519", "sz000858", "sh601318"]
         self.warmup_period = self.params.lookback_period + 1
-        self._pending_by_ts: dict[int, set[str]] = defaultdict(set)
 
-    def on_bar(self, bar: Bar) -> None:
-        """Bar 回调，收齐该 timestamp 后再调仓."""
-        current_set = self._pending_by_ts[bar.timestamp]
-        current_set.add(bar.symbol)
-        if len(current_set) < len(self.symbols):
-            return
-        self._pending_by_ts.pop(bar.timestamp, None)
-        self._rebalance()
-
-    def _rebalance(self) -> None:
+    def on_bars(self, batch: BarBatch) -> None:
+        """批量回调：本时间片的 bar 到齐后调仓一次，只对本片有 bar 的标的打分."""
         scores: dict[str, float] = {}
-        for symbol in self.symbols:
+        for bar in batch:
+            symbol = bar.symbol
             closes = self.get_history(
                 count=self.params.lookback_period, symbol=symbol, field="close"
             )
-            if len(closes) < self.params.lookback_period:
-                return
             start = float(closes[0])
             end = float(closes[-1])
-            if start <= 0:
+            # 历史不足时前面补 NaN
+            if math.isnan(start) or start <= 0:
                 continue
             scores[symbol] = (end - start) / start
 

@@ -56,13 +56,13 @@
     - 回调内只看到前一交易日 / 前一账户快照。
     - 适合作为日边界准备和统一调仓入口。
 
-### 6. [06_stock_momentum_rotation_bucket.py](./06_stock_momentum_rotation_bucket.py) - 收齐时间片后横截面轮动
-- **目标**: 演示不使用定时器时，如何在 `on_bar` 中收齐同一 `timestamp` 后再执行一次横截面逻辑。
-- **策略**: 时间片缓存 + 动量轮动策略。
+### 6. [06_stock_momentum_rotation_bucket.py](./06_stock_momentum_rotation_bucket.py) - 每个时间片执行一次的横截面轮动
+- **目标**: 演示用 `on_bars(batch)` 在每个时间片的 bar 到齐后执行一次横截面逻辑。
+- **策略**: 批量回调 + 动量轮动策略。
 - **核心点**:
-    - 使用 `timestamp -> set(symbol)` 的缓存桶判断是否收齐。
-    - 收齐后只执行一次跨标的打分与调仓。
-    - 适用于无固定定时触发点的横截面策略。
+    - 时间片何时结束由框架判断，不必在 `on_bar` 里自己缓存和计数。
+    - 有标的停牌或缺 bar 时照常触发，缺的标的列在 `batch.missing`。
+    - 适用于每根 bar（日线、分钟线）都要跨标的打分与调仓的策略。
 
 ### 7. [07_stock_momentum_rotation_on_timer.py](./07_stock_momentum_rotation_on_timer.py) - `on_timer` 风格的横截面轮动
 - **目标**: 演示把横截面打分与调仓逻辑集中放到 `on_timer` 中。
