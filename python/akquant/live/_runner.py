@@ -445,6 +445,7 @@ class LiveRunner:
         on_portfolio_update: Optional[Callable[[Any, Dict[str, Any]], None]] = None,
         on_error: Optional[Callable[[Any, Exception, str, Any], None]] = None,
         on_timer: Optional[Callable[[Any, str], None]] = None,
+        on_bars: Optional[Callable[[Any, Any], None]] = None,
         context: Optional[Dict[str, Any]] = None,
         strategy_max_order_value: Optional[Dict[str, float]] = None,
         strategy_max_order_size: Optional[Dict[str, float]] = None,
@@ -532,6 +533,7 @@ class LiveRunner:
             Optional function-style on_portfolio_update callback.
         :param on_error: Optional function-style on_error callback.
         :param on_timer: Optional function-style on_timer callback.
+        :param on_bars: Optional function-style on_bars callback（实验性）.
         :param context: Optional context dict injected into function-style strategy.
         :param on_broker_event: Optional broker event observer callback.
         :param signal_port_ready: Optional callback receiving a ``SignalPort`` right
@@ -615,6 +617,7 @@ class LiveRunner:
         self.on_portfolio_update = on_portfolio_update
         self.on_error = on_error
         self.on_timer = on_timer
+        self.on_bars = on_bars
         self.context = context or {}
         self.strategy_max_order_value = self._normalize_strategy_float_map(
             strategy_max_order_value
@@ -1092,6 +1095,7 @@ class LiveRunner:
                 on_portfolio_update=getattr(self, "on_portfolio_update", None),
                 on_error=getattr(self, "on_error", None),
                 on_timer=getattr(self, "on_timer", None),
+                on_bars=getattr(self, "on_bars", None),
                 context=getattr(self, "context", {}),
             )
         raise TypeError("strategy must be Strategy type/instance or callable")
@@ -1358,6 +1362,8 @@ class LiveRunner:
             mark_live = getattr(target, "_set_live_market_data_owner", None)
             if callable(mark_live):
                 mark_live()
+            # replay: on_bars 按时间片边界派发(见 bar_batch._is_live)
+            setattr(target, "_live_replay_market", self._is_replay_market())
             # 无条件置空 _symbol_whitelist(而非只在它已是 None 时跳过): 与
             # run_from_checkpoint 对 _symbol_whitelist / _strategy_fill_policy_map
             # 等字段的处理同一类问题(见该函数与 commit ac277ae 的同名注释)——

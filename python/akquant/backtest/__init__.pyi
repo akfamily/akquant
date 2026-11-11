@@ -64,6 +64,7 @@ class FunctionalStrategy(Strategy):
         on_pre_open: Optional[Callable[[Any, Dict[str, Any]], None]] = ...,
         on_timer: Optional[Callable[[Any, str], None]] = ...,
         context: Optional[Dict[str, Any]] = ...,
+        on_bars: Optional[Callable[[Any, Any], None]] = ...,
     ) -> None: ...
 
 class BacktestStreamEvent(TypedDict):
@@ -122,6 +123,7 @@ def run_backtest(
     on_expiry: Optional[Callable[[Any, Dict[str, Any]], None]] = ...,
     on_pre_open: Optional[Callable[[Any, Dict[str, Any]], None]] = ...,
     on_timer: Optional[Callable[[Any, str], None]] = ...,
+    on_bars: Optional[Callable[[Any, Any], None]] = ...,
     context: Optional[Dict[str, Any]] = ...,
     history_depth: Optional[int] = ...,
     warmup_period: int = ...,

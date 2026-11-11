@@ -31,6 +31,7 @@ from .backtest import (  # type: ignore
     run_backtest,
     run_from_checkpoint,
 )
+from .bar_batch import BarBatch
 from .bar_generator import BarGenerator
 from .checkpoint import load_checkpoint, save_checkpoint
 from .config import (
@@ -152,6 +153,7 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "inspect_strategy",
         "StrategyRuntimeConfig",
         "InstrumentSnapshot",
+        "BarBatch",
         "BarGenerator",
         "register_strategy_loader",
         "resolve_strategy_input",
@@ -264,6 +266,7 @@ else:
         "inspect_strategy",
         "StrategyRuntimeConfig",
         "InstrumentSnapshot",
+        "BarBatch",
         "BarGenerator",
         "register_strategy_loader",
         "resolve_strategy_input",

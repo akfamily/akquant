@@ -50,6 +50,7 @@ A strategy goes through the following stages from start to finish:
 | `on_reject` | First time an order becomes `Rejected` | Log reject reasons, alerting, graceful degradation | `examples/50_framework_hooks_demo.py` |
 | `on_before_trading` | 1ns after the trading day's earliest continuous-auction segment starts (A-shares 09:30; for futures with a night session the trading day starts with the previous trading day's night session, so Monday's trading day fires on Friday at 21:00) | Pre-market checks, trading-date level signal preparation | `examples/50_framework_hooks_demo.py` |
 | `on_pre_open` | 1ns before the trading day's first session segment starts (A-shares before the 09:15 opening call auction; futures with a night session before the previous trading day's 20:55 night auction), never earlier than the previous trading day's end-of-day settlement; same timing in backtest and live | Auction/pre-open signal generation; default `NextOpen()` orders join the opening call-auction match, which is not the same as broker counter support for auction-specific order types | `examples/52_pre_open_demo.py` |
+| `on_bars` | After all bars of a time slice have arrived (backtest: when the slice ends; live: complete or deadline) | Score and rebalance all symbols on every bar | `examples/strategies/06_stock_momentum_rotation_bucket.py` |
 | `on_cross_section` | After the first complete cross-symbol bar slice of the trading day | Cross-sectional same-cycle rebalance using current-day bars/account state | `examples/strategies/09_stock_momentum_rotation_after_bar.py` |
 | `on_after_trading` | After end-of-day settlement completes (backtest: at the close; live: close + `day_close_delay`) | End-of-day summaries, post-close cleanup, archiving | `examples/50_framework_hooks_demo.py` |
 | `on_portfolio_update` | Incrementally when portfolio snapshot changes | Monitor cash/equity changes, push UI or alerts | `examples/50_framework_hooks_demo.py` |
@@ -80,6 +81,7 @@ Notes:
 * `on_before_trading` fires 1ns after the trading day's earliest continuous-auction segment starts (just after 09:30:00 for A-shares); for night-session symbols the trading day starts with the previous trading day's night session, so Monday's trading day fires on Friday at 21:00. A trading day without a continuous-auction segment does not fire it.
 * `on_before_trading` always use a "previous trading day / previous snapshot only" visibility model; inside these callbacks, `get_history()`, `get_account()`, and `equity` must not expose the current day's new bar or the current day's updated account view.
 * `on_cross_section` runs after the framework has seen the first complete cross-symbol slice for the trading day; inside this callback, current-day history and the current account snapshot are visible.
+* Live sessions (including `broker="replay"`) do not know the day's data in advance, so `on_cross_section` is decided by arrival: it fires after the first dispatched time slice in which every previously seen symbol has had a bar that day (immediately when complete, otherwise after `bars_deadline_seconds`, default 5 s). A symbol that has not appeared yet and is outside its trading session (e.g. a product without a night session) is waited for; one that is in session but has no bar is treated as suspended and not waited for. On the first trading day of a session it fires after the first slice reaches its deadline.
 * `on_after_trading` is an **end/wind-down hook** intended for end-of-day statistics, cleanup, and archiving. It fires **after end-of-day settlement completes**: T+1 positions are already unlocked, the day's unfilled Day orders have expired, and orders submitted inside it belong to the next trading day. Backtest settlement runs at the close; live (`run_live`) at close + `day_close_delay` (default 60 seconds). If backtest data ends intraday and the day is never settled, it does not fire. It is a **dedicated event at the day's close** (after settlement, before the next bar), so a `NextOpen()` order submitted inside it fills on the next bar rather than one bar later (#324). If your intent is "decide at close, execute at the next open", the clearer place to order is `on_bar` (next-open) or `on_pre_open`.
 * **`TimeInForce.Day` and next-open expiry semantics**: end-of-day settlement marks any Day order still unfilled that day as `Expired`. For a `NextOpen()` Day order submitted on or after the day's last market event (e.g. `on_cross_section` on daily data), its only matchable slice is the **next day's open**, which comes *after* settlement — so the framework spares such an order once, letting it get that next-open fill chance; it only expires at the closing settlement of the trading day it belongs to if it is still unfilled then (e.g. the symbol is suspended, #334). A same-cycle `CurrentClose()` Day order had its matchable slice on its creation day and so expires at that day's close. Orders submitted at or after the close in a non-continuous session (e.g. on the 15:00 minute bar that ends the closing auction, in `on_after_trading`, or within the live post-close grace window) belong to the next trading day and do not expire that day, whatever the fill mode. If you want a "decide at close, fill next day" order that is not subject to same-day expiry, just use the default `GTC`.
 * To branch on the trading **session** (e.g. futures day/night, call auction vs continuous trading), the framework provides no `on_session_*` callbacks; read `self.ctx.session` (a `TradingSession` enum with 7 values: `Closed`, `OpeningAuction`, `AuctionHold`, `Continuous`, `Break`, `ClosingAuction`, `PostClose`), or use `self.is_market_open()`, `self.session_of(symbol)` and `self.trading_day` directly; see [2.2 Trading Sessions and Trading Days](#trading-session).
@@ -451,53 +453,71 @@ class CrossSectionStrategy(Strategy):
 
 Full runnable samples: `examples/strategies/05_stock_momentum_rotation_timer.py` for `on_before_trading`, `examples/strategies/09_stock_momentum_rotation_after_bar.py` for `on_cross_section`, or `examples/strategies/07_stock_momentum_rotation_on_timer.py` for a fixed-time `on_timer` variant.
 
-### 3.5 Cross-Section Plan B: Execute After Collecting One Timestamp
+### 3.5 Cross-Section Plan B: Once Per Time Slice (`on_bars`) {: #on-bars }
 
-If your strategy has no fixed rebalance time and `on_timer` is not convenient, collect symbols by timestamp in `on_bar`, then run cross-sectional logic once when the slice is complete.
+When every bar (daily or minute) needs one pass over all symbols, override `on_bars(batch)`: the framework calls it once after all bars sharing a timestamp have arrived. (Experimental; the interface may change.)
 
 ```python
-from collections import defaultdict
+from akquant import BarBatch
 
-class CrossSectionBucketStrategy(Strategy):
+class CrossSectionBarsStrategy(Strategy):
     lookback = IntParam(20, ge=1, le=500, title="Lookback window")
 
     def on_start(self):
-        self.universe = ["sh600519", "sz000858", "sh601318"]
         self.warmup_period = self.params.lookback + 1
-        self.pending = defaultdict(set)
 
-    def on_bar(self, bar):
-        self.pending[bar.timestamp].add(bar.symbol)
-        if len(self.pending[bar.timestamp]) < len(self.universe):
-            return
-        self.pending.pop(bar.timestamp, None)
+    def on_bars(self, batch: BarBatch):
         scores = {}
-        for symbol in self.universe:
-            closes = self.get_history(count=self.params.lookback, symbol=symbol, field="close")
-            if len(closes) < self.params.lookback:
-                return
-            scores[symbol] = (closes[-1] - closes[0]) / closes[0]
+        for bar in batch:  # only symbols with a bar in this slice, sorted by symbol
+            closes = self.get_history(count=self.params.lookback, symbol=bar.symbol, field="close")
+            scores[bar.symbol] = (closes[-1] - closes[0]) / closes[0]
         best = max(scores, key=lambda s: scores[s])
         self.order_target_percent(target_percent=0.95, symbol=best)
 ```
+
+| Member | Meaning |
+| :--- | :--- |
+| `batch.timestamp` | Slice time in nanoseconds (the `timestamp` of every bar in it) |
+| `batch.bars` / `for bar in batch` | Bars of the slice, sorted by `symbol` |
+| `batch["600000"]` / `batch.get("600000")` / `"600000" in batch` | Lookup by symbol; the first raises `KeyError` when absent, `get` returns `None` |
+| `batch.symbols` | Symbols that have a bar in this slice |
+| `batch.missing` | Symbols seen earlier that have no usable bar in this slice (suspended, no trades, late, or still in warmup); symbols never seen are not listed |
+| `batch.flush_reason` | `"boundary"` / `"complete"` / `"watermark"` / `"deadline"` |
+
+When it fires:
+
+*   **Backtest** (and `broker="replay"`): when the slice ends, before the next one starts (`"boundary"`). Slices with missing bars still fire, and so does the last slice. Orders placed in it fill like orders placed in the last `on_bar` of the slice: at the open of the next bar by default, at the close of this slice with `CurrentClose()`.
+*   **Live**: as soon as every previously seen symbol has arrived (`"complete"`); otherwise at slice time + `bars_deadline_seconds` (`"deadline"`); a bar of a later slice arriving before the deadline also fires it (`"watermark"`; history already includes that later bar). The first slice has no earlier symbol set to compare against, so it waits for the deadline.
+*   `bars_deadline_seconds` is a strategy class attribute, default 5 seconds. It must exceed the flush delay of the data source: gateways that build bars locally from quotes (e.g. klinedata) emit the bar of a symbol with no further quotes 2–3 seconds after the bar ends. With a suspended symbol, every live slice waits the full deadline.
+*   Bars arriving after the deadline only trigger `on_bar`; they are not added to the batch already dispatched (one warning per symbol). The last undispatched slice is dropped when a live session stops.
+
+Notes:
+
+*   When `on_bar` is also overridden, `on_bar` runs for each bar first, then `on_bars`.
+*   Base-frequency bars only; window bars from `subscribe_bars` are not included. Bars still in warmup are left out (the symbol is listed in `batch.missing`); slices whose bars are all in warmup do not fire.
+*   The callback belongs to no single symbol: `self.current_bar` is `None`; read multi-symbol indicators with `ind.of(symbol)[0]`.
+*   Function style: `run_backtest(..., on_bars=fn)` / `run_live(..., on_bars=fn)` with `fn(ctx, batch)`.
+
+!!! warning "Do not count bars yourself in `on_bar`"
+    Buffering by `timestamp` in `on_bar` and running once all symbols are collected silently skips every slice in which one symbol is suspended or has no bar. Processing the previous slice when the next timestamp shows up is wrong too: the first bar of the next slice is already in history by then, so you read future data, and the last slice never fires.
 
 Full runnable sample: `examples/strategies/06_stock_momentum_rotation_bucket.py`.
 
 ### 3.6 Decision Matrix (A vs B)
 
-| Dimension | Plan A: Unified `on_timer` | Plan B: Execute after timestamp completion |
+| Dimension | Plan A: day-boundary hooks / `on_timer` | Plan B: `on_bars` |
 | :--- | :--- | :--- |
-| Trigger | Fixed rebalance time (e.g., 14:55) | Event-driven, when one slice is complete |
-| Robustness | High, independent from symbol arrival order | Medium, needs buffering and missing-symbol handling |
-| Complexity | Low, centralized decision path | Medium, requires `timestamp -> symbols` state |
-| Best for | Daily/timed rebalances, production default | Cross-section without stable rebalance time |
-| Common risk | Timer time not aligned with data frequency | Missing symbols can prevent trigger |
+| Trigger | Once per trading day, or a fixed time (e.g., 14:55) | Once per time slice |
+| Symbols without a bar | Do not affect the trigger | Do not affect the trigger; listed in `batch.missing` |
+| Complexity | Low | Low |
+| Best for | Daily/timed rebalances | Cross-symbol work on every bar (intraday rotation, cross-sectional factors) |
+| Common risk | Timer time not aligned with data frequency | Live deadline shorter than the flush delay of the data source, so batches always miss symbols |
 
-Recommendation: use Plan A by default; use Plan B only when a stable rebalance time cannot be defined.
+Recommendation: use Plan A for daily or fixed-time rebalances; use Plan B when every bar needs processing.
 
 ### 3.7 Cross-Section Pitfall Checklist
 
-*   **Suspensions / missing bars**: Plan B may not trigger if some symbols have no bar at a timestamp; add timeout fallback or minimum-valid-sample execution.
+*   **Suspensions / missing bars**: `on_bars` still fires when some symbols have no bar; they are listed in `batch.missing`. Decide before scoring whether to skip them or carry the previous value.
 *   **Universe drift**: If constituents change but your universe list is stale, weights and ranks diverge from target; refresh periodically and track effective date.
 *   **Rebalance time vs fill mode mismatch**: With `fill_policy=NextOpen()`, close-time signals are filled on the next bar; use `CurrentClose(timer_fill_timing=...)` to make timer fill timing explicit.
 *   **Insufficient history windows**: Newly listed or recently resumed symbols may fail window requirements; check `len(closes)` and skip invalid samples.
@@ -547,6 +567,7 @@ For style selection guidance, see [Strategy Style Decision Guide](../advanced/st
 | `on_reject(self, order)` | Not supported | Reject callback, currently class-style only | `examples/08_event_callbacks.py`, `examples/50_framework_hooks_demo.py` |
 | `on_before_trading(self, trading_date, timestamp)` | `on_before_trading(ctx, trading_date, timestamp)` | Trading-day boundary hook, supported by both styles | `examples/50_framework_hooks_demo.py` |
 | `on_after_trading(self, trading_date, timestamp)` | `on_after_trading(ctx, trading_date, timestamp)` | Trading-day boundary hook, supported by both styles | `examples/50_framework_hooks_demo.py` |
+| `on_bars(self, batch)` | `on_bars(ctx, batch)` | Batch callback fired once per time slice, supported by both styles | `examples/strategies/06_stock_momentum_rotation_bucket.py` |
 | `on_cross_section(self, trading_date, timestamp)` | `on_cross_section(ctx, trading_date, timestamp)` | Current-day-aware cross-sectional rebalance hook, supported by both styles | `examples/strategies/09_stock_momentum_rotation_after_bar.py` |
 | `on_portfolio_update(self, snapshot)` | `on_portfolio_update(ctx, snapshot)` | Portfolio snapshot callback, supported by both styles | `examples/50_framework_hooks_demo.py` |
 | `on_error(self, error, source, payload)` | `on_error(ctx, error, source, payload)` | User exception callback, supported by both styles | `examples/22_strategy_runtime_config_demo.py` |

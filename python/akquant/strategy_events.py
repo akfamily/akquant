@@ -3,6 +3,13 @@ from typing import Any
 import numpy as np
 
 from .akquant import Bar, StrategyContext, Tick
+from .bar_batch import (
+    collect_bar,
+    dispatch_bar_slice_timer,
+    flush_if_complete,
+    mark_bar_ready,
+    note_bar_symbol,
+)
 from .log import build_log_extra, get_logger
 from .strategy_framework_hooks import (
     call_user_callback,
@@ -170,7 +177,12 @@ def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
 
     check_preload_overlap(strategy, str(symbol), int(bar.timestamp))
     if _is_before_active_start(strategy, int(bar.timestamp)):
+        note_bar_symbol(strategy, str(symbol))
         return
+
+    # on_bars: 收进当前时间片(实盘先见到更晚的时间片时, 上一片在此先行派发,
+    # 须在本 bar 推进指标之前)。
+    in_batch = collect_bar(strategy, bar)
 
     if current_pos != 0 and previous_price is not None and previous_price != bar.close:
         mark_portfolio_dirty(strategy)
@@ -190,7 +202,11 @@ def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
     activate_pending_model(strategy)
     should_train = should_trigger_training(strategy)
 
+    if in_batch:
+        mark_bar_ready(strategy, bar)
     call_user_callback(strategy, "on_bar", bar, payload=bar)
+    if in_batch:
+        flush_if_complete(strategy)
     if should_train:
         consume_training_trigger(strategy)
         training_cycle = begin_training_cycle(strategy)
@@ -297,6 +313,11 @@ def on_timer_event(strategy: Any, payload: str, ctx: StrategyContext) -> None:
     dispatch_portfolio_update(strategy)
 
     if dispatch_lifecycle_timer(strategy, payload):
+        _flush_indicator_snapshots(strategy)
+        return
+
+    # 批次定时器与截面定时器同前缀, 须先判
+    if dispatch_bar_slice_timer(strategy, payload):
         _flush_indicator_snapshots(strategy)
         return
 

@@ -32,6 +32,7 @@
 * `on_before_trading` / `on_after_trading`: 交易日级钩子。
 * `on_pre_open`: 开盘前最后一个合法决策点，适合“盘前信号，本次 open 成交”。
 * `on_cross_section`: 当日首个跨标的完整 bar 切片就绪后触发（每天最多一次，适合基于当日 bar/账户快照做横截面同周期调仓）。
+* `on_bars`: 同一时间片的 bar 到齐后触发一次（每个时间片一次，适合每根 bar 都要跨标的统一处理的策略，见 [3.5](#on-bars)）。
 * `on_portfolio_update`: 账户快照变化时触发。
 * `on_error`: 用户回调抛异常时触发，默认触发后继续抛出异常。
 * `on_timer`: 定时器触发时调用 (需手动注册)。
@@ -52,6 +53,7 @@
 | `on_before_trading` | 交易日最早的连续竞价开始后 1ns（A 股 09:30；有夜盘的期货从前一交易日夜盘开始，周一交易日在周五 21:00 触发） | 盘前检查、生成交易日级信号 | `examples/50_framework_hooks_demo.py` |
 | `on_pre_open` | 交易日首个时段开始前 1ns（A 股 09:15 集合竞价前；有夜盘的期货为前一交易日 20:55 夜盘集合竞价前），不早于上一交易日日终结算；回测与实盘一致 | 盘前信号与“本次 open 成交”语义钩子；默认 `NextOpen()` 单参加开盘集合竞价统一撮合，但不等同于券商柜台已支持集合竞价专用委托 | `examples/52_pre_open_demo.py` |
 | `on_cross_section` | 当日首个跨标的完整 bar 切片之后 | 基于当日 bar/账户快照的横截面同周期调仓 | `examples/strategies/09_stock_momentum_rotation_after_bar.py` |
+| `on_bars` | 每个时间片的 bar 到齐后（回测在时间片结束时；实盘到齐或等到截止时间） | 每根 bar 对全部标的统一打分、调仓 | `examples/strategies/06_stock_momentum_rotation_bucket.py` |
 | `on_after_trading` | 日终结算完成后（回测在收盘时刻；实盘在收盘 + `day_close_delay`） | 日终统计、收盘后清理与归档 | `examples/50_framework_hooks_demo.py` |
 | `on_portfolio_update` | 账户快照变化时增量触发 | 监控现金/权益变化、推送 UI 或告警 | `examples/50_framework_hooks_demo.py` |
 | `on_error` | 任一用户回调抛异常时 | 记录异常源、决定继续/中断策略 | `examples/22_strategy_runtime_config_demo.py` |
@@ -82,6 +84,7 @@
 * `on_before_trading` 在交易日最早的连续竞价开始后 1ns 触发（A 股 09:30:00 之后）；夜盘品种的交易日从前一交易日夜盘开始，周一交易日在周五 21:00 触发。交易日没有连续竞价段时不触发。
 * `on_before_trading` 始终按“前一交易日/前一时点信息可见”的语义工作；在该回调里，`get_history()`、`get_account()`、`equity` 不应看到当日新 bar 或当日更新后的账户视图。
 * `on_cross_section` 会在框架见到当日首个“跨标的完整切片”后触发；在该回调里，可以看到当日历史和当前账户快照。
+* 实盘（含 `broker="replay"`）事先不知道当日行情，`on_cross_section` 按到达情况判断：此前见过的标的当日都已出现过 bar 的首个时间片派发后触发（到齐即触发，否则等 `bars_deadline_seconds`，默认 5 秒）。当日尚未出现的标的此刻不在交易时段（如没有夜盘的品种）则继续等；在交易时段却没有 bar 的按停牌处理、不等。会话的第一个交易日在首个时间片等到截止时间后触发。
 * `on_after_trading` 是**结束/收尾型钩子**，定位为日终的统计、清理与归档。它在**日终结算完成之后**触发：此时 T+1 持仓已解冻、当日未成交的 Day 单已过期，其中下的单属于下一交易日。回测的日终结算在收盘时刻进行；实盘（`run_live`）在收盘 + `day_close_delay`（默认 60 秒）。回测数据在盘中结束、当日未结算时不触发。它是**当日收盘点的独立事件**（在日终结算之后、早于下一根 bar），因此在其中提交的 `NextOpen()` 单会落在下一根 bar（而非再晚一格，#324）。但若你的意图是“收盘决策、次日开盘成交”，更清晰的写法是在 `on_bar`（next-open）或 `on_pre_open` 中下单。
 * **`TimeInForce.Day` 与 next-open 的过期语义**：日终结算会把当日仍未成交的 Day 单置为 `Expired`。对于在当日最后一个行情事件上或之后（如日线数据下的 `on_cross_section`）提交的 `NextOpen()` Day 单，其唯一可撮合切片是**次日开盘**，晚于结算时点——框架据此豁免这类订单一次，让它先获得次日开盘的成交机会；只有当次日开盘仍未成交（如次日停牌），才在它所属交易日收盘结算时过期（#334）。同一时点成交（`CurrentClose()`）的 Day 单其可撮合切片就在创建当日，因此在创建当日收盘过期。收盘时刻及之后、在非连续竞价时段（如收盘竞价结束的 15:00 分钟 bar、`on_after_trading`、实盘收盘宽限期内）下的单属于下一交易日，不论成交模式都不在当日过期。若希望“收盘决策、次日成交”的委托不受当日过期约束，也可直接使用默认的 `GTC`。
 * 需要按**时段**（如期货日盘/夜盘、集合竞价/连续竞价）分支时，框架不提供 `on_session_*` 回调；请读取 `self.ctx.session`（`TradingSession` 枚举，共 7 个值：`Closed`、`OpeningAuction`、`AuctionHold`、`Continuous`、`Break`、`ClosingAuction`、`PostClose`），或直接用 `self.is_market_open()`、`self.session_of(symbol)` 与 `self.trading_day`，见 [2.2 交易时段与交易日](#trading-session)。
@@ -625,53 +628,73 @@ class CrossSectionStrategy(Strategy):
 
 完整示例见：`examples/strategies/05_stock_momentum_rotation_timer.py`（`on_before_trading`）、`examples/strategies/09_stock_momentum_rotation_after_bar.py`（`on_cross_section`）以及 `examples/strategies/07_stock_momentum_rotation_on_timer.py`（`on_timer` 固定时点版本）。
 
-### 3.5 横截面方案 B：收齐同 timestamp 后执行
+### 3.5 横截面方案 B：每个时间片执行一次（`on_bars`） {: #on-bars }
 
-当策略没有固定调仓时点（不方便用 `on_timer`）时，可在 `on_bar` 中先缓存同一时间片的标的，收齐后再执行一次横截面逻辑。
+策略每根 bar（日线、分钟线）都要对全部标的统一处理时，重写 `on_bars(batch)`：同一时间片的 bar 到齐后框架回调一次，`batch` 是这一片的全部 bar。（实验性，接口可能调整。）
 
 ```python
-from collections import defaultdict
+from akquant import BarBatch
 
-class CrossSectionBucketStrategy(Strategy):
+class CrossSectionBarsStrategy(Strategy):
     lookback = IntParam(20, ge=1, le=500, title="回看周期")
 
     def on_start(self):
-        self.universe = ["sh600519", "sz000858", "sh601318"]
         self.warmup_period = self.params.lookback + 1
-        self.pending = defaultdict(set)
 
-    def on_bar(self, bar):
-        self.pending[bar.timestamp].add(bar.symbol)
-        if len(self.pending[bar.timestamp]) < len(self.universe):
-            return
-        self.pending.pop(bar.timestamp, None)
+    def on_bars(self, batch: BarBatch):
         scores = {}
-        for symbol in self.universe:
-            closes = self.get_history(count=self.params.lookback, symbol=symbol, field="close")
-            if len(closes) < self.params.lookback:
-                return
-            scores[symbol] = (closes[-1] - closes[0]) / closes[0]
+        for bar in batch:  # 只含本片有 bar 的标的，按 symbol 升序
+            closes = self.get_history(count=self.params.lookback, symbol=bar.symbol, field="close")
+            scores[bar.symbol] = (closes[-1] - closes[0]) / closes[0]
         best = max(scores, key=lambda s: scores[s])
         self.order_target_percent(target_percent=0.95, symbol=best)
 ```
+
+`BarBatch` 的内容：
+
+| 成员 | 说明 |
+| :--- | :--- |
+| `batch.timestamp` | 时间片时刻（纳秒），即其中每根 bar 的 `timestamp` |
+| `batch.bars` / `for bar in batch` | 本片的 bar，按 `symbol` 升序 |
+| `batch["600000"]` / `batch.get("600000")` / `"600000" in batch` | 按标的取；本片没有时前者抛 `KeyError`，`get` 返回 `None` |
+| `batch.symbols` | 本片有 bar 的标的 |
+| `batch.missing` | 此前出现过、本片没有可用 bar 的标的（停牌、无成交、迟到，或仍在预热期）；从未出现过的标的不列入 |
+| `batch.flush_reason` | 派发原因：`"boundary"` / `"complete"` / `"watermark"` / `"deadline"`，见下 |
+
+触发时机：
+
+*   **回测**（以及 `broker="replay"`）：时间片结束、下一片开始之前触发（`flush_reason="boundary"`）。缺 bar 的时间片照常触发，最后一个时间片也触发。在其中下的单，与在本片最后一根 `on_bar` 里下单同一口径：默认下一根开盘成交，`CurrentClose()` 按本片收盘价成交。
+*   **实盘**：此前见过的标的在本片全部到齐时立即触发（`"complete"`）；否则等到时间片时刻 + `bars_deadline_seconds`（`"deadline"`）；截止前先收到更晚时间片的 bar 也会触发（`"watermark"`，此时取历史已能看到那根更晚的 bar）。第一个时间片没有“此前见过的标的”可比，只能等截止时间。
+*   `bars_deadline_seconds` 是策略类属性，默认 5 秒，须大于行情源自己的补发延迟：由报价本地合成 K 线的行情网关（如 klinedata），对没有后续报价的标的要在 K 线结束 2～3 秒后才补发这根 bar。有标的停牌时，实盘每个时间片都会等满截止时间。
+*   截止之后才到的 bar 只触发 `on_bar`，不补进已派发的批次，每个标的告警一次。实盘会话停止时尚未派发的最后一片不派发。
+
+几点约定：
+
+*   与 `on_bar` 同时重写时，先逐根调用 `on_bar`，再调用 `on_bars`。
+*   批次只含基础周期的 bar；`subscribe_bars` 的窗口 bar 不进批次。仍在预热期内的 bar 不进批次（该标的列在 `batch.missing`），全部在预热期内的时间片不触发。
+*   回调不属于某个标的：`self.current_bar` 为 `None`，多标的指标用 `ind.of(symbol)[0]` 取值。
+*   函数式写法：`run_backtest(..., on_bars=fn)` / `run_live(..., on_bars=fn)`，签名 `fn(ctx, batch)`。
+
+!!! warning "不要在 `on_bar` 里自己数“攒满 N 根”"
+    `on_bar` 里按 `timestamp` 缓存、攒满全部标的才执行的写法，只要有一个标的停牌或缺 bar，那一片就凑不齐、整片不触发，而且没有任何提示。改成“见到下一个时间戳再处理上一片”也不对：这时下一片的第一根 bar 已经进了历史，取到的是未来数据，最后一片也永远不触发。
 
 完整示例见：`examples/strategies/06_stock_momentum_rotation_bucket.py`。
 
 ### 3.6 方案选型对照 (A vs B)
 
-| 维度 | 方案 A：`on_timer` 统一执行 | 方案 B：收齐 `timestamp` 后执行 |
+| 维度 | 方案 A：日界钩子 / `on_timer` | 方案 B：`on_bars` |
 | :--- | :--- | :--- |
-| 触发方式 | 固定时点触发（如 14:55） | 事件驱动，时间片收齐触发 |
-| 稳健性 | 高，不依赖到达顺序 | 中，需维护缓存并处理缺失 |
-| 实现复杂度 | 低，逻辑集中 | 中，需管理 `timestamp -> symbols` |
-| 适用场景 | 日频/定时调仓、生产默认 | 无固定调仓时点的横截面策略 |
-| 常见风险 | 定时器时间与数据频率不匹配 | 某些标的缺失导致不触发 |
+| 触发方式 | 每个交易日一次，或固定时点（如 14:55） | 每个时间片一次 |
+| 缺 bar 的标的 | 不影响触发 | 不影响触发，列在 `batch.missing` |
+| 实现复杂度 | 低 | 低 |
+| 适用场景 | 日频/定时调仓 | 每根 bar 都要跨标的处理（分钟级轮动、截面因子） |
+| 常见风险 | 定时器时间与数据频率不匹配 | 实盘截止时间小于行情源补发延迟，批次总是缺标的 |
 
-建议：优先使用方案 A；只有在无法定义稳定调仓时点时再采用方案 B。
+建议：每天或固定时点调仓用方案 A；每根 bar 都要处理用方案 B。
 
 ### 3.7 横截面常见坑位清单
 
-*   **停牌/缺失数据**：某些标的当日无 Bar 时，方案 B 可能不触发；可设置超时降级，或允许“有效样本数达阈值”即执行。
+*   **停牌/缺失数据**：某些标的当根无 Bar 时，`on_bars` 照常触发，缺的标的列在 `batch.missing`；打分前决定是跳过还是沿用上一根的值。
 *   **Universe 漂移**：成分股调整后若仍用旧列表，会出现权重与真实池不一致；建议定期刷新并记录生效日期。
 *   **调仓时点与成交策略错配**：例如 `fill_policy=NextOpen()` 时，收盘时点信号会在下一根撮合；若用 `CurrentClose(...)`，应结合 `timer_fill_timing` 明确 timer 是否当期成交。
 *   **历史长度不足**：新上市或停牌恢复标的数据窗口不完整；评分前统一做 `len(closes)` 检查并跳过不足样本。
@@ -724,6 +747,7 @@ AKQuant 提供了两种风格的策略开发接口：
 | `on_before_trading(self, trading_date, timestamp)` | `on_before_trading(ctx, trading_date, timestamp)` | 交易日前边界钩子，两种风格都支持 | `examples/50_framework_hooks_demo.py` |
 | `on_after_trading(self, trading_date, timestamp)` | `on_after_trading(ctx, trading_date, timestamp)` | 交易日后边界钩子，两种风格都支持 | `examples/50_framework_hooks_demo.py` |
 | `on_cross_section(self, trading_date, timestamp)` | `on_cross_section(ctx, trading_date, timestamp)` | 当日可见语义的横截面同周期调仓钩子，两种风格都支持 | `examples/strategies/09_stock_momentum_rotation_after_bar.py` |
+| `on_bars(self, batch)` | `on_bars(ctx, batch)` | 每个时间片一次的批量回调，两种风格都支持 | `examples/strategies/06_stock_momentum_rotation_bucket.py` |
 | `on_portfolio_update(self, snapshot)` | `on_portfolio_update(ctx, snapshot)` | 账户快照回调，两种风格都支持 | `examples/50_framework_hooks_demo.py` |
 | `on_error(self, error, source, payload)` | `on_error(ctx, error, source, payload)` | 用户异常回调，两种风格都支持 | `examples/22_strategy_runtime_config_demo.py` |
 | `on_train_signal(self, context)` | `on_train_signal(ctx)` | ML 滚动训练钩子，两种风格都支持；仅在 ML 滚动训练窗口触发时调用 | `examples/10_ml_walk_forward.py`、`examples/55_functional_ml_walk_forward.py` |

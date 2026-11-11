@@ -2705,6 +2705,7 @@ def _build_strategy_instance(
     on_pre_open: Optional[Callable[[Any, Dict[str, Any]], None]],
     on_timer: Optional[Callable[[Any, str], None]],
     context: Optional[Dict[str, Any]],
+    on_bars: Optional[Callable[[Any, Any], None]] = None,
 ) -> Strategy:
     if isinstance(strategy, type) and issubclass(strategy, Strategy):
         accepted_kwargs, unknown_keys = _split_strategy_kwargs(
@@ -2756,6 +2757,7 @@ def _build_strategy_instance(
             on_pre_open=on_pre_open,
             on_timer=on_timer,
             context=context,
+            on_bars=on_bars,
         )
     if strategy is None:
         raise ValueError("Strategy must be provided.")
@@ -2791,6 +2793,7 @@ class FunctionalStrategy(Strategy):
         on_pre_open: Optional[Callable[[Any, Dict[str, Any]], None]] = None,
         on_timer: Optional[Callable[[Any, str], None]] = None,
         context: Optional[Dict[str, Any]] = None,
+        on_bars: Optional[Callable[[Any, Any], None]] = None,
     ):
         """Initialize the FunctionalStrategy."""
         super().__init__()
@@ -2812,6 +2815,7 @@ class FunctionalStrategy(Strategy):
         self._on_expiry_func = on_expiry
         self._on_pre_open_func = on_pre_open
         self._on_timer_func = on_timer
+        self._on_bars_func = on_bars
         self._context = context or {}
 
         # 将 context 注入到 self 中，模拟 Zipline 的 context 对象
@@ -2877,6 +2881,11 @@ class FunctionalStrategy(Strategy):
         """Delegate on_after_trading event to the user-provided function."""
         if self._on_after_trading_func is not None:
             self._on_after_trading_func(self, trading_date, timestamp)
+
+    def on_bars(self, batch: Any) -> None:
+        """Delegate on_bars to the user-provided function."""
+        if self._on_bars_func is not None:
+            self._on_bars_func(self, batch)
 
     def on_cross_section(self, trading_date: Any, timestamp: int) -> None:
         """Delegate on_cross_section to the user-provided function."""
@@ -3128,6 +3137,7 @@ def run_backtest(
     on_expiry: Optional[Callable[[Any, Dict[str, Any]], None]] = None,
     on_pre_open: Optional[Callable[[Any, Dict[str, Any]], None]] = None,
     on_timer: Optional[Callable[[Any, str], None]] = None,
+    on_bars: Optional[Callable[[Any, Any], None]] = None,
     context: Optional[Dict[str, Any]] = None,
     history_depth: Optional[int] = None,
     warmup_period: int = 0,
@@ -3624,6 +3634,7 @@ def run_backtest(
         on_pre_open,
         on_timer,
         context,
+        on_bars=on_bars,
     )
     slot_strategy_instances: Dict[str, Strategy] = {}
     if strategies_by_slot:
@@ -3665,6 +3676,7 @@ def run_backtest(
                 on_pre_open,
                 on_timer,
                 context,
+                on_bars=on_bars,
             )
     all_strategy_instances = [strategy_instance, *slot_strategy_instances.values()]
     configured_slot_ids = [effective_strategy_id]
