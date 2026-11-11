@@ -52,8 +52,9 @@ def build_server(cfg: ServiceConfig) -> MCPServer:
         """按关键词搜索 AKQuant 公开 API.
 
         范围: akquant 顶层导出、Strategy 的方法与属性、run_backtest 的参数
-        (名称形如 run_backtest.initial_cash)。名称命中排在 docstring 命中
-        之前。返回名称、类型与一句摘要; 详情用 get_api。
+        (名称形如 run_backtest.initial_cash)、其余导出类的成员(名称形如
+        Bar.close、BarBatch.missing)。名称命中排在 docstring 命中之前。
+        返回名称、类型与一句摘要; 详情用 get_api。
         """
         return _call(lambda: api_index.search_api(query, limit))
 
@@ -62,7 +63,8 @@ def build_server(cfg: ServiceConfig) -> MCPServer:
         """返回一个 API 的完整签名与 docstring.
 
         name 例: run_backtest、Strategy.buy、Strategy.I、
-        run_backtest.initial_cash。找不到时错误信息里给出相近名称。
+        run_backtest.initial_cash、Bar.close、BarBatch.missing。找不到时
+        错误信息里给出相近名称。
         """
         return _call(lambda: api_index.get_api(name))
 
@@ -83,8 +85,9 @@ def build_server(cfg: ServiceConfig) -> MCPServer:
 
         path 相对项目根目录。返回 ok、类信息与 diagnostics(语法错误、
         找不到/多个 Strategy 子类、拼错的 self 方法、Strategy 方法的错误
-        关键字参数、on_bar 里的 self.I、重写 __init__ 等)。文件有多个
-        Strategy 子类时用 strategy_attr 指定类名。
+        关键字参数或实参个数、回调入参上不存在的属性(如 bar.clsoe)、
+        on_bar 里的 self.I 等)。文件有多个 Strategy 子类时用 strategy_attr
+        指定类名。
         """
         return _call(lambda: check.check_strategy(cfg, path, strategy_attr))
 
@@ -118,7 +121,8 @@ def build_server(cfg: ServiceConfig) -> MCPServer:
         slippage 必须是字典, 如 {"type": "percent", "value": 0.0002};
         {"type": "zero"} 表示关闭滑点(含覆盖 broker_profile 模板的滑点)。
         strategy_params 只能传类体里 IntParam 等声明过的参数。失败时看
-        error.phase、error.user_frames(策略文件里的行号)与 error.hint。
+        error.phase、error.user_frames(策略文件里的行号; 指标声明引起、在
+        框架里抛出的错误指回 self.I 声明行)与 error.hint。
         每次调用都重新加载文件, 改完直接重跑即可。
         """
         return _call(

@@ -196,11 +196,11 @@ Backtest results and suggestions are AI-generated, for learning and research onl
 
 | Tool | Purpose |
 |---|---|
-| `search_api` / `get_api` | Look up API signatures and docs (runtime introspection, matches the installed version) |
+| `search_api` / `get_api` | Look up API signatures and docs (runtime introspection, matches the installed version), including class members such as `Bar.close` and `BarBatch.missing` |
 | `get_guide` | Strategy-writing notes: skeleton, orders, indicators, data format, market rules |
-| `check_strategy` | Static check of a strategy file, without executing it |
+| `check_strategy` | Static check of a strategy file, without executing it: misspelled method names, keyword names, argument counts, and attributes that do not exist on callback arguments such as `bar` and `batch` |
 | `prepare_data` | Prepare data: local CSV/Parquet, AKShare (A-share daily bars), synthetic |
-| `run_backtest` | Run a backtest in a subprocess; returns core metrics, the first trades and structured errors |
+| `run_backtest` | Run a backtest in a subprocess; returns core metrics, the first trades and structured errors (the failing strategy line and a fix hint) |
 | `get_run_details` | Page through trades, orders, daily equity and logs |
 
 The writing notes are also available as the resource `akquant://guide/{topic}`.

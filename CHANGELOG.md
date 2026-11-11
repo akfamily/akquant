@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> 规则版本不变（2.3.1）：只改了 MCP 服务的检查、查询与报错提示，回测数值不变。
+
+### Added
+- **MCP `get_api` / `search_api` 能查类成员**：此前只索引顶层导出、`Strategy` 成员和 `run_backtest` 参数，`get_api("BarBatch.missing")`、`get_api("Bar.close")`、`get_api("BacktestResult.metrics_df")` 都报“找不到 API”。现在其余导出类的字段、属性、方法和枚举值都按 `类名.成员` 收录。
+- **MCP `check_strategy` 新增两条诊断**：`bad-call-args`——`self.<Strategy 方法>(...)` 的位置参数过多、缺必填参数、同一参数传了两次（如 `self.I("SMA", 5)`，此前要到回测才报错）；`unknown-attribute`——`on_bar` 的 `bar`、`on_bars` 的 `batch`、`on_tick` 的 `tick` 上访问了不存在的属性（如 `bar.clsoe`），提示里给出相近的属性名。入参在函数里被重新赋值时不检查。
+
+### Changed
+- **MCP `run_backtest` 的报错更容易定位和修改**：多标的策略里共用增量指标实例（`self.I(SMA(5), name="ma")`）的错误在框架内部抛出，此前 `error.user_frames` 为空，现在指回对应的 `self.I` 声明行；`AttributeError` 的 `error.hint` 给出相近的属性名（没有相近名字且属性不多时列出全部可用属性）；`self.I` 传错位置参数或关键字、没设历史深度就取历史数据这几类错误补了 `error.hint`。
+
 ## [0.3.85] - 2026-11-11
 
 > 规则版本不变（2.3.1）：回测结果不受影响。实盘重写了 `on_cross_section` 的策略，该钩子现在会被调用（此前从不触发）。

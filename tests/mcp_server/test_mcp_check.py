@@ -296,3 +296,119 @@ def test_resolvable_strategy_plus_cross_file_candidate_warns(
     assert warns[0]["severity"] == "warning"
     assert "Other" in warns[0]["message"]
     assert "strategy_attr" in warns[0]["hint"]
+
+
+def _strategy(body: str) -> str:
+    return "from akquant import SMA, Bar, BarBatch, Strategy\n\n\n" + body
+
+
+def test_bad_call_args_too_many_positional(
+    cfg: ServiceConfig, write_file: WriteFile
+) -> None:
+    """self.I 只有一个位置参数: 多传的位置参数静态报出, 不等到回测."""
+    src = _strategy(
+        "class S(Strategy):\n"
+        "    def on_start(self) -> None:\n"
+        '        self.ma = self.I("SMA", 5)\n'
+    )
+    out = check_strategy(cfg, write_file("s.py", src))
+    assert out["ok"] is False
+    assert _codes(out) == ["bad-call-args"]
+    diag = out["diagnostics"][0]
+    assert diag["line"] == 6
+    assert "位置参数过多" in diag["message"]
+    assert diag["hint"].startswith("签名: I(")
+
+
+def test_bad_call_args_missing_and_duplicate(
+    cfg: ServiceConfig, write_file: WriteFile
+) -> None:
+    """缺必填参数、同一参数传两次都报 bad-call-args."""
+    src = _strategy(
+        "class S(Strategy):\n"
+        "    def on_bar(self, bar: Bar) -> None:\n"
+        "        self.set_history_depth()\n"
+        "        self.set_history_depth(5, depth=5)\n"
+    )
+    out = check_strategy(cfg, write_file("s.py", src))
+    messages = [d["message"] for d in out["diagnostics"]]
+    assert _codes(out) == ["bad-call-args", "bad-call-args"]
+    assert "缺少必填参数 depth" in messages[0]
+    assert "同一个参数传了两次: depth" in messages[1]
+
+
+def test_bad_call_args_skips_unpacking_and_overrides(
+    cfg: ServiceConfig, write_file: WriteFile
+) -> None:
+    """用了 *args / **kw 的调用、类里自己重写的方法不查; 未知关键字只报一条."""
+    src = _strategy(
+        "class S(Strategy):\n"
+        "    def buy(self, a, b, c, d, e, f, g, h, i, j, k, m):\n"
+        "        pass\n\n"
+        "    def on_bar(self, bar: Bar) -> None:\n"
+        "        args, kw = (1, 2, 3), {}\n"
+        "        self.set_history_depth(*args)\n"
+        "        self.set_history_depth(**kw)\n"
+        "        self.buy(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)\n"
+        "        self.set_history_depth(deepth=3)\n"
+    )
+    out = check_strategy(cfg, write_file("s.py", src))
+    assert _codes(out) == ["unknown-kwarg"]
+
+
+def test_unknown_attribute_on_callback_params(
+    cfg: ServiceConfig, write_file: WriteFile
+) -> None:
+    """回调入参上拼错的属性: 给相近的名字; 包括没有类属性的 dataclass 字段."""
+    src = _strategy(
+        "class S(Strategy):\n"
+        "    def on_bar(self, bar: Bar) -> None:\n"
+        "        _ = (bar.clsoe, bar.close, bar.symbol)\n\n"
+        "    def on_bars(self, batch: BarBatch) -> None:\n"
+        "        _ = (batch.mising, batch.missing, batch.timestamp)\n"
+        "        _ = (batch.by_symbol, batch.get('A'), batch.zzz)\n"
+    )
+    out = check_strategy(cfg, write_file("s.py", src))
+    assert out["ok"] is False
+    assert _codes(out) == ["unknown-attribute"] * 3
+    first, second, third = out["diagnostics"]
+    assert (first["line"], "close" in first["hint"]) == (6, True)
+    assert "入参 bar 没有属性 clsoe" in first["message"]
+    assert "missing" in second["hint"]
+    assert third["hint"].startswith("可用属性: ")
+    assert "flush_reason" in third["hint"]
+
+
+def test_unknown_attribute_skips_rebound_and_untyped_params(
+    cfg: ServiceConfig, write_file: WriteFile
+) -> None:
+    """入参被重新赋值、或回调入参类型不明确(on_order 是 Any)时不查."""
+    src = _strategy(
+        "class S(Strategy):\n"
+        "    def on_bar(self, bar: Bar) -> None:\n"
+        "        bar = self.wrap(bar)\n"
+        "        self.log(bar.anything)\n\n"
+        "    def on_bars(self, batch: BarBatch) -> None:\n"
+        "        for batch in [batch]:\n"
+        "            self.log(batch.anything)\n\n"
+        "    def on_order(self, order) -> None:\n"
+        "        self.log(order.anything)\n\n"
+        "    def wrap(self, bar):\n"
+        "        return bar\n"
+    )
+    out = check_strategy(cfg, write_file("s.py", src))
+    assert _codes(out) == []
+
+
+def test_unknown_attribute_skips_shadowed_param(
+    cfg: ServiceConfig, write_file: WriteFile
+) -> None:
+    """内层函数 / lambda 有同名参数时不查(那里的 bar 不是回调入参)."""
+    src = _strategy(
+        "class S(Strategy):\n"
+        "    def on_bar(self, bar: Bar) -> None:\n"
+        "        pick = lambda bar: bar.anything\n"
+        "        pick(self)\n"
+    )
+    out = check_strategy(cfg, write_file("s.py", src))
+    assert _codes(out) == []

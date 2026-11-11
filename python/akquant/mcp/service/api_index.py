@@ -2,7 +2,8 @@
 
 内容来自已安装版本的签名与 docstring, 与框架版本天然一致。
 索引范围: ``akquant.__all__``(跳过子模块)、``Strategy`` 的公开成员、
-``run_backtest`` 的每个参数。
+``run_backtest`` 的每个参数, 以及其余导出类的成员(``Bar.close``、
+``BarBatch.missing`` 等, 见 ``members.class_members``)。
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from functools import lru_cache
 from typing import Any, Dict, List, Optional, Tuple
 
 from . import ServiceError
+from .members import class_members
 
 SUMMARY_MAX = 120
 _PARAM_RE = re.compile(r"^:param\s+(\w+):", re.MULTILINE)
@@ -113,15 +115,28 @@ def _run_backtest_params(func: Any) -> List[ApiEntry]:
     return entries
 
 
+def _class_member_entries(name: str, cls: type) -> List[ApiEntry]:
+    return [
+        ApiEntry(f"{name}.{attr}", m.kind, m.signature, m.doc, m.source_module)
+        for attr, m in class_members(cls).items()
+    ]
+
+
 @lru_cache(maxsize=1)
 def _index() -> Dict[str, ApiEntry]:
     import akquant
 
     entries: Dict[str, ApiEntry] = {}
     for name in getattr(akquant, "__all__", []):
-        entry = _top_level_entry(name, getattr(akquant, name, None))
-        if entry is not None:
-            entries[name] = entry
+        obj = getattr(akquant, name, None)
+        entry = _top_level_entry(name, obj)
+        if entry is None:
+            continue
+        entries[name] = entry
+        # Strategy 及其子类的成员走下面的 _strategy_entries, 不重复列
+        if inspect.isclass(obj) and not issubclass(obj, akquant.Strategy):
+            for member in _class_member_entries(name, obj):
+                entries[member.name] = member
     for entry in _strategy_entries(akquant.Strategy):
         entries[entry.name] = entry
     for entry in _run_backtest_params(akquant.run_backtest):

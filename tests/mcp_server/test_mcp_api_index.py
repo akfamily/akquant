@@ -67,3 +67,31 @@ def test_first_sentence_and_param_docs() -> None:
     assert first_sentence("第一句。第二句。") == "第一句。"
     doc = ":param a: 甲\n    续行\n:type a: int\n:param b: 乙\n:return: 无"
     assert _param_docs(doc) == {"a": "甲 续行", "b": "乙"}
+
+
+def test_class_members_are_indexed() -> None:
+    """导出类的成员可按 Cls.member 查到: 字段、属性、方法、枚举值."""
+    missing = get_api("BarBatch.missing")
+    assert missing["kind"] == "attribute"
+    assert "Tuple[str" in missing["signature"]
+    assert "停牌" in missing["doc"]
+    # 没有默认值的 dataclass 字段不是类属性, 也要能查到
+    assert get_api("BarBatch.timestamp")["kind"] == "attribute"
+    assert get_api("BarBatch.by_symbol")["kind"] == "property"
+    getter = get_api("BarBatch.get")
+    assert getter["kind"] == "method"
+    assert "symbol" in getter["signature"]
+    assert get_api("Bar.close")["kind"] == "property"
+    assert get_api("BacktestResult.metrics_df")["kind"] == "property"
+    assert get_api("OrderStatus.Filled")["kind"] == "constant"
+    assert "BarBatch.missing" in _names("missing")
+
+
+def test_class_members_skip_external_bases_and_strategy_duplicates() -> None:
+    """继承自 object / pydantic 等外部基类的成员不列; Strategy 成员只列一份."""
+    assert not _names("model_dump", 200)
+    assert not _names("__", 200)
+    buys = [n for n in _names("buy", 200) if n.endswith(".buy")]
+    assert buys == ["Strategy.buy", "StrategyContext.buy"]
+    with pytest.raises(ServiceError, match="BarBatch.missing"):
+        get_api("BarBatch.mising")

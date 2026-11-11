@@ -199,11 +199,11 @@ DeepSeek Harness 在 `cordis.patch.yml` 里写两条：
 
 | 工具 | 作用 |
 |---|---|
-| `search_api` / `get_api` | 查 API 签名与文档（运行时内省，与本机版本一致） |
+| `search_api` / `get_api` | 查 API 签名与文档（运行时内省，与本机版本一致），包括 `Bar.close`、`BarBatch.missing` 这类类成员 |
 | `get_guide` | 写策略要点：骨架、下单、指标、数据格式、市场规则 |
-| `check_strategy` | 静态检查策略文件，不执行代码 |
+| `check_strategy` | 静态检查策略文件，不执行代码：拼错的方法名、参数名、实参个数，以及 `bar`、`batch` 等回调入参上不存在的属性 |
 | `prepare_data` | 准备数据：本地 CSV/Parquet、AKShare（A 股个股日线）、合成数据 |
-| `run_backtest` | 在子进程中回测，返回核心指标、前几笔成交和结构化报错 |
+| `run_backtest` | 在子进程中回测，返回核心指标、前几笔成交和结构化报错（出错的策略行号与修改提示） |
 | `get_run_details` | 分页读取成交、委托、日频权益和日志 |
 
 写作要点同时以 resource `akquant://guide/{topic}` 的形式提供。
