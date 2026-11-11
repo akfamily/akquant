@@ -35,6 +35,7 @@ from .akquant import (
     TimeInForce,
     TradingSession,
 )
+from .bar_batch import flush_at_replay_end as _flush_bars_at_replay_end
 from .chart import CANDLE_ROLES
 from .gateway.order_receipt import OrderReceipt
 from .indicator_declaration import (
@@ -196,6 +197,7 @@ from .utils.price import round_to_tick as _round_to_tick
 
 if TYPE_CHECKING:
     from .backtest.fill_mode import FillMode
+    from .bar_batch import BarBatch
     from .ml.model import QuantModel
     from .precomputed import PrecomputedIndicator
     from .strategy_drawing import DrawingApi
@@ -379,6 +381,9 @@ class Strategy:
     #: （同 Pine max_labels_count）
     max_drawings_per_kind: int = 500
     warmup_period: int = 0
+    #: 实盘 ``on_bars`` 的截止时间（秒）：时间片时刻之后最多等这么久，未到齐也派发。
+    #: 须大于行情源自身的补发窗口；回测不使用（按时间片边界派发）。
+    bars_deadline_seconds: float = 5.0
     _runtime_config: StrategyRuntimeConfig
     _last_event_type: str = ""  # "bar" or "tick"
     _hold_bars: "defaultdict[str, int]"
@@ -740,6 +745,9 @@ class Strategy:
         # 同一交易日已触发过的钩子不再触发(引擎侧也会跳过存档时刻之前的生命周期事件)。
         if "_framework_last_portfolio_state" in state:
             del state["_framework_last_portfolio_state"]
+        # on_bars 的时间片收集状态持有 Bar 对象, 属会话内派生态。
+        if "_bar_slice_state" in state:
+            del state["_bar_slice_state"]
         if "_framework_portfolio_dirty" in state:
             del state["_framework_portfolio_dirty"]
         # 实盘收尾标志同属会话内派生态: 续跑是一段新会话, 理应能再收尾一次。
@@ -1114,6 +1122,7 @@ class Strategy:
         if getattr(self, "_framework_live_stop_dispatched", False):
             return
         self._framework_live_stop_dispatched = True
+        _flush_bars_at_replay_end(self)
         self._stats_final = True
         _call_user_callback_impl(self, "on_stop")
 
@@ -2653,6 +2662,32 @@ class Strategy:
 
         可在此看到当日所有标的的当拍 bar 与当前账户快照，适合做跨标的同周期
         处理（如横截面调仓）。调仓频率（日/周/月）请在回调内用日历判断。
+
+        实盘事先不知道当日行情，按到达情况判断：此前见过的标的当日都已出现过 bar
+        的首个时间片派发后触发（到齐即触发，否则等 ``bars_deadline_seconds``）；
+        尚未出现的标的此刻不在交易时段则继续等，在交易时段却没有 bar 的按停牌
+        处理、不等。会话的第一个交易日没有“此前见过的标的”可比，在首个时间片等到
+        截止时间后触发。
+        """
+        pass
+
+    def on_bars(self, batch: "BarBatch") -> None:
+        """批量回调：同一时间片的 bar 到齐后触发一次（每个时间片一次）.
+
+        ``batch`` 是 :class:`~akquant.BarBatch`：``batch.bars`` 按标的升序，
+        ``batch["600000"]`` / ``batch.get(...)`` 按标的取，``batch.missing`` 是此前
+        出现过、本片没有可用 bar 的标的。只含基础周期的 bar（``subscribe_bars`` 的
+        窗口 bar 不进批次）；仍在预热期内的 bar 不进批次，全部在预热期内的时间片
+        不触发。
+
+        回测在时间片结束、下一片开始之前触发，其中下的单与在本片最后一根
+        ``on_bar`` 里下单同一口径。实盘在此前见过的标的全部到齐时触发，否则等到
+        时间片时刻 + ``bars_deadline_seconds``（先见到更晚时间片的 bar 也会触发）；
+        之后才到的 bar 只触发 ``on_bar``。与 ``on_bar`` 同时重写时先逐根调用
+        ``on_bar``，再调用 ``on_bars``。
+
+        回调不属于某个标的：``current_bar`` 为 None，多标的指标用
+        ``ind.of(symbol)[0]`` 取值。
         """
         pass
 

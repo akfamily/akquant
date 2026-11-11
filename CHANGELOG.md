@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`on_bars(batch)`：同一时间片的 bar 到齐后回调一次**（#441，实验性）：多标的策略要在每根 bar 上对全部标的统一打分、调仓时，重写 `Strategy.on_bars(batch)`（函数式：`run_backtest(..., on_bars=fn)` / `run_live(..., on_bars=fn)`）。`batch` 是新增的 `akquant.BarBatch`：`batch.bars` 按标的升序，`batch["600000"]` / `batch.get(...)` 按标的取，`batch.missing` 是此前出现过、本片没有 bar 的标的，`batch.flush_reason` 是派发原因。回测（及 `broker="replay"`）在时间片结束、下一片开始之前触发，缺 bar 的时间片与最后一片都触发，其中下的单与在本片最后一根 `on_bar` 里下单同一口径。实盘在此前见过的标的全部到齐时触发，否则等到时间片时刻 + `bars_deadline_seconds`（策略类属性，默认 5 秒，须大于行情源的补发延迟）；截止后才到的 bar 只触发 `on_bar`。`on_bar` 不变，两者可同时重写（先逐根 `on_bar`，再 `on_bars`）；不重写 `on_bars` 的策略行为与结果不变。
+
+### Fixed
+- **实盘里 `on_cross_section` 从不触发**：它的触发时刻原先由回测数据预先算出，实盘（`run_live`，含 `broker="replay"`）没有这一步，重写了该钩子也不会被调用，且没有任何提示。现在实盘按 bar 的到达情况判断：此前见过的标的当日都已出现过 bar 的首个时间片派发后触发，每个交易日一次（到齐即触发，否则等 `bars_deadline_seconds`）；当日尚未出现的标的此刻不在交易时段（如没有夜盘的品种）则继续等，在交易时段却没有 bar 的按停牌处理、不等。回测不变。
+
+### Changed
+- **文档与示例不再教“在 `on_bar` 里攒满全部标的再执行”**：这种写法只要有一个标的停牌或缺 bar，那一片就凑不齐、整片不触发且没有任何提示。策略指南 3.5 节与 `examples/strategies/06_stock_momentum_rotation_bucket.py` 改用 `on_bars`。
+
 ## [0.3.84] - 2026-11-09
 
 > **规则版本 2.3.1**：同一次回调里下单后又撤掉这张单的策略，回测结果会变（此前撤单被忽略、订单照常成交）；带在途订单存档续跑的策略，续跑段的订单回调不再重复。

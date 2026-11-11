@@ -53,6 +53,7 @@ def run_backtest(
     on_expiry: Optional[Callable[[Any, Dict[str, Any]], None]] = None,
     on_pre_open: Optional[Callable[[Any, Dict[str, Any]], None]] = None,
     on_timer: Optional[Callable[[Any, str], None]] = None,
+    on_bars: Optional[Callable[[Any, Any], None]] = None,
     context: Optional[Dict[str, Any]] = None,
     history_depth: Optional[int] = None,
     warmup_period: int = 0,
@@ -208,7 +209,7 @@ def run_from_checkpoint(
 *   `strategy`: 策略类、策略实例，或 `on_bar` 函数（函数式编程风格）。
 *   `strategy_source` / `strategy_loader` / `strategy_loader_options`: 动态策略加载入口。`strategy=None` 时可直接从源码、路径或自定义加载器构造策略。
 *   `initialize` / `on_start` / `on_resume` / `on_stop`: 函数式策略生命周期回调；其中 `on_resume(ctx)` 仅在 checkpoint 恢复后的热启动阶段触发，且先于 `on_start(ctx)`。
-*   `on_tick` / `on_order` / `on_trade` / `on_reject` / `on_before_trading` / `on_after_trading` / `on_cross_section` / `on_portfolio_update` / `on_error` / `on_expiry` / `on_pre_open` / `on_timer` / `on_train_signal`: 函数式策略事件回调；其中 `on_expiry(ctx, event)` 在引擎实际执行到期结算后触发，`on_pre_open(ctx, event)` 在交易日首个时段开始前 1ns 触发（A 股 09:15 开盘集合竞价前），适合“盘前决策，本次 open 成交”，交易日钩子的完整时点见下文 [`akquant.Strategy`](#akquantstrategy)；`on_error(ctx, error, source, payload)` 会在其他用户回调抛出异常时触发；`on_train_signal(ctx)` 仅在 ML 滚动训练窗口触发。
+*   `on_tick` / `on_order` / `on_trade` / `on_reject` / `on_before_trading` / `on_after_trading` / `on_cross_section` / `on_bars` / `on_portfolio_update` / `on_error` / `on_expiry` / `on_pre_open` / `on_timer` / `on_train_signal`: 函数式策略事件回调；`on_bars(ctx, batch)` 每个时间片触发一次（实验性），见[策略指南](../guide/strategy.md#on-bars)；其中 `on_expiry(ctx, event)` 在引擎实际执行到期结算后触发，`on_pre_open(ctx, event)` 在交易日首个时段开始前 1ns 触发（A 股 09:15 开盘集合竞价前），适合“盘前决策，本次 open 成交”，交易日钩子的完整时点见下文 [`akquant.Strategy`](#akquantstrategy)；`on_error(ctx, error, source, payload)` 会在其他用户回调抛出异常时触发；`on_train_signal(ctx)` 仅在 ML 滚动训练窗口触发。
 *   `symbols`: 标的代码或代码列表。默认 `None`（**未显式传入**）：数据里出现的标的即视为要跑的标的（“数据即订阅”），行为与传入前完全一致。**显式传入**（哪怕传的是当前数据里已有的标的）后语义变为「只跑这些标的」：白名单外的标的会被前置过滤掉，不进入引擎、不参与撮合与统计（多标的输入下，回测结果可能因此变化）；显式传入空集合会报错，而不是退化为不过滤。白名单实际由 `symbols` ∪ `config.instruments` ∪（`__init__` 阶段）`self.subscribe()` 已订阅的标的三者合并而成；显式传了 `symbols` 后，`on_start` 里再 `subscribe()` 白名单外的标的会抛 `ValueError`（详见[策略指南](../guide/strategy.md)「策略生命周期」一节 `on_start` 的说明）。此校验仅作用于回测：实盘 `run_live` 从不下发白名单，`subscribe()` 不受约束。
     *   **`run_from_checkpoint` 的特例**：白名单合并的第三项不只是本次调用 `__init__` 阶段的 `subscribe()`——热启动恢复出来的策略实例带着**从存档 pickle 恢复的** `_subscriptions`（即上一段运行期间、含 `on_start` 里新增的全部订阅），这些也会并入白名单。也就是说，若阶段一的策略订阅过某个标的，阶段二哪怕不再显式 `subscribe()` 它，只要阶段二传了 `symbols`，该标的仍会留在合并后的白名单里——这是热启动「延续上一段状态」的整体语义的一部分，与「`__init__` 阶段订阅」并入 `run_backtest` 白名单的规则并非完全对称，请勿照搬 `run_backtest` 的白名单范围去推断 `run_from_checkpoint` 的实际过滤结果。
     *   **迁移提示（旧版 `symbols="BENCHMARK"` 写法）**：改动前，`symbol`/`symbols` 的签名默认值就是字面量 `"BENCHMARK"`（仓库内部分热启动示例也这么显式写过）。升级后，显式传入的值一律被当作真实过滤条件，不再等价于「未传」，且不同数据形态下会向**相反方向**出错：`List[Bar]` / `DataFeed` 形态因为数据里没有任何标的字面量等于 `"BENCHMARK"`，白名单谁都不放行，回测直接空跑（只有一条 WARNING，其余悄无声息）；`DataFrame` / `Dict[str, DataFrame]` 形态则因为 `"BENCHMARK"` 触发了既有前置过滤判据的短路，反而完全不过滤。升级方式很简单：把显式的 `symbols="BENCHMARK"` **删掉（省略该参数）**，不要迁移成其他字面量。
@@ -954,6 +955,7 @@ def set_log_level(level: Union[str, int]) -> None
 *   `on_before_trading(trading_date, timestamp)`: 交易日最早的连续竞价开始后 1ns 触发，每个交易日至多一次（回测只为有行情的交易日触发，实盘按交易日历逐日触发；A 股 09:30:00 之后；有夜盘的期货交易日从前一交易日夜盘开始，周一交易日在周五 21:00 触发；交易日没有连续竞价段时不触发）。该回调按“前一交易日/前一时点信息可见”的语义工作。
 *   `on_pre_open(event: Dict[str, Any])`: 交易日首个时段开始前 1ns 触发，每个交易日一次（A 股 09:15 前，即 09:14:59.999…；有夜盘的期货为前一交易日 20:55 夜盘集合竞价前），不早于上一交易日的日终结算；回测与实盘一致。同一交易日它一定先于 `on_before_trading`。适合“盘前决策，本次 open 成交”；默认下单语义等价于 `NextOpen()`，这类单参加开盘集合竞价统一撮合（撮合在连续竞价开始时进行，成交价为竞价价，成交时间记在首个连续竞价事件上）。`event["expected_open_at"]` 是本次触发时刻，不是开盘时刻。示例见：`examples/52_pre_open_demo.py`。
 *   `on_cross_section(trading_date, timestamp)`: 横截面同周期调仓钩子。在框架看到当日首个“跨标的完整 bar 切片”后触发，每个交易日最多一次；与 `on_before_trading` 不同，它可以看到当日历史和当前账户快照，适合收盘价同周期调仓。调仓频率（日/周/月）在回调内用日历判断。
+*   `on_bars(batch: BarBatch)`: 批量回调（实验性）。同一时间片的 bar 到齐后触发一次，`batch` 是这一片的全部 bar（`batch.bars` 按标的升序，`batch["600000"]` 按标的取，`batch.missing` 是此前出现过、本片没有 bar 的标的，`batch.flush_reason` 是派发原因）。回测在时间片结束、下一片开始之前触发，其中下的单与在本片最后一根 `on_bar` 里下单同一口径；实盘在此前见过的标的全部到齐时触发，否则等到时间片时刻 + `bars_deadline_seconds`（策略类属性，默认 5 秒）。与 `on_bar` 同时重写时先逐根 `on_bar` 再 `on_bars`；只含基础周期的 bar。完整说明见[策略指南](../guide/strategy.md#on-bars)。
 *   `on_after_trading(trading_date, timestamp)`: 日终结算完成后触发，每个交易日一次。此时 T+1 已解冻、当日 Day 单已过期，其中下的单属于下一交易日。回测在收盘时刻；实盘在收盘 + `day_close_delay`（见 [run_live 实盘时区与交易时段](#live-timezone-sessions)）。回测数据在盘中结束、当日未结算时不触发，停止时也不补发。
 *   `on_portfolio_update(snapshot)`: 账户快照变化时触发。
 *   `on_error(error, source, payload=None)`: 用户回调抛异常时触发。是否在触发 `on_error`
