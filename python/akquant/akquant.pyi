@@ -148,7 +148,9 @@ class SessionResolver:
 
     :param sessions: 代码前缀 → 时段模板名或自定义段列表；"default" 为全局默认。
         自定义段写 (start, end, session)，可选第 4 项锚定 "prev"/"day"
-    :param trading_calendar: 交易日列表；不传时中国市场按工作日推算（节假日会算错），ALWAYS_OPEN 每天都算
+    :param trading_calendar: 交易日列表；不传时中国时区用内置的交易所日历（覆盖范围见
+        builtin_calendar_range，范围之外按工作日推算），其他时区的非全天候时段表按
+        工作日推算，ALWAYS_OPEN 每天都算
     :param timezone: IANA 时区名
     """
 
@@ -208,6 +210,23 @@ class SessionResolver:
     def uses_fallback_calendar(self) -> bool: ...
     @property
     def uses_all_days_fallback(self) -> bool: ...
+    def with_calendar_adjustments(
+        self, added: list[datetime.date], removed: list[datetime.date]
+    ) -> SessionResolver:
+        r"""
+        返回叠加了日历修正量的新解析器（时段表、在用标的等配置不变）.
+
+        ``added`` 并入交易日、``removed`` 从交易日中剔除，叠加在缺省日历上；传了
+        ``trading_calendar`` 的解析器不受影响。
+        """
+    @property
+    def uses_builtin_calendar(self) -> bool:
+        r"""会话日历是否为内置的中国交易所日历（未传 trading_calendar 且为中国时区）."""
+    def builtin_calendar_covers(self, day: datetime.date) -> bool:
+        r"""会话日历在 ``day`` 是否有内置交易所日历的数据；否则该日按工作日推算."""
+    @staticmethod
+    def builtin_calendar_range() -> tuple[datetime.date, datetime.date]:
+        r"""内置中国交易所日历的覆盖范围 ``(首日, 末日)``（含两端）."""
     @staticmethod
     def templates() -> list[str]: ...
 
@@ -917,6 +936,21 @@ class Engine:
         trading_calendar: typing.Optional[list[datetime.date]] = None,
     ) -> None:
         r"""配置交易时段表与交易日历."""
+        ...
+
+    def set_calendar_adjustments(
+        self, added: list[datetime.date], removed: list[datetime.date]
+    ) -> None:
+        r"""
+        按回测数据修正缺省日历.
+
+        在 ``configure_sessions`` 之后、``run()`` 之前调用：``added`` 并入交易日，
+        ``removed`` 从交易日中剔除，叠加在缺省日历（内置交易所日历或工作日）上，并随
+        存档保存。传了 ``trading_calendar`` 时不生效。
+
+        :param added: 数据里有行情、缺省日历却不是交易日的日期
+        :param removed: 缺省日历按工作日推算、数据里所有标的都没有行情的日期
+        """
         ...
 
     def trading_day_at(self, timestamp_ns: int) -> datetime.date:

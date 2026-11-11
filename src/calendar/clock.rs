@@ -51,6 +51,11 @@ impl LocalClock {
         }
     }
 
+    /// 是否为中国时区（IANA 名称为上海及其别名，或无名称时固定偏移 +8 小时）。
+    pub(crate) fn is_china(&self) -> bool {
+        super::resolver::is_china_timezone(self.tz.map(|tz| tz.name()), self.offset_secs)
+    }
+
     /// 时区描述（报错用）：IANA 名称，或 `UTC+HH:MM` 形式的固定偏移。
     pub(crate) fn describe(&self) -> String {
         match &self.tz {

@@ -28,8 +28,8 @@ use crate::settlement::SettlementManager;
 use crate::statistics::StatisticsManager;
 
 use super::core::{Engine, StrategySlot};
-use super::strategy_handler::{PyStrategy, StrategyHandle};
 use super::state::SharedState;
+use super::strategy_handler::{PyStrategy, StrategyHandle};
 
 #[gen_stub_pymethods]
 #[pymethods]
@@ -239,11 +239,7 @@ impl Engine {
         Ok(())
     }
 
-    fn set_strategy_for_slot(
-        &mut self,
-        slot_index: usize,
-        strategy: Py<PyAny>,
-    ) -> PyResult<()> {
+    fn set_strategy_for_slot(&mut self, slot_index: usize, strategy: Py<PyAny>) -> PyResult<()> {
         self.ensure_strategy_context_capacity();
         if slot_index >= self.strategy_slots.len() {
             return Err(PyValueError::new_err(format!(
@@ -636,6 +632,7 @@ impl Engine {
             live_lifecycle_anchor_ns: None,
             live_replay_close: None,
             source_trading_day_warned: HashSet::new(),
+            calendar_from_data: false,
             trusted_close_marker: None,
             current_event_day_settled: false,
             close_marker_warned: HashSet::new(),
@@ -1109,7 +1106,8 @@ impl Engine {
     /// :param sessions: 代码前缀 → 时段模板名或自定义段列表
     ///     ``[(start, end, session[, anchor]), ...]``；"default" 为全局默认。不传按规则 B
     ///     （中国时区按资产类型取默认，其他时区全天连续）。
-    /// :param trading_calendar: 交易日列表；不传按工作日推算。
+    /// :param trading_calendar: 交易日列表；不传时中国时区用内置交易所日历，其他时区的
+    ///     非全天候时段表按工作日推算。
     #[pyo3(signature = (sessions=None, trading_calendar=None))]
     fn configure_sessions(
         &mut self,
@@ -1162,6 +1160,27 @@ impl Engine {
         };
         self.invalidate_session_resolver();
         Ok(())
+    }
+
+    /// 按回测数据修正缺省日历.
+    ///
+    /// 在 :meth:`configure_sessions` 之后、``run()`` 之前调用：``added`` 并入交易日，
+    /// ``removed`` 从交易日中剔除，叠加在缺省日历（内置交易所日历或工作日）上，并随
+    /// 存档保存。传了 ``trading_calendar`` 时不生效（显式日历以用户为准）。调用后本次
+    /// 运行不再发“按工作日推算交易日”的告警。
+    ///
+    /// :param added: 数据里有行情、缺省日历却不是交易日的日期
+    /// :param removed: 缺省日历按工作日推算、数据里所有标的都没有行情的日期
+    pub fn set_calendar_adjustments(&mut self, added: Vec<NaiveDate>, removed: Vec<NaiveDate>) {
+        let overrides = &mut self.session_config.calendar_overrides;
+        for day in removed {
+            overrides.remove(day);
+        }
+        for day in added {
+            overrides.add(day);
+        }
+        self.calendar_from_data = true;
+        self.invalidate_session_resolver();
     }
 
     /// 时刻所属的交易日.

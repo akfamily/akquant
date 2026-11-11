@@ -238,7 +238,7 @@ class SessionAwareStrategy(Strategy):
 `run_backtest`、`run_live` 都接受这两个参数：
 
 * `sessions`：代码前缀 → 时段模板名或自定义时段表，`"default"` 为全局默认。不传时中国时区按资产类型取默认（股票/基金 `CN_STOCK`、期货 `CN_FUTURES_DAY`、期权 `CN_OPTION`，其他资产 `ALWAYS_OPEN`），其他时区全天连续（`ALWAYS_OPEN`）。可选模板见 `aq.SessionResolver.templates()`；有夜盘的期货要显式指定，如 `sessions={"rb": "CN_FUTURES_NIGHT_23"}`。自定义时段表写法见 [API 参考](../reference/api.md#akquantrun_backtest)。
-* `trading_calendar`：交易日列表（`date`/字符串/`Timestamp`）。不传时中国市场按工作日推算（节假日也被当作交易日，照常开日、结算并触发交易日钩子），并告警一次；节假日前后的夜盘与日终结算会算错。`ALWAYS_OPEN` 每天都算，不告警。
+* `trading_calendar`：交易日列表（`date`/字符串/`Timestamp`），一般不用传。不传时：中国时区用内置的交易所日历（沪深及期货交易所的休市安排，随版本更新，覆盖范围见 `SessionResolver.builtin_calendar_range()`），节假日不算交易日；回测还会把数据里出现过行情的日期并入交易日。超出内置日历范围的日期、以及非中国时区的自定义时段表，回测以数据为准（所有标的都没有行情的工作日不算交易日），实盘按工作日推算并告警一次。`ALWAYS_OPEN` 每天都算。
 
 ```python
 import akquant as aq
@@ -256,7 +256,7 @@ result = aq.run_backtest(
 
 * 按时段排队撮合只发生在 paper/replay 的模拟撮合：闭市、休市或集合竞价时订单排队，不按连续竞价成交。`broker_live` 下订单直接报到柜台、不按时段排队，时段表只决定 `ctx.session`、`is_market_open()`、交易日划分与日终结算、交易日钩子的时刻。
 * 期货不传 `sessions` 时按 `CN_FUTURES_DAY` 日盘时段，夜盘行情的时段判为闭市（paper 下订单排到日盘才撮合），有夜盘的品种必须传 `sessions=`。
-* 长期运行的实盘必须传 `trading_calendar=`，否则按工作日推算会在节假日开日、结算（启动时告警一次）。live_server 0.12.0 起，klinedata 会话自动从行情服务取沪深交易日历；行情服务以 jwt 模式部署时（需要 `X-QMF-Session`，live_server 不带）取不到，退回工作日推算并告警。
+* 实盘不传 `trading_calendar=` 时用内置交易所日历，节假日不开日、不结算；内置日历随版本更新，启动时若 30 天内到期（或已过期）会告警一次，届时请升级 AKQuant 或传入 `trading_calendar=`。非中国时区的自定义时段表没有内置日历，长期运行必须传，否则按工作日推算、节假日照常开日结算（启动时告警一次）。live_server 0.12.0 起，klinedata 会话还会自动从行情服务取沪深交易日历传入。
 * `run_live(timezone=)` 须与交易所一致，日终结算时刻与默认时段表都按它计算。
 
 ## 3. 风险管理 (Risk Management)
@@ -565,7 +565,7 @@ broker（无行情通道）都属于这种情形。框架**不从数据推断**�
 
 *   **`schedule_daily(time_str, payload)`**: 交易日历上的每个交易日在指定时间触发（非交易日不触发；回测区间内没有行情的交易日也触发）。
     *   **回测与实盘同一语义**: 回测按数据覆盖范围内的日历交易日预生成所有触发时间；实盘只登记下一次，触发后按交易日历调度下一次。
-    *   **未配置 `trading_calendar` 时的缺省日历**: 按在用时段表推算——中国市场（股票、期货、期权）为工作日（节假日会算错）；`ALWAYS_OPEN`（非中国时区的缺省）每天都算交易日。后一种情况下回测只取有行情的日子（周末无数据就不触发），实盘则周末也会触发并告警一次；美股等周末休市的市场请传 `trading_calendar`。
+    *   **未配置 `trading_calendar` 时的缺省日历**: 中国时区用内置的交易所日历（节假日不触发）；回测里数据出现过行情的日期也算交易日，超出内置日历范围或非中国时区的自定义时段表以数据为准。`ALWAYS_OPEN`（非中国时区的缺省）每天都算交易日：回测只取有行情的日子（周末无数据就不触发），实盘则周末也会触发并告警一次；美股等周末休市的市场请传 `trading_calendar`。
     *   **首日规则**: 回测中在 `on_start` 里登记的任务从首个行情事件起生效，首日早于该时刻的时点不触发；实盘在盘前等生命周期事件上也会登记（前提是策略重写了 `on_pre_open` / `on_before_trading` / `on_after_trading` 之一；都没重写时，生命周期事件不派发给策略，任务仍在首个行情事件登记）。
 *   **`schedule_weekly(time_str, payload)`** / **`schedule_monthly(time_str, payload)`**: 在每周/每月的**首个交易日**（按交易日历，节假日自动顺延）触发，回测与实盘都可用；实盘触发后调度到下周/下月首个交易日。
 *   **`schedule(trigger_time, payload)`**: 在指定时间点（一次性）触发。月末、偏移、每两周等非常规节奏，可用 `self.trading_days` 与 `nth_trading_day_of_month/week` 等日历辅助自行枚举，再逐个调 `schedule`。

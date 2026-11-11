@@ -10,7 +10,7 @@ def test_streaming_indicator_sink_is_public() -> None:
 
 
 def test_engine_rule_version_is_2_3_1() -> None:
-    """同一次回调里下单又撤单不再被忽略(issue #440), 规则版本为 2.3.1."""
+    """缺省交易日历改为内置交易所日历并按回测数据修正, 规则版本为 2.4.0."""
     import akquant
 
-    assert akquant.__engine_rule_version__ == "2.3.1"
+    assert akquant.__engine_rule_version__ == "2.4.0"

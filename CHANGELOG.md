@@ -7,14 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> 规则版本不变（2.3.1）：只改了 MCP 服务的检查、查询与报错提示，回测数值不变。
-
-### Added
-- **MCP `get_api` / `search_api` 能查类成员**：此前只索引顶层导出、`Strategy` 成员和 `run_backtest` 参数，`get_api("BarBatch.missing")`、`get_api("Bar.close")`、`get_api("BacktestResult.metrics_df")` 都报“找不到 API”。现在其余导出类的字段、属性、方法和枚举值都按 `类名.成员` 收录。
-- **MCP `check_strategy` 新增两条诊断**：`bad-call-args`——`self.<Strategy 方法>(...)` 的位置参数过多、缺必填参数、同一参数传了两次（如 `self.I("SMA", 5)`，此前要到回测才报错）；`unknown-attribute`——`on_bar` 的 `bar`、`on_bars` 的 `batch`、`on_tick` 的 `tick` 上访问了不存在的属性（如 `bar.clsoe`），提示里给出相近的属性名。入参在函数里被重新赋值时不检查。
+> **规则版本 2.4.0**：不传 `trading_calendar` 时的缺省交易日历变了。受影响的是此前靠“周一至周五”推算交易日的运行：`schedule_daily` 等按交易日触发的定时任务不再在节假日触发；节前收盘后 `self.trading_day` 直接是节后首个交易日；数据里含周末或节假日日期的回测，这些日期各自成为一个交易日（此前并入下一交易日）。只含真实交易日的 A 股日线回测，收益、回撤等数值不变。显式传了 `trading_calendar` 的运行不受影响。
 
 ### Changed
+- **不用再传交易日历：中国时区内置交易所日历，回测按数据修正**。此前不传 `trading_calendar` 时按“周一至周五”推算交易日并每次运行告警，节假日被当作交易日（照常开日、结算、触发交易日钩子与每日定时任务），带夜盘的期货在节假日前后的交易日归属也会算错；要避免就得每次自己取日历传进来。现在：
+    - 中国时区（`Asia/Shanghai` 等）缺省使用随包附带的交易所日历（沪深及期货交易所的休市安排，1990-12-19 起，本版覆盖到 2026-12-31），回测与实盘都生效；`SessionResolver.builtin_calendar_range()` 返回覆盖范围。
+    - 回测把数据里出现过行情的日期并入交易日（本地时刻 06:00 之后有 bar 才算，夜盘跨过午夜的部分不算）。超出内置日历范围的日期、以及非中国时区的自定义时段表，所有标的都没有行情的工作日不算交易日。内置日历覆盖的交易日不会因为数据里没有行情而被剔除（个别标的停牌时当天仍是交易日）。
+    - 告警只在交易日确实要靠“周一至周五”推算时出现：回测不再告警；实盘在内置日历 30 天内到期或已过期时告警一次，非中国时区的非全天候时段表未传日历时照旧告警一次。
+    - 显式传入的 `trading_calendar` 仍以用户为准，行为不变。
+    - 已知限制：`run_from_checkpoint` 续跑段、`DataFeed` 与 tick 形态的数据不按数据修正日历，只用内置日历；内置日历每年随交易所公布的休市安排更新（`scripts/update_cn_exchange_calendar.py`），需要升级 AKQuant 才能拿到下一年的安排。
+
+- **`BarGenerator` 的日线 `interval_start` 跨节假日时指向节前最后一个交易日的收盘**（此前按工作日推算，指向节假日当天）。
 - **MCP `run_backtest` 的报错更容易定位和修改**：多标的策略里共用增量指标实例（`self.I(SMA(5), name="ma")`）的错误在框架内部抛出，此前 `error.user_frames` 为空，现在指回对应的 `self.I` 声明行；`AttributeError` 的 `error.hint` 给出相近的属性名（没有相近名字且属性不多时列出全部可用属性）；`self.I` 传错位置参数或关键字、没设历史深度就取历史数据这几类错误补了 `error.hint`。
+
+### Added
+- `SessionResolver` 新增 `uses_builtin_calendar`、`builtin_calendar_covers(day)`、`builtin_calendar_range()`、`with_calendar_adjustments(added, removed)`；`Engine` 新增 `set_calendar_adjustments(added, removed)`。
+- **MCP `get_api` / `search_api` 能查类成员**：此前只索引顶层导出、`Strategy` 成员和 `run_backtest` 参数，`get_api("BarBatch.missing")`、`get_api("Bar.close")`、`get_api("BacktestResult.metrics_df")` 都报“找不到 API”。现在其余导出类的字段、属性、方法和枚举值都按 `类名.成员` 收录。
+- **MCP `check_strategy` 新增两条诊断**：`bad-call-args`——`self.<Strategy 方法>(...)` 的位置参数过多、缺必填参数、同一参数传了两次（如 `self.I("SMA", 5)`，此前要到回测才报错）；`unknown-attribute`——`on_bar` 的 `bar`、`on_bars` 的 `batch`、`on_tick` 的 `tick` 上访问了不存在的属性（如 `bar.clsoe`），提示里给出相近的属性名。入参在函数里被重新赋值时不检查。
 
 ## [0.3.85] - 2026-11-11
 

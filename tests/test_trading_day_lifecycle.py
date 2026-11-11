@@ -2091,7 +2091,11 @@ def test_resume_passed_calendar_overrides_saved_with_one_warning(
 def test_date_only_non_trading_date_warns_once(
     calendar: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """只有日期的数据含非交易日（周六）：改写时告警一次，多个标的也只告警一次."""
+    """只有日期的数据含日历外的日期（周六）.
+
+    传了日历：以日历为准，改写时告警一次，多个标的也只告警一次。未传日历：数据里
+    有行情的日期就是交易日，周六自成一个交易日，不告警。
+    """
     days = ["2024-01-05", "2024-01-06", "2024-01-08"]
     df = pd.concat(
         [_daily_frame(days, "600000.SH"), _daily_frame(days, "000001.SZ")]
@@ -2109,6 +2113,9 @@ def test_date_only_non_trading_date_warns_once(
             **kwargs,
         )
     warnings = [r for r in caplog.records if "非交易日" in r.getMessage()]
+    if calendar is None:
+        assert warnings == [], [r.getMessage() for r in caplog.records]
+        return
     assert len(warnings) == 1, [r.getMessage() for r in caplog.records]
     assert "2024-01-06" in warnings[0].getMessage()
 
@@ -2911,7 +2918,9 @@ def test_live_replay_future_data_skips_close_wait_with_clear_warning(
     assert elapsed < 4.0, elapsed
 
 
-# ---- 缺省交易日历告警（spec D3：按工作日推算时每次运行告警一次） ----
+# ---- 缺省交易日历告警：只在交易日确实靠“周一至周五”推算时每次运行告警一次 ----
+# 中国时区用内置交易所日历、回测按数据修正日历，都不告警；实盘里非中国时区的
+# 非全天候时段表仍按工作日推算，告警。
 
 _DEFAULT_CALENDAR_HINT = "未传 trading_calendar"
 
@@ -2924,10 +2933,10 @@ def _default_calendar_warnings(caplog: pytest.LogCaptureFixture) -> List[str]:
     ]
 
 
-def test_default_calendar_warns_once_per_backtest(
+def test_default_calendar_does_not_warn_in_backtest(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A 股未传日历：多个交易日也只告警一次，文案说明后果并给出写法."""
+    """A 股回测未传日历：用内置交易所日历并按数据修正，不告警."""
     import logging
 
     with caplog.at_level(logging.WARNING):
@@ -2938,15 +2947,7 @@ def test_default_calendar_warns_once_per_backtest(
             initial_cash=1e5,
             show_progress=False,
         )
-    msgs = _default_calendar_warnings(caplog)
-    assert len(msgs) == 1, msgs
-    m = msgs[0]
-    assert "按工作日推算交易日" in m and "节假日" in m, m
-    assert 'trading_calendar=ak.tool_trade_date_hist_sina()["trade_date"]' in m, m
-    assert "live_server" in m, m
-    # 与闭市告警同一通道（同一 logger）
-    names = {r.name for r in caplog.records if _DEFAULT_CALENDAR_HINT in r.getMessage()}
-    assert names == {"akquant.pipeline.stages.data"}, names
+    assert _default_calendar_warnings(caplog) == []
 
 
 def test_explicit_calendar_does_not_warn(caplog: pytest.LogCaptureFixture) -> None:
@@ -2983,10 +2984,10 @@ def test_always_open_timezone_does_not_warn(caplog: pytest.LogCaptureFixture) ->
     assert _default_calendar_warnings(caplog) == []
 
 
-def test_custom_session_table_without_calendar_warns(
+def test_custom_session_table_without_calendar_does_not_warn_in_backtest(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """自定义时段表（按工作日推算）未传日历：告警一次."""
+    """非中国时区的自定义时段表回测未传日历：交易日按数据修正，不告警."""
     import logging
 
     df = _daily_frame(["2024-01-02", "2024-01-03"], symbol="AAPL")
@@ -3001,13 +3002,13 @@ def test_custom_session_table_without_calendar_warns(
             timezone="America/New_York",
             sessions={"default": [("09:30", "16:00", "continuous")]},
         )
-    assert len(_default_calendar_warnings(caplog)) == 1
+    assert _default_calendar_warnings(caplog) == []
 
 
-def test_resumed_run_with_calendar_overrides_still_warns_once(
+def test_resumed_run_without_calendar_does_not_warn(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """续跑（存档里有行情源修正量、无显式日历）：仍是缺省日历，告警一次."""
+    """续跑（无显式日历）：中国时区用内置交易所日历，不告警."""
     import logging
 
     first = run_backtest(
@@ -3026,13 +3027,16 @@ def test_resumed_run_with_calendar_overrides_still_warns_once(
             data=_daily_frame(["2024-01-04", "2024-01-05"]),
             show_progress=False,
         )
-    assert len(_default_calendar_warnings(caplog)) == 1
+    assert _default_calendar_warnings(caplog) == []
 
 
-def test_live_replay_default_calendar_warns_once(
+def test_live_replay_builtin_calendar_does_not_warn(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Replay 实盘未传日历：告警一次."""
+    """Replay 实盘、中国时区未传日历：用内置交易所日历，不发“按工作日推算”告警.
+
+    内置日历临近到期时另有一条到期告警（文案不同，随墙钟日期出现），这里不断言。
+    """
     import logging
 
     with caplog.at_level(logging.WARNING):
@@ -3041,7 +3045,31 @@ def test_live_replay_default_calendar_warns_once(
             _local_bars(["2024-01-02 10:00", "2024-01-03 10:00", "2024-01-04 10:00"]),
             day_close_delay=0,
         )
-    assert len(_default_calendar_warnings(caplog)) == 1
+    assert _default_calendar_warnings(caplog) == []
+
+
+def test_live_replay_weekday_fallback_warns_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Replay 实盘、非中国时区的非全天候时段表未传日历：按工作日推算，告警一次."""
+    import logging
+
+    # 新加坡与上海同为 UTC+8, 可直接复用按上海本地时间造的 bar
+    with caplog.at_level(logging.WARNING):
+        _run_live_replay(
+            monkeypatch,
+            _local_bars(["2024-01-02 10:00", "2024-01-03 10:00", "2024-01-04 10:00"]),
+            day_close_delay=0,
+            timezone="Asia/Singapore",
+            sessions={"default": "CN_STOCK"},
+        )
+    msgs = _default_calendar_warnings(caplog)
+    assert len(msgs) == 1, msgs
+    assert "按工作日推算交易日" in msgs[0] and "节假日" in msgs[0], msgs[0]
+    assert "trading_calendar=" in msgs[0], msgs[0]
+    # 与闭市告警同一通道（同一 logger）
+    names = {r.name for r in caplog.records if _DEFAULT_CALENDAR_HINT in r.getMessage()}
+    assert names == {"akquant.pipeline.stages.data"}, names
 
 
 def test_live_replay_explicit_calendar_does_not_warn(

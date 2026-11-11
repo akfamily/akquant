@@ -226,10 +226,10 @@ impl SessionResolver {
         }
         by_prefix.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
         Ok(Self {
+            weekdays: Self::weekday_base(&clock),
+            all_days: TradingCalendar::AllDays,
             clock,
             calendar,
-            weekdays: TradingCalendar::Weekdays,
-            all_days: TradingCalendar::AllDays,
             explicit_default,
             by_prefix,
             stock_default: builtin("CN_STOCK"),
@@ -248,13 +248,32 @@ impl SessionResolver {
         })
     }
 
-    /// 缺省日历（未传交易日历时的工作日 / 每天规则）应用行情源修正量；显式日历不受影响。
-    /// 只在构造后、使用前调用（缓存随之清空）。
+    /// 非全天候时段表的缺省日历：中国时区用内置交易所日历，其余按工作日。
+    fn weekday_base(clock: &LocalClock) -> TradingCalendar {
+        if clock.is_china() {
+            TradingCalendar::ChinaExchange
+        } else {
+            TradingCalendar::Weekdays
+        }
+    }
+
+    /// 会话日历是否为内置的中国交易所日历（未传交易日历、中国时区、且不是全日历兜底）。
+    pub fn uses_builtin_calendar(&self) -> bool {
+        self.calendar.is_none() && self.clock.is_china() && !self.uses_all_days_fallback()
+    }
+
+    /// 会话日历在 `day` 是否有内置交易所日历的数据：否则该日按“周一至周五”推算。
+    pub fn builtin_calendar_covers(&self, day: NaiveDate) -> bool {
+        self.uses_builtin_calendar() && super::cn_exchange::covers(day)
+    }
+
+    /// 缺省日历（未传交易日历时的工作日 / 每天 / 内置交易所日历）应用修正量；显式日历
+    /// 不受影响。只在构造后、使用前调用（缓存随之清空）。
     pub(crate) fn set_calendar_overrides(
         &mut self,
         overrides: &crate::calendar::trading_calendar::CalendarOverrides,
     ) {
-        self.weekdays = TradingCalendar::Weekdays.with_overrides(overrides);
+        self.weekdays = Self::weekday_base(&self.clock).with_overrides(overrides);
         self.all_days = TradingCalendar::AllDays.with_overrides(overrides);
         self.windows.lock().expect("windows 锁被污染").clear();
         self.blocks.lock().expect("blocks 锁被污染").clear();
@@ -316,7 +335,8 @@ impl SessionResolver {
         ]
     }
 
-    /// 会话日历：用户日历；否则在用表全为 AllDays 缺省时用 AllDays，否则 Weekdays。
+    /// 会话日历：用户日历；否则在用表全为 AllDays 缺省时用 AllDays，否则按时区取
+    /// 内置交易所日历（中国时区）或工作日。
     fn session_calendar(&self) -> &TradingCalendar {
         if let Some(c) = &self.calendar {
             return c;
@@ -1086,20 +1106,58 @@ mod tests {
         let fut = Some(AssetType::Futures);
         // 周二 01:30 属于周二交易日的夜盘（锚定周一晚）
         let got = r
-            .resolve_instant("au2406", fut, at(2024, 1, 2, 1, 30, 0))
+            .resolve_instant("au2406", fut, at(2024, 1, 9, 1, 30, 0))
             .unwrap();
         assert_eq!(
             got,
             Resolution {
-                trading_day: d(2024, 1, 2),
+                trading_day: d(2024, 1, 9),
                 session: TradingSession::Continuous
             }
         );
         // 23:59:30 不再有缺口
         let late = r
-            .resolve_instant("au2406", fut, at(2024, 1, 1, 23, 59, 30))
+            .resolve_instant("au2406", fut, at(2024, 1, 8, 23, 59, 30))
             .unwrap();
         assert_eq!(late.session, TradingSession::Continuous);
+    }
+
+    #[test]
+    fn builtin_calendar_is_default_for_china_timezone_only() {
+        let fut = Some(AssetType::Futures);
+        // 中国时区：内置交易所日历。元旦（2024-01-01 周一）休市，夜盘锚定上一交易日
+        // 2023-12-29，周二 01:30 不在任何时段内
+        let cn = resolver(vec![("au", "CN_FUTURES_NIGHT_0230")], None);
+        assert!(cn.uses_builtin_calendar());
+        assert!(cn.builtin_calendar_covers(d(2024, 1, 2)));
+        assert!(!cn.is_session_day(d(2024, 1, 1)));
+        assert_eq!(cn.next_session_day(d(2023, 12, 29)).unwrap(), d(2024, 1, 2));
+        let got = cn
+            .resolve_instant("au2406", fut, at(2024, 1, 2, 1, 30, 0))
+            .unwrap();
+        assert_eq!(got.session, TradingSession::Closed);
+        // 覆盖范围之外不算“有数据”
+        let (_, last) = crate::calendar::cn_exchange::coverage();
+        assert!(!cn.builtin_calendar_covers(last.succ_opt().unwrap()));
+        // 修正量叠加在内置日历上
+        let mut adjusted = cn.clone();
+        adjusted.set_calendar_overrides(&crate::calendar::trading_calendar::CalendarOverrides {
+            added: vec![d(2024, 1, 1)],
+            removed: vec![],
+        });
+        assert!(adjusted.is_session_day(d(2024, 1, 1)));
+        assert!(!adjusted.is_session_day(d(2024, 2, 12)));
+        // 显式日历、全日历兜底都不是内置日历
+        let explicit = TradingCalendar::explicit([d(2024, 1, 1), d(2024, 1, 2)]).unwrap();
+        assert!(!resolver(vec![], Some(explicit)).uses_builtin_calendar());
+        assert!(!resolver(vec![("default", "ALWAYS_OPEN")], None).uses_builtin_calendar());
+        // 非中国时区的非全天候表：仍按工作日，节假日照算交易日
+        let clock = LocalClock::new(Some("Asia/Singapore"), 0);
+        let pairs = vec![("default".to_string(), template("CN_STOCK").unwrap())];
+        let other = SessionResolver::new(clock, None, pairs).unwrap();
+        assert!(!other.uses_builtin_calendar());
+        assert!(!other.builtin_calendar_covers(d(2024, 1, 2)));
+        assert!(other.is_session_day(d(2024, 1, 1)));
     }
 
     #[test]

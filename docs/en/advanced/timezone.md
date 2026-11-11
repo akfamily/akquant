@@ -108,14 +108,14 @@ results = run_backtest(
 
 | `timezone` | Default session table without `sessions` | Trading days without `trading_calendar` |
 | :--- | :--- | :--- |
-| China time zones (`Asia/Shanghai`, etc.) | By asset type: stocks/funds `CN_STOCK`, futures `CN_FUTURES_DAY`, options `CN_OPTION`, other assets `ALWAYS_OPEN` | Inferred from weekdays: Monday to Friday are all trading days, holidays included (a warning is logged once) |
+| China time zones (`Asia/Shanghai`, etc.) | By asset type: stocks/funds `CN_STOCK`, futures `CN_FUTURES_DAY`, options `CN_OPTION`, other assets `ALWAYS_OPEN` | Built-in exchange calendar: holidays are not trading days; dates beyond its coverage are inferred from weekdays (backtests follow the data) |
 | Other time zones (e.g. `US/Eastern`, `UTC`) | `ALWAYS_OPEN` (continuous trading all day) | Every day is a trading day |
 
 When a non-China market needs real trading sessions, pass a custom session table with `sessions=` (format in the [API Reference](../reference/api.md#akquantrun_backtest)).
 
 ### Trading Calendar `trading_calendar`
 
-Both `run_backtest` and `run_live` accept `trading_calendar=` (a list of trading days as `date` / string / `Timestamp`). When omitted, China markets infer trading days from weekdays, so holidays are treated as trading days and night sessions and end-of-day settlement around holidays are wrong; the engine logs a warning once per run. Long-running live sessions must pass it; since live_server 0.12.0, klinedata sessions fetch the SSE/SZSE trading calendar from the market-data service automatically.
+Both `run_backtest` and `run_live` accept `trading_calendar=` (a list of trading days as `date` / string / `Timestamp`); it is usually not needed. When omitted: China time zones use the built-in exchange calendar (the holiday schedule of the Chinese stock and futures exchanges, updated with each release; see `SessionResolver.builtin_calendar_range()` for its coverage), so holidays are not trading days; backtests additionally treat every date that has data as a trading day. For dates beyond the built-in coverage, and for custom session tables outside China time zones, backtests follow the data (a weekday on which no symbol has data is not a trading day), while live mode infers trading days from weekdays and warns once. `ALWAYS_OPEN` counts every day. Live sessions without `trading_calendar=` use the built-in exchange calendar, so holidays are neither opened nor settled. The built-in calendar is updated with each release; if it expires within 30 days (or has expired) a warning is logged once at startup — upgrade AKQuant or pass `trading_calendar=`. Custom session tables outside China time zones have no built-in calendar: long-running sessions must pass one, otherwise trading days are inferred from weekdays and holidays are opened and settled (a warning is logged once at startup).
 
 ### Live Timezone
 
