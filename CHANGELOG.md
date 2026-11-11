@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.86] - 2026-11-11
+
 > **规则版本 2.4.0**：不传 `trading_calendar` 时的缺省交易日历变了。受影响的是此前靠“周一至周五”推算交易日的运行：`schedule_daily` 等按交易日触发的定时任务不再在节假日触发；节前收盘后 `self.trading_day` 直接是节后首个交易日；数据里含周末或节假日日期的回测，这些日期各自成为一个交易日（此前并入下一交易日）。只含真实交易日的 A 股日线回测，收益、回撤等数值不变。显式传了 `trading_calendar` 的运行不受影响。
 
 ### Changed
