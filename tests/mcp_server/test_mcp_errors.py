@@ -182,3 +182,99 @@ def test_phase_uses_outer_traceback_not_context_chain(tmp_path: Path) -> None:
         assert isinstance(exc.__context__, KeyError)
         out = describe_exception(exc, str(tmp_path / "s.py"))
     assert out["phase"] == "run"
+
+
+MULTI = "from akquant import SMA, Strategy\n\n\n"
+
+
+def _describe_multi(tmp_path: Path, source: str) -> Dict[str, Any]:
+    """同 _describe, 但用三个标的的数据."""
+    path = tmp_path / "strategy_under_test.py"
+    path.write_text(source, encoding="utf-8")
+    with pytest.raises(Exception) as info:
+        aq.run_backtest(
+            data=synthetic_frame(symbols=("A", "B", "C"), end="2023-02-28"),
+            strategy_source=str(path),
+            show_progress=False,
+        )
+    return describe_exception(info.value, str(path))
+
+
+def test_shared_indicator_points_to_declaration(tmp_path: Path) -> None:
+    """多标的共用增量指标: 错误在框架里抛出, user_frames 指回 self.I 声明行."""
+    src = MULTI + (
+        "class S(Strategy):\n"
+        "    def on_start(self) -> None:\n"
+        '        self.fast = self.I(factory=lambda: SMA(3), name="fast")\n'
+        '        self.ma = self.I(SMA(5), name="ma")\n\n'
+        "    def on_bar(self, bar):\n"
+        "        pass\n"
+    )
+    out = _describe_multi(tmp_path, src)
+    assert "shared instance" in out["message"]
+    assert "factory=lambda" in out["hint"]
+    assert len(out["user_frames"]) == 1
+    frame = out["user_frames"][0]
+    assert frame["line"] == _line_of(src, 'name="ma"')
+    assert frame["function"] == "on_start"
+    assert frame["code"].startswith("self.ma = self.I(")
+
+
+@pytest.mark.parametrize("call", ['self.I("SMA", 5)', 'self.I("SMA", period=5)'])
+def test_hint_indicator_call_shape(tmp_path: Path, call: str) -> None:
+    """self.I 传错位置参数 / 关键字: hint 给出正确写法."""
+    src = MULTI + (
+        "class S(Strategy):\n"
+        "    def on_start(self) -> None:\n"
+        f"        self.ma = {call}\n\n"
+        "    def on_bar(self, bar):\n"
+        "        pass\n"
+    )
+    out = _describe(tmp_path, src)
+    assert out["phase"] == "init"
+    assert out["user_frames"][-1]["line"] == _line_of(src, "self.I(")
+    assert "指标对象" in out["hint"]
+
+
+def test_hint_history_depth(tmp_path: Path) -> None:
+    """没设历史深度就取历史: hint 指向 set_history_depth."""
+    src = MULTI + (
+        "class S(Strategy):\n"
+        "    def on_bar(self, bar):\n"
+        "        self.get_history(3, bar.symbol)\n"
+    )
+    out = _describe(tmp_path, src)
+    assert "History tracking is not enabled" in out["message"]
+    assert "set_history_depth" in out["hint"]
+
+
+def test_hint_attribute_error_suggests_close_name(tmp_path: Path) -> None:
+    """AttributeError: hint 给相近的属性名; 没有相近名字时列出可用属性."""
+    template = MULTI + (
+        "class S(Strategy):\n"
+        "    def on_bars(self, batch):\n"
+        "        return batch.{attr}\n"
+    )
+    out = _describe(tmp_path, template.format(attr="mising"))
+    assert out["phase"] == "run"
+    assert out["hint"] == "BarBatch 没有属性 mising; 相近的属性: missing"
+    other = tmp_path / "other"
+    other.mkdir()
+    out = _describe(other, template.format(attr="zzz"))
+    assert out["hint"].startswith("BarBatch 没有属性 zzz; 可用属性: ")
+    assert "flush_reason" in out["hint"]
+
+
+def test_shared_indicator_matches_declaration_by_name(tmp_path: Path) -> None:
+    """有多个没写 factory 的声明时, 只指回报错消息里点名的那一个."""
+    src = MULTI + (
+        "class S(Strategy):\n"
+        "    def on_start(self) -> None:\n"
+        '        self.a = self.I(SMA(3), name="first_ma")\n'
+        '        self.b = self.I(SMA(5), name="second_ma")\n\n'
+        "    def on_bar(self, bar):\n"
+        "        pass\n"
+    )
+    out = _describe_multi(tmp_path, src)
+    named = next(n for n in ("first_ma", "second_ma") if n in out["message"])
+    assert [f["line"] for f in out["user_frames"]] == [_line_of(src, named)]

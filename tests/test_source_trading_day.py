@@ -9,6 +9,9 @@
   推算交易日），被剔除日的生命周期与收盘定时器删除并重排，告警一次。
 - 未传但 C 已开日：只告警，不修正。
 
+中国时区未传日历时用内置交易所日历，本身就知道节假日。这里的修正用例改在
+“按工作日推算”的配置下跑：新加坡时区（同为 UTC+8、无夏令时）加 CN_STOCK 时段表。
+
 replay 用例经 ``gateway_options["trading_day_hints"]`` 把 hint 按时间戳合并进 bar
 序列推送（同一时间戳 hint 在前），与真实行情源一样与行情同序到达引擎。
 """
@@ -23,7 +26,8 @@ import pandas as pd
 import pytest
 from akquant import Bar, Strategy
 
-_TZ = "Asia/Shanghai"
+_TZ = "Asia/Singapore"
+_SESSIONS = {"default": "CN_STOCK"}
 _SYMBOL = "600000"
 
 
@@ -97,6 +101,8 @@ def _run_replay(
             captured.append(self)
 
     monkeypatch.setattr(_facade, "LiveRunner", _Recording)
+    kwargs.setdefault("timezone", _TZ)
+    kwargs.setdefault("sessions", _SESSIONS)
     run_live(
         strategy_cls=_HookProbe,
         instruments=[_instrument()],
@@ -185,15 +191,46 @@ def test_hint_correction_survives_checkpoint_roundtrip(
     resumed = Engine()
     resumed.load_state_bytes(state)
     # run_from_checkpoint 未传日历时按存档（None）重新下发时段配置
-    resumed.configure_sessions(None, None)
+    resumed.set_timezone_name(_TZ)
+    resumed.configure_sessions(_SESSIONS, None)
     assert resumed.trading_day_at(_ns("2024-10-01 10:00")) == dt.date(2024, 10, 8)
     assert resumed.trading_day_at(_ns("2024-10-07 10:00")) == dt.date(2024, 10, 8)
     assert resumed.trading_day_at(_ns("2024-09-30 10:00")) == dt.date(2024, 9, 30)
 
     # 未修正的引擎按工作日推算
     fresh = Engine()
-    fresh.configure_sessions(None, None)
+    fresh.set_timezone_name(_TZ)
+    fresh.configure_sessions(_SESSIONS, None)
     assert fresh.trading_day_at(_ns("2024-10-01 10:00")) == dt.date(2024, 10, 1)
+
+
+def test_builtin_calendar_already_agrees_with_source_trading_day(
+    monkeypatch: pytest.MonkeyPatch, caplog: Any
+) -> None:
+    """中国时区未传日历：内置交易所日历已知国庆休市，与行情源一致，无需修正."""
+    from akquant import Engine
+
+    hint = (_ns("2024-09-30 20:00"), dt.date(2024, 10, 8), "test")
+    with caplog.at_level("WARNING", logger="akquant"):
+        runner, strategy = _run_replay(
+            monkeypatch,
+            _HOLIDAY_STAMPS,
+            [hint],
+            timezone="Asia/Shanghai",
+            sessions=None,
+        )
+    hooks = strategy.hooks
+    assert _days(hooks, "on_pre_open") == ["2024-09-30", "2024-10-08"], hooks
+    assert _times(hooks, "on_after_trading") == [
+        "2024-09-30 15:00:00",
+        "2024-10-08 15:00:00",
+    ], hooks
+    assert runner.engine.trading_day_at(_ns("2024-10-01 10:00")) == dt.date(2024, 10, 8)
+    assert not _warnings(caplog, "修正")
+    assert not _warnings(caplog, "未传 trading_calendar")
+    # 不经行情源，新引擎也是同一结论
+    fresh = Engine()
+    assert fresh.trading_day_at(_ns("2024-10-01 10:00")) == dt.date(2024, 10, 8)
 
 
 def test_hint_with_explicit_calendar_only_warns(
@@ -319,7 +356,7 @@ def test_engine_trading_day_at_follows_configured_calendar() -> None:
 
     engine = Engine()
     engine.set_timezone_name(_TZ)
-    engine.configure_sessions(None, [dt.date(2024, 1, 2), dt.date(2024, 1, 4)])
+    engine.configure_sessions(_SESSIONS, [dt.date(2024, 1, 2), dt.date(2024, 1, 4)])
     # 15:00 收盘后的时刻属于下一交易日（日历跳过 01-03）
     assert engine.trading_day_at(_ns("2024-01-02 10:00")) == dt.date(2024, 1, 2)
     assert engine.trading_day_at(_ns("2024-01-02 20:00")) == dt.date(2024, 1, 4)

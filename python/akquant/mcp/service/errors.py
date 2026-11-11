@@ -7,7 +7,10 @@ tests/mcp_server/test_mcp_errors.py 的标记存在性测试); 框架改名时
 
 from __future__ import annotations
 
+import ast
+import difflib
 import os
+import re
 import traceback
 from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
 
@@ -19,6 +22,9 @@ INIT_MARKERS = frozenset({"_build_strategy_instance", "_on_start_internal"})
 RUN_MARKERS = frozenset({"call_user_callback"})
 MESSAGE_MAX = 2000
 _CHAIN_MAX = 5
+#: AttributeError 找不到相近名字时, 对象公开属性不超过这个数才整份列出
+_ATTR_LIST_MAX = 30
+_INDICATOR_NAME_RE = re.compile(r"[Ii]ndicator '([^']+)'")
 
 #: (异常消息需同时包含的子串, hint); 只收实测过、确定性高的规则
 HINT_RULES: Tuple[Tuple[Tuple[str, ...], str], ...] = (
@@ -43,6 +49,27 @@ HINT_RULES: Tuple[Tuple[Tuple[str, ...], str], ...] = (
         ("multiple Strategy subclasses found",),
         "本文件定义了多个 Strategy 子类(或没有定义、只导入了多个); "
         "用 strategy_attr 参数指定要用的类名",
+    ),
+    (
+        ("registered with a shared instance",),
+        '多标的策略里增量指标不能共用一个实例: 把 self.I(SMA(5), name="ma") 改成 '
+        'self.I(factory=lambda: SMA(5), name="ma"), 每个标的各建一个; 取值用 '
+        "ind.of(symbol)[0]",
+    ),
+    (
+        ("Strategy.I() takes",),
+        "self.I 的第一个参数是指标对象, 其余参数只能用关键字: "
+        'self.I(SMA(5), name="ma"); 周期等构造参数写在指标对象里',
+    ),
+    (
+        ("Strategy.I() got an unexpected keyword argument",),
+        "self.I 的第一个参数是指标对象, 其余参数只能用关键字: "
+        'self.I(SMA(5), name="ma"); 周期等构造参数写在指标对象里',
+    ),
+    (
+        ("History tracking is not enabled",),
+        "get_history 等历史数据接口要先设置历史深度: 在 on_start 里调用 "
+        "self.set_history_depth(N), N 不小于要取的根数",
     ),
 )
 
@@ -124,12 +151,97 @@ def _user_frames(
     return []
 
 
+def _attribute_hint(exc: BaseException) -> Optional[str]:
+    """AttributeError: 给出相近的属性名(解释器自带的建议只在打印时生成)."""
+    if not isinstance(exc, AttributeError):
+        return None
+    name, obj = getattr(exc, "name", None), getattr(exc, "obj", None)
+    if not isinstance(name, str) or obj is None:
+        return None
+    try:
+        public = sorted(n for n in dir(obj) if not n.startswith("_"))
+    except Exception:
+        return None
+    owner = type(obj).__name__
+    close = difflib.get_close_matches(name, public, n=3, cutoff=0.6)
+    if close:
+        return f"{owner} 没有属性 {name}; 相近的属性: {', '.join(close)}"
+    if public and len(public) <= _ATTR_LIST_MAX:
+        return f"{owner} 没有属性 {name}; 可用属性: {', '.join(public)}"
+    return None
+
+
 def _hint(chain: List[BaseException]) -> Optional[str]:
     messages = [str(e) for e in chain]
     for needles, text in HINT_RULES:
         if any(all(n in m for n in needles) for m in messages):
             return text
+    for exc in chain:
+        found = _attribute_hint(exc)
+        if found:
+            return found
     return None
+
+
+def _indicator_calls(strategy_path: str) -> List[Tuple[ast.Call, str, str]]:
+    """策略文件里的 ``self.I(...)`` 调用: (调用节点, 所在函数名, 源码行)."""
+    try:
+        with open(strategy_path, encoding="utf-8-sig") as handle:
+            text = handle.read()
+        tree = ast.parse(text)
+    except (OSError, ValueError, SyntaxError):
+        return []
+    lines = text.splitlines()
+    out: List[Tuple[ast.Call, str, str]] = []
+    for func in ast.walk(tree):
+        if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        for node in ast.walk(func):
+            target = node.func if isinstance(node, ast.Call) else None
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(target, ast.Attribute)
+                and target.attr == "I"
+                and isinstance(target.value, ast.Name)
+                and target.value.id == "self"
+            ):
+                code = (
+                    lines[node.lineno - 1].strip() if node.lineno <= len(lines) else ""
+                )
+                out.append((node, func.name, code))
+    return out
+
+
+def _keyword(call: ast.Call, name: str) -> Optional[ast.expr]:
+    return next((kw.value for kw in call.keywords if kw.arg == name), None)
+
+
+def _declaration_frames(
+    chain: List[BaseException], strategy_path: str
+) -> List[Dict[str, Any]]:
+    """指标相关的错误在框架里抛出、栈上没有策略文件时, 指回 ``self.I`` 声明行.
+
+    先按报错消息里的指标名匹配 ``name=``; 匹配不到且属于"共用实例"错误时,
+    列出没写 ``factory=`` 的声明。
+    """
+    messages = [str(e) for e in chain]
+    names = {n for m in messages for n in _INDICATOR_NAME_RE.findall(m)}
+    shared = any("registered with a shared instance" in m for m in messages)
+    if not names and not shared:
+        return []
+    calls = _indicator_calls(strategy_path)
+    hits = [
+        item
+        for item in calls
+        if isinstance(value := _keyword(item[0], "name"), ast.Constant)
+        and value.value in names
+    ]
+    if not hits and shared:
+        hits = [item for item in calls if _keyword(item[0], "factory") is None]
+    return [
+        {"file": strategy_path, "line": call.lineno, "function": func, "code": code}
+        for call, func, code in hits
+    ]
 
 
 def describe_exception(exc: BaseException, strategy_path: str) -> Dict[str, Any]:
@@ -143,7 +255,8 @@ def describe_exception(exc: BaseException, strategy_path: str) -> Dict[str, Any]
         "phase": _phase(chain, frames_by_exc),
         "type": type(exc).__name__,
         "message": str(exc)[:MESSAGE_MAX],
-        "user_frames": _user_frames(chain, frames_by_exc, strategy_path),
+        "user_frames": _user_frames(chain, frames_by_exc, strategy_path)
+        or _declaration_frames(chain, strategy_path),
         "innermost_framework_frame": None
         if innermost is None
         else {

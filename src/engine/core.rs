@@ -52,10 +52,30 @@ pub struct SessionConfig {
     /// 自定义时段表项：(键, 段序列)。存档字段只能追加在末尾：旧存档缺此项时为 None。
     #[serde(default)]
     pub custom_sessions: Option<Vec<(String, Vec<crate::calendar::schedule::CustomSegment>)>>,
-    /// 缺省日历（未传 `trading_calendar`）按行情源交易日的修正量（见
-    /// `Engine::apply_source_trading_day`）。存档字段只能追加在末尾：旧存档缺此项时为空。
+    /// 缺省日历（未传 `trading_calendar`）的修正量：实盘来自行情源交易日（见
+    /// `Engine::apply_source_trading_day`），回测来自数据里出现过行情的日期（见
+    /// `Engine::set_calendar_adjustments`）。存档字段只能追加在末尾：旧存档缺此项时为空。
     #[serde(default)]
     pub calendar_overrides: crate::calendar::trading_calendar::CalendarOverrides,
+}
+
+/// 实盘启动时，内置交易所日历剩余覆盖天数不足该值即告警。
+pub(crate) const BUILTIN_CALENDAR_WARN_DAYS: i64 = 30;
+
+/// 内置交易所日历（覆盖到 `last`）在 `today` 是否需要到期告警；需要时返回告警文本。
+pub(crate) fn builtin_calendar_expiry_warning(today: NaiveDate, last: NaiveDate) -> Option<String> {
+    let left = (last - today).num_days();
+    if left >= BUILTIN_CALENDAR_WARN_DAYS {
+        return None;
+    }
+    let state = if left < 0 {
+        "已过期".to_string()
+    } else {
+        format!("还剩 {left} 天")
+    };
+    Some(format!(
+        "内置交易所日历只覆盖到 {last}（{state}），之后的日期按工作日推算，节假日会被当作交易日（照常开日、结算并触发 on_pre_open / on_before_trading / on_after_trading 等钩子）。请升级 AKQuant（每年随交易所公布的休市安排更新），或用 trading_calendar= 传入交易所日历，如 ak.tool_trade_date_hist_sina()[\"trade_date\"]（AKShare）"
+    ))
 }
 
 impl SessionConfig {
@@ -237,6 +257,9 @@ pub struct Engine {
     /// 行情源交易日与引擎推算不一致时已告警过的 (推算 C, 行情源 H)，每对只告警一次。
     /// 运行状态，不入存档。
     pub(crate) source_trading_day_warned: HashSet<(NaiveDate, NaiveDate)>,
+    /// 缺省日历已按回测数据修正（见 `set_calendar_adjustments`）：不再发缺省日历告警。
+    /// 运行状态，不入存档。
+    pub(crate) calendar_from_data: bool,
     /// 当前行情事件是通过结构校验的聚合器收盘钳制 bar 时，其收盘价标记
     /// （`extra["__akq_close_price"]`，见数据阶段 `check_close_marker`）；否则为 `None`。
     /// 数据阶段每个行情事件重置，统计阶段据此按结算价快照记权益点。运行状态，不入存档。
@@ -575,10 +598,15 @@ impl Engine {
         Ok(())
     }
 
-    /// 缺省日历告警（每次运行一次，由 `run()` 开头在解析器构造后调用）：未传
-    /// `trading_calendar`、且在用时段表中有按工作日推算交易日的表（中国市场表或
-    /// 自定义表）时告警；全是 ALWAYS_OPEN 这类每天都开的表时不告警。行情源修正过的
-    /// 缺省日历（`calendar_overrides` 非空，含续跑恢复的）仍是缺省日历，照样告警。
+    /// 缺省日历告警（每次运行一次，由 `run()` 开头在解析器构造后调用）。只在交易日
+    /// 确实要靠“周一至周五”推算时告警：
+    ///
+    /// - 传了 `trading_calendar`、在用时段表全是 ALWAYS_OPEN、或缺省日历已按回测数据
+    ///   修正（`calendar_from_data`）：不告警；
+    /// - 中国时区用内置交易所日历：回测不告警；实盘在内置日历将在
+    ///   [`BUILTIN_CALENDAR_WARN_DAYS`] 天内到期（或已过期）时告警；
+    /// - 其余（非中国时区的非全天候时段表）：按工作日推算，告警。
+    ///
     /// 与闭市时段告警走同一 logger。
     pub(crate) fn warn_if_default_calendar(&self) {
         let Some(resolver) = self.session_resolver.as_ref() else {
@@ -587,12 +615,25 @@ impl Engine {
         if self.session_config.trading_calendar.is_some()
             || !resolver.uses_fallback_calendar()
             || resolver.uses_all_days_fallback()
+            || self.calendar_from_data
         {
+            return;
+        }
+        if resolver.uses_builtin_calendar() {
+            if !self.state.feed.is_live() {
+                return;
+            }
+            let (_, last) = crate::calendar::cn_exchange::coverage();
+            let now_ns = chrono::Utc::now().timestamp_nanos_opt().unwrap_or(i64::MAX);
+            let today = resolver.clock().to_local(now_ns).date();
+            if let Some(text) = builtin_calendar_expiry_warning(today, last) {
+                log::warn!(target: "akquant::pipeline::stages::data", "{text}");
+            }
             return;
         }
         log::warn!(
             target: "akquant::pipeline::stages::data",
-            "未传 trading_calendar，按工作日推算交易日：节假日会被当作交易日（照常开日、结算并触发 on_pre_open / on_before_trading / on_after_trading 等钩子）。请传入交易所日历，如 trading_calendar=ak.tool_trade_date_hist_sina()[\"trade_date\"]（AKShare）；实盘经 live_server 0.12.0 起的 klinedata 会话会自动下发沪深交易日历"
+            "未传 trading_calendar，按工作日推算交易日：节假日会被当作交易日（照常开日、结算并触发 on_pre_open / on_before_trading / on_after_trading 等钩子）。内置交易所日历只用于中国时区；其他市场请用 trading_calendar= 传入交易日列表"
         );
     }
 
@@ -3271,8 +3312,14 @@ mod lifecycle_tests {
 
     /// replay 锚定 `m-day` 10:00，before_trading 已串联排好下一交易日的生命周期与
     /// 收盘定时器；当日已开日，当日盘前/开始交易已触发。
+    ///
+    /// 用新加坡时区（同为 UTC+8、无夏令时）加 CN_STOCK 时段表：非中国时区不启用内置
+    /// 交易所日历，缺省日历按工作日推算，行情源交易日的修正才有可修正的对象。
     fn chained_engine(m: u32, day: u32) -> Engine {
         let mut engine = Engine::new();
+        engine.timezone_name = Some("Asia/Singapore".to_string());
+        engine.session_config.sessions =
+            Some(vec![("default".to_string(), "CN_STOCK".to_string())]);
         engine.state.feed = crate::data::DataFeed::create_live();
         engine.live_day_close_delay_ns = 0;
         let anchor = sh(m, day, 10, 0) - 1;
@@ -3340,6 +3387,61 @@ mod lifecycle_tests {
             .unwrap();
         assert_eq!(engine.session_config.calendar_overrides.removed.len(), 5);
         assert_eq!(lifecycle_timers(&engine).len(), 2);
+    }
+
+    #[test]
+    fn builtin_calendar_expiry_warning_fires_inside_window_only() {
+        let last = NaiveDate::from_ymd_opt(2026, 12, 31).unwrap();
+        let day = |m, d| NaiveDate::from_ymd_opt(2026, m, d).unwrap();
+        // 剩余不少于 30 天：不告警
+        assert!(super::builtin_calendar_expiry_warning(day(6, 1), last).is_none());
+        assert!(super::builtin_calendar_expiry_warning(day(12, 1), last).is_none());
+        // 不足 30 天：告警并给出剩余天数
+        let soon = super::builtin_calendar_expiry_warning(day(12, 2), last).unwrap();
+        assert!(
+            soon.contains("2026-12-31") && soon.contains("还剩 29 天"),
+            "{soon}"
+        );
+        // 已过期
+        let expired = super::builtin_calendar_expiry_warning(
+            NaiveDate::from_ymd_opt(2027, 1, 4).unwrap(),
+            last,
+        )
+        .unwrap();
+        assert!(expired.contains("已过期"), "{expired}");
+    }
+
+    #[test]
+    fn calendar_adjustments_merge_into_overrides_and_rebuild_resolver() {
+        let mut engine = Engine::new();
+        engine.ensure_session_resolver().unwrap();
+        let resolver = engine.session_resolver.clone().unwrap();
+        // 中国时区缺省即内置交易所日历：国庆休市
+        assert!(resolver.uses_builtin_calendar());
+        assert!(!resolver.is_session_day(d(10, 1)));
+        assert!(!engine.calendar_from_data);
+        engine.set_calendar_adjustments(vec![d(10, 1)], vec![d(10, 8)]);
+        assert!(engine.calendar_from_data);
+        assert!(engine.session_resolver.is_none());
+        engine.ensure_session_resolver().unwrap();
+        let resolver = engine.session_resolver.clone().unwrap();
+        assert!(resolver.is_session_day(d(10, 1)));
+        assert!(!resolver.is_session_day(d(10, 8)));
+        assert_eq!(
+            engine.session_config.calendar_overrides.added,
+            vec![d(10, 1)]
+        );
+        assert_eq!(
+            engine.session_config.calendar_overrides.removed,
+            vec![d(10, 8)]
+        );
+        // 再次调用是合并：同一天后一次为准
+        engine.set_calendar_adjustments(vec![d(10, 8)], vec![]);
+        assert_eq!(
+            engine.session_config.calendar_overrides.added,
+            vec![d(10, 1), d(10, 8)]
+        );
+        assert!(engine.session_config.calendar_overrides.removed.is_empty());
     }
 
     #[test]

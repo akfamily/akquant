@@ -291,7 +291,9 @@ def run_live(
                      可选模板见 aq.SessionResolver.templates()；自定义时段表
                      写法同 ``run_backtest``
     :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传时
-                             中国市场按工作日推算（节假日前后的夜盘与日终
+                             中国时区用内置的交易所日历（随版本更新，临近
+                             到期时启动告警），其他时区的非全天候时段表
+                             按工作日推算（节假日前后的夜盘与日终
                              结算会算错），ALWAYS_OPEN 每天都算
     :param timezone: 时区名称 (默认 "Asia/Shanghai")，与 ``run_backtest`` 同义：
                      引擎按它划分交易日、计算日终结算时刻与默认时段表（非中国

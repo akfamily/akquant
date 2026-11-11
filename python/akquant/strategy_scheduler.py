@@ -234,7 +234,7 @@ def schedule_live_next(
     """实盘: 按会话交易日历登记周期定时器的下一次触发, 返回是否已登记.
 
     日历来自 ``ctx.is_trading_day`` / ``ctx.next_trading_day``(未传
-    ``trading_calendar`` 时按在用时段表的缺省日历: 中国市场为工作日, ALWAYS_OPEN
+    ``trading_calendar`` 时按在用时段表的缺省日历: 中国时区为内置交易所日历, ALWAYS_OPEN
     为每天, 后者首次登记时告警一次)。时刻无法解析时抛 ``ValueError``; 超出日历时
     告警并返回 False。
     """

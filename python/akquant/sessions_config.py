@@ -96,7 +96,7 @@ def normalize_trading_calendar(value: Any) -> Optional[List[dt.date]]:
     if not days:
         raise ValueError(
             "trading_calendar 不能为空：传交易日列表（如 AKShare 的 "
-            "tool_trade_date_hist_sina()['trade_date']），或不传按工作日推算"
+            "tool_trade_date_hist_sina()['trade_date']），或不传（中国时区用内置交易所日历）"
         )
     return days
 

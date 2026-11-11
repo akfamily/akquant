@@ -550,7 +550,8 @@ class LiveRunner:
             CN_FUTURES_DAY、期权 CN_OPTION），其他时区全天连续。可选模板见
             aq.SessionResolver.templates()；自定义时段表写法同 ``run_backtest``
         :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传时
-            中国市场按工作日推算（节假日前后的夜盘与日终
+            中国时区用内置的交易所日历（随版本更新，临近到期时启动告警），
+            其他时区的非全天候时段表按工作日推算（节假日前后的夜盘与日终
             结算会算错），ALWAYS_OPEN 每天都算
         :param timezone: 时区名称（默认 "Asia/Shanghai"），与 ``run_backtest``
             同义。见 ``run_live``
@@ -3055,7 +3056,7 @@ class LiveRunner:
         合约的 ``underlying_symbol``。
 
         不随行情源交易日提示对缺省日历的修正(``calendar_overrides``)更新, 已知限制:
-        修正把缺省工作日历之外的日子(如周末)补成交易日时, 引擎按该日开日、做收盘
+        修正把缺省日历之外的日子(如周末)补成交易日时, 引擎按该日开日、做收盘
         宽限归属, 聚合器仍按未修正的日历把它当作非交易日, 当日收盘 bar 不钳制(不带
         收盘价标记, 宽限 tick 单独成 bar, 可能在结算后到达、提前开下一交易日)。
         传了 ``trading_calendar`` 时不受影响; 中国交易所周末不交易, 实际不会遇到。

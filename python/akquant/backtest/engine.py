@@ -761,12 +761,24 @@ class _DateOnlyRewriter:
     命中旧值（签名可能含上千个标的，只在设置时哈希一次，查缓存用整数编号）。
     """
 
-    def __init__(self, resolver: Any, timezone: str, logger: Any) -> None:
-        """绑定解析器、引擎时区与告警用 logger；在用标的经 :meth:`activate` 设置."""
+    def __init__(
+        self,
+        resolver: Any,
+        timezone: str,
+        logger: Any,
+        *,
+        warn_non_session_day: bool = True,
+    ) -> None:
+        """绑定解析器、引擎时区与告警用 logger；在用标的经 :meth:`activate` 设置.
+
+        ``warn_non_session_day=False``：未传 ``trading_calendar`` 的回测里，数据出现
+        过行情的日期随后会并入交易日历（见 ``_calendar_adjustments_from_data``），
+        不存在“数据落在非交易日”的情况，不告警。
+        """
         self.resolver = resolver
         self.timezone = timezone
         self._logger = logger
-        self._warned = False
+        self._warned = not warn_non_session_day
         self._active_ids: Dict[Any, int] = {}
         self._active_id = -1  # 未经 activate：解析器按构造时的在用配置
         self._close_cache: Dict[int, Dict[int, int]] = {}
@@ -1269,20 +1281,12 @@ def _build_session_asset_type_of(
     return asset_type_of
 
 
-def _build_session_trading_days(
-    data_map: Dict[str, pd.DataFrame], resolver: Any, timezone: str
-) -> Tuple[List[pd.Timestamp], Dict[str, int]]:
-    """数据覆盖范围内的日历交易日，以及按交易日的截面时刻.
+def _sorted_event_index(
+    data_map: Dict[str, pd.DataFrame],
+) -> Optional[Tuple[np.ndarray, np.ndarray]]:
+    """全部标的的 bar 时间戳（UTC 纳秒，升序）及对应标的；没有可用数据时为 None.
 
-    交易日取会话日历上首个到最后一个数据交易日之间的全部交易日（本地 0 点的
-    带时区 ``Timestamp``，含区间内无数据的交易日）。例外：会话日历是全日历兜底
-    （未传 ``trading_calendar``、在用时段表全是 ALWAYS_OPEN 这类每天都开的表，如
-    非中国时区的缺省）时每个自然日都算交易日，此时只取有数据的日子，免得美股等
-    周末无数据的市场在周六日触发定时任务。每根 bar 按会话交易日归属
-    （交易日 T 覆盖 ``(session_day_end(prev(T)), session_day_end(T)]``，夜盘归下一
-    交易日）。截面时刻为各品种在该交易日首根 bar 的最大时间戳，键为交易日 ISO
-    字符串。指标数据表的索引已带时区；无时区的按 UTC 纳秒解释（与 Bar 时间戳同
-    口径）。不在交易日历内的 bar 不参与。``timezone`` 为交易日列表的时区。
+    指标数据表的索引已带时区；无时区的按 UTC 纳秒解释（与 Bar 时间戳同口径）。
     """
     frames = {
         str(symbol): df
@@ -1290,7 +1294,7 @@ def _build_session_trading_days(
         if not df.empty and isinstance(df.index, pd.DatetimeIndex)
     }
     if not frames:
-        return [], {}
+        return None
 
     big_index = pd.concat(frames, names=["symbol"]).index
     stamps = cast(pd.DatetimeIndex, big_index.get_level_values(-1))
@@ -1304,11 +1308,89 @@ def _build_session_trading_days(
     ns = pd.Series(utc_index[valid], copy=False).astype("int64").to_numpy()
     symbols = big_index.get_level_values(0).astype(str)[valid]
     if len(ns) == 0:
-        return [], {}
+        return None
 
     order = np.argsort(ns, kind="stable")
-    ns = ns[order]
-    symbols = symbols[order]
+    return ns[order], np.asarray(symbols)[order]
+
+
+_ONE_MINUTE_NS = 60_000_000_000
+#: 本地时刻不早于它的 bar 才算“当日有行情”：夜盘跨过午夜的部分（最晚到 02:30）
+#: 属于下一交易日，不能据此把自然日当成交易日。
+_DAY_DATA_MIN_MINUTE = 6 * 60
+
+
+def _calendar_adjustments_from_data(
+    ns: np.ndarray, resolver: Any, timezone: str
+) -> Optional[Tuple[List[dt_module.date], List[dt_module.date]]]:
+    """未传 ``trading_calendar`` 时，按数据里出现过行情的日期修正缺省日历.
+
+    “当日有行情”指有 bar 的本地时刻不早于 06:00（只有日期的数据此前已改写到当日
+    收盘时刻）。返回 ``(补入的交易日, 剔除的交易日)``：
+
+    - 有行情、缺省日历却不是交易日的日期一律补入（以数据为准）；
+    - 数据首尾之间、所有标的都没有行情的交易日，只在缺省日历靠“周一至周五”推算
+      的范围里剔除（非中国时区的自定义时段表，或超出内置交易所日历覆盖范围）。
+      内置交易所日历覆盖的日期不剔除：个别标的停牌时那天仍是交易日。
+
+    在用时段表全是 ALWAYS_OPEN（每天都算交易日）或没有日间行情时返回 None。
+    ``ns`` 为升序的 UTC 纳秒时间戳。
+    """
+    if len(ns) == 0 or bool(getattr(resolver, "uses_all_days_fallback", False)):
+        return None
+    minutes = ns // _ONE_MINUTE_NS
+    keep = np.empty(len(minutes), dtype=bool)
+    keep[0] = True
+    np.not_equal(minutes[1:], minutes[:-1], out=keep[1:])
+    local = pd.DatetimeIndex(
+        (minutes[keep] * _ONE_MINUTE_NS).view("datetime64[ns]"), tz="UTC"
+    ).tz_convert(timezone)
+    daytime = (local.hour * 60 + local.minute) >= _DAY_DATA_MIN_MINUTE
+    present = sorted(set(local[daytime].date))
+    if not present:
+        return None
+    added = [day for day in present if not resolver.is_session_day(day)]
+    removed: List[dt_module.date] = []
+    first, last = present[0], present[-1]
+    covered = getattr(resolver, "builtin_calendar_covers", None)
+    if covered is None or not (covered(first) and covered(last)):
+        have = set(present)
+        day = first
+        while day < last:
+            day += dt_module.timedelta(days=1)
+            if (
+                day not in have
+                and resolver.is_session_day(day)
+                and not (covered is not None and covered(day))
+            ):
+                removed.append(day)
+    return added, removed
+
+
+def _build_session_trading_days(
+    data_map: Dict[str, pd.DataFrame],
+    resolver: Any,
+    timezone: str,
+    event_index: Optional[Tuple[np.ndarray, np.ndarray]] = None,
+) -> Tuple[List[pd.Timestamp], Dict[str, int]]:
+    """数据覆盖范围内的日历交易日，以及按交易日的截面时刻.
+
+    交易日取会话日历上首个到最后一个数据交易日之间的全部交易日（本地 0 点的
+    带时区 ``Timestamp``，含区间内无数据的交易日）。例外：会话日历是全日历兜底
+    （未传 ``trading_calendar``、在用时段表全是 ALWAYS_OPEN 这类每天都开的表，如
+    非中国时区的缺省）时每个自然日都算交易日，此时只取有数据的日子，免得美股等
+    周末无数据的市场在周六日触发定时任务。每根 bar 按会话交易日归属
+    （交易日 T 覆盖 ``(session_day_end(prev(T)), session_day_end(T)]``，夜盘归下一
+    交易日）。截面时刻为各品种在该交易日首根 bar 的最大时间戳，键为交易日 ISO
+    字符串。指标数据表的索引已带时区；无时区的按 UTC 纳秒解释（与 Bar 时间戳同
+    口径）。不在交易日历内的 bar 不参与。``timezone`` 为交易日列表的时区。
+    ``event_index`` 为已算好的 :func:`_sorted_event_index` 结果，不传时现算。
+    """
+    if event_index is None:
+        event_index = _sorted_event_index(data_map)
+    if event_index is None:
+        return [], {}
+    ns, symbols = event_index
 
     def _trading_day(ts: int) -> Optional[dt_module.date]:
         try:
@@ -3249,10 +3331,13 @@ def run_backtest(
                      closing_auction / break / post_close（段外即闭市，不写
                      closed）；开始不早于 18:00 的段算前一交易日的夜盘，结束早于
                      开始表示跨午夜；可选第 4 项 "prev"/"day" 显式指定锚定。
-                     自定义表不传 trading_calendar 时按工作日推算
-    :param trading_calendar: 交易日列表（date/字符串/Timestamp）；不传时
-                             中国市场按工作日推算（节假日前后的夜盘与日终
-                             结算会算错），ALWAYS_OPEN 每天都算
+                     非中国时区的自定义表不传 trading_calendar 时以数据为准
+    :param trading_calendar: 交易日列表（date/字符串/Timestamp），一般不用传。
+                             不传时中国时区用内置的交易所日历（节假日不算
+                             交易日），并把数据里出现过行情的日期并入交易日；
+                             超出内置日历范围或非中国时区的自定义时段表，
+                             所有标的都没有行情的工作日不算交易日；
+                             ALWAYS_OPEN 每天都算
     :param t_plus_one: 是否启用 T+1 交易规则; 不传时取 broker_profile 模板的设置,
                        没有模板时为 False
     :param initialize: 初始化回调函数 (仅当 strategy 为函数时使用)
@@ -3560,7 +3645,12 @@ def run_backtest(
     if not has_configured_handler(logger.name, namespace_only=True):
         register_logger(console=True, level="INFO")
         logger = get_logger("backtest")
-    date_only_rewriter = _DateOnlyRewriter(session_resolver, timezone, logger)
+    date_only_rewriter = _DateOnlyRewriter(
+        session_resolver,
+        timezone,
+        logger,
+        warn_non_session_day=calendar_days is not None,
+    )
     normalized_analyzers = _coerce_analyzer_plugins(analyzer_plugins)
 
     # 1.2 检查 PyCharm 环境下的进度条可见性
@@ -4559,12 +4649,26 @@ def run_backtest(
 
     # Inject trading days to strategy (for schedule_daily)
     all_strategy_instances = [strategy_instance, *slot_strategy_instances.values()]
+    # 未传 trading_calendar：数据里出现过行情的日期并入交易日历（见
+    # _calendar_adjustments_from_data），下面的交易日列表与引擎都用修正后的日历。
+    calendar_adjustments: Optional[
+        Tuple[List[dt_module.date], List[dt_module.date]]
+    ] = None
     if data_map_for_indicators:
+        event_index = _sorted_event_index(data_map_for_indicators)
+        if calendar_days is None and event_index is not None:
+            calendar_adjustments = _calendar_adjustments_from_data(
+                event_index[0], session_resolver, timezone
+            )
+            if calendar_adjustments is not None and any(calendar_adjustments):
+                session_resolver = session_resolver.with_calendar_adjustments(
+                    *calendar_adjustments
+                )
         (
             all_dates,
             day_cross_section_timestamps,
         ) = _build_session_trading_days(
-            data_map_for_indicators, session_resolver, timezone
+            data_map_for_indicators, session_resolver, timezone, event_index
         )
 
         for current_strategy in all_strategy_instances:
@@ -4603,6 +4707,8 @@ def run_backtest(
         offset = int(offset_delta.total_seconds())
         engine.set_timezone(offset)
     engine.configure_sessions(session_map, calendar_days)
+    if calendar_adjustments is not None:
+        engine.set_calendar_adjustments(*calendar_adjustments)
     if hasattr(engine, "set_days_per_year"):
         cast(Any, engine).set_days_per_year(
             getattr(config, "days_per_year", 252.0) if config else 252.0

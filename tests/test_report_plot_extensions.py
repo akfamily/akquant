@@ -436,9 +436,10 @@ def test_backtest_result_exposes_structured_benchmark_analysis() -> None:
     assert payload["benchmark"]["label"] == "CSI300"
     assert payload["summary"]["information_ratio"] is not None
     assert payload["meta"]["aligned_points"] > 0
-    # 日收益按交易日分组: 01-01 (周日) 的 bar 属交易日 01-02, 日权益从 01-02 起;
-    # 首日不产生收益点 (口径对齐 Rust), 故对齐序列从第二个交易日 01-03 开始
-    assert payload["series"][0]["date"] == "2023-01-03"
+    # 未传 trading_calendar 时数据里有行情的日期都是交易日: 01-01 (周日) 自成一个
+    # 交易日, 日权益从 01-01 起; 首日不产生收益点 (口径对齐 Rust), 故对齐序列从
+    # 第二个交易日 01-02 开始
+    assert payload["series"][0]["date"] == "2023-01-02"
 
 
 def test_export_benchmark_analysis_keeps_cjk_label_readable(tmp_path: Path) -> None:

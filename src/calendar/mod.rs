@@ -3,6 +3,7 @@
 //! 设计见 `docs/superpowers/specs/2026-10-23-trading-session-calendar-design.md` §4.1。
 
 pub(crate) mod clock;
+pub mod cn_exchange;
 pub(crate) mod python;
 pub mod resolver;
 pub mod schedule;

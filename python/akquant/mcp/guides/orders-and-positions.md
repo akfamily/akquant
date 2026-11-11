@@ -20,7 +20,7 @@
 | `self.equity` | 当前权益 |
 | `self.cancel_order(order_id)` / `self.cancel_all_orders(symbol)` | 撤单 |
 
-`buy`/`sell` 不传 `quantity` 时，数量交给 sizer 决定。各接口的完整参数用 `get_api("Strategy.buy")` 等查询；传了签名里没有的关键字参数（比如 `qty=`），`check_strategy` 会报 `unknown-kwarg`。
+`buy`/`sell` 不传 `quantity` 时，数量交给 sizer 决定。各接口的完整参数用 `get_api("Strategy.buy")` 等查询；传了签名里没有的关键字参数（比如 `qty=`），`check_strategy` 会报 `unknown-kwarg`；位置参数过多、缺必填参数会报 `bad-call-args`。`bar`、`batch` 等回调入参上的字段用 `get_api("Bar.close")`、`get_api("BarBatch.missing")` 查，写了不存在的属性（比如 `bar.clsoe`）会报 `unknown-attribute`。
 
 ## 示例
 

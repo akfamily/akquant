@@ -236,7 +236,7 @@ def run_from_checkpoint(
     *   推荐保持默认值，避免参数错配被静默忽略导致回测结果偏差。
 *   `freq`: 数据周期，默认 `None`。`data` 为含 `Tick` 的列表时是 tick 聚合周期（只支持整数分钟，如 `"1min"`），把 tick 合成 bar 并同时触发 `on_bar`；bar 数据（DataFrame、`List[Bar]`、catalog）也可传，用来声明 bar 周期并填 bar 的区间起点（`interval_start = 时间戳 − 周期`），写法为“正整数 + 单位”，单位 `min` / `h` / `d`（或 `day`），如 `"1min"`、`"5min"`、`"1h"`、`"1d"`。只有日期（本地 0 点）的日线不需要传，会自动改写到交易日收盘时刻；打在 15:00 等固定非 0 点时刻的日线要传 `freq="1d"`，否则每根 bar 按该时刻所在时段撮合（15:00 按“时间戳前 1ns”即 14:59:59.999… 判为收盘集合竞价），订单排到下一根 bar，并告警一次。策略的 `self.freq` 即该值。
 *   `sessions`: 代码前缀 → 时段模板名或自定义时段表（`"default"` 为全局默认），默认 `None`。不传时中国时区按资产类型取默认（股票/基金 `CN_STOCK`、期货 `CN_FUTURES_DAY`、期权 `CN_OPTION`，其他资产 `ALWAYS_OPEN`），其他时区全天连续（`ALWAYS_OPEN`）。可选模板见 `aq.SessionResolver.templates()`；自定义时段表写法见下文 `BacktestConfig.china_futures` 一节的时段说明。
-*   `trading_calendar`: 交易日列表（`date` / 字符串 / `Timestamp`），默认 `None`。不传时中国市场按工作日推算（节假日也被当作交易日，节假日前后的夜盘与日终结算会算错），并告警一次；`ALWAYS_OPEN` 每天都算，不告警。数据时刻超出所传日历覆盖范围时报 `ValueError`。
+*   `trading_calendar`: 交易日列表（`date` / 字符串 / `Timestamp`），默认 `None`。不传时：中国时区用内置的交易所日历（沪深及期货交易所的休市安排，随版本更新，覆盖范围见 `SessionResolver.builtin_calendar_range()`），节假日不算交易日；回测还会把数据里出现过行情的日期并入交易日。超出内置日历范围的日期、以及非中国时区的自定义时段表，回测以数据为准（所有标的都没有行情的工作日不算交易日），实盘按工作日推算并告警一次。`ALWAYS_OPEN` 每天都算。传了日历时以它为准，数据时刻超出所传日历覆盖范围时报 `ValueError`。
 *   `t_plus_one`: 是否启用 T+1 交易规则。不传时取 `broker_profile` 模板的设置（三个内置 A 股模板都开），没有模板时为 False。如果启用，将强制使用中国市场模型。
 *   `slippage`: 全局滑点 (默认 `None`，即不加滑点)。必须写成策略字典，例如 `{"type": "percent", "value": 0.0001}` 代表 1bp (0.01%) 的百分比滑点，或 `{"type": "fixed", "value": 0.2}` 代表固定价差。不再接受裸数字（含 `0`），传入会抛 `TypeError`。要关掉滑点（包括覆盖 `broker_profile` 模板里的滑点）传 `{"type": "zero"}`；不传或传 `None` 表示不覆盖，设了 `broker_profile` 时沿用模板的滑点，否则不加滑点。
 *   `volume_limit_pct`: 成交量限制比例，默认 `None`（不限制，等同 0）。设为 0.25 时单根 bar 最多成交该 bar 成交量的 25%，截断量按手数向下取整，不足一手则本根不成交、订单继续挂着。订单剩余量不超过 `成交量 × 比例` 时仍一次成交（可能是零股，比如卖出最后剩下的 50 股）；IOC/FOK 订单若取整后的截断量为 0，当根撤销。**bar 的成交量必须与下单数量同单位**：AKShare 的东方财富接口 `stock_zh_a_hist` 成交量单位是“手”，需先乘以 100 再开启量限；新浪接口 `stock_zh_a_daily` 的单位已是“股”，无需换算。量限只作用于 bar 撮合，tick 驱动的撮合不受量限约束。数量可为小数的品种（加密货币、外汇）需设置 `lot_size`（默认 1），否则截断后的数量会向下取整为整数。
@@ -1251,7 +1251,7 @@ run_live(
 *   **须与交易所时区一致**：接中国市场（如 `klinedata` 行情、`middleware` 交易）时保持默认，不要改成本机或服务器所在时区，否则交易日、日终结算与 Day 单过期会按该时区划分，与交易所实际不符。
 *   `sessions` / `trading_calendar`：与 `run_backtest` 同义（模板名或自定义时段表），写法见上文 `BacktestConfig.china_futures` 一节的时段说明与[第 7 章](../textbook/07_futures.md)。
 *   **按时段撮合只在 paper/replay**：模拟撮合下，时段为闭市、休市或集合竞价时订单排队，不按连续竞价成交。`broker_live` 下订单直接报到柜台、不按时段排队，时段表只决定 `ctx.session`、`is_market_open()`、交易日划分与日终结算、交易日钩子的时刻。期货不传 `sessions` 时按 `CN_FUTURES_DAY` 日盘时段，夜盘行情的时段判为闭市（paper 下订单排到日盘才撮合），有夜盘的品种必须传 `sessions=`（如 `{"rb": "CN_FUTURES_NIGHT_23"}`）。
-*   **长期运行的实盘必须传 `trading_calendar=`**：不传时按工作日推算，节假日也会开日与结算（启动时告警一次）；行情源报告交易日（如 CTP 的 `TradingDay`）时，只能在所涉交易日开日前修正缺省日历。live_server 0.12.0 起，klinedata 会话自动从行情服务取沪深交易日历传入（行情服务以 jwt 模式部署时需要 `X-QMF-Session`，live_server 不带，取不到日历，退回工作日推算并告警）。
+*   **实盘的交易日历**：实盘不传 `trading_calendar=` 时用内置交易所日历，节假日不开日、不结算；内置日历随版本更新，启动时若 30 天内到期（或已过期）会告警一次，届时请升级 AKQuant 或传入 `trading_calendar=`。非中国时区的自定义时段表没有内置日历，长期运行必须传，否则按工作日推算、节假日照常开日结算（启动时告警一次）。行情源报告交易日（如 CTP 的 `TradingDay`）时，只能在所涉交易日开日前修正缺省日历。live_server 0.12.0 起，klinedata 会话自动从行情服务取沪深交易日历传入（行情服务以 jwt 模式部署时需要 `X-QMF-Session`，live_server 不带，取不到日历，退回内置交易所日历）。
 *   `day_close_delay`：`float`，默认 `60.0`（秒），取值 0～86400，越界或非有限值抛 `ValueError`，非数字抛 `TypeError`。实盘日终结算（Day 单过期、T+1 解冻、收盘快照）与 `on_after_trading` 在“会话收盘 + `day_close_delay`”触发，收盘快照仍记在收盘时刻；按交易日历登记，当日没有任何行情也会结算。回测不受影响（收盘时刻结算）。
 *   **收盘宽限**：实盘（含 replay）在收盘后 `day_close_delay` 秒内、且早于下一交易日首个时段开始时到达的行情仍归当日（宽限不越过下一交易日开盘，因此 `ALWAYS_OPEN` 这类收盘即次日开盘的时段表实际没有宽限，除非显式日历有空档；`day_close_delay=0` 时也没有宽限）——`ctx.trading_day` 为当日，时段为 `Closed`（自定义表有盘后段时为 `PostClose`），不撮合、不产生权益点，也不提前开下一交易日；宽限期内下的 Day 单仍属下一交易日。结算时刻不变，结算价为收盘时刻的最新价（只认时间戳不晚于收盘的原始行情）。网关由 tick 合成 bar 时，收盘后 `day_close_delay − 5` 秒内的 tick 并入收盘那根 bar，该 bar 在这段钳制宽限结束后 2 秒补发（`day_close_delay` 不足 5 秒时不并入）。`Engine.trading_day_at` 是纯日历查询，不考虑宽限。
     *   已知限制：宽限期内存档后续跑，当日结算价按存档时的最新价；某品种收盘前没有 tick、只有宽限期 tick 时，结算价等于宽限价；结算之后才到的收盘 bar 仍派发给 `on_bar`；双流下同品种的宽限 tick 先于收盘 bar 推出，时间戳会倒退一次；多张时段表时宽限按会话级收盘（取最晚）判，早收盘品种在其自身收盘后、会话收盘前的行情不属宽限，照常计入当日与结算价，并报一次“闭市时段”告警。
@@ -1336,7 +1336,7 @@ run_live(
 *   `add_bars(bars)`: 向数据源批量追加 `Bar` 列表。
 *   `add_tick(tick)`: 向实时数据源追加单个 `Tick`。
 *   `add_arrays(timestamps, opens, highs, lows, closes, volumes, symbol)`: 通过数组快速批量构建 `Bar` 并注入数据源；可选 `interval_starts=` 传区间起点列。
-*   `add_trading_day_hint(timestamp_ns, trading_day, source)`: 推送行情源报告的交易日（仅实盘数据源，回测数据源上调用抛 `RuntimeError`），与行情同序进入引擎。传了 `trading_calendar=` 时不一致只告警；未传时在所涉交易日开日前按它修正缺省（工作日）日历。replay 回放可用 `gateway_options={"trading_day_hints": [(ts_ns, date), ...]}` 模拟。
+*   `add_trading_day_hint(timestamp_ns, trading_day, source)`: 推送行情源报告的交易日（仅实盘数据源，回测数据源上调用抛 `RuntimeError`），与行情同序进入引擎。传了 `trading_calendar=` 时不一致只告警；未传时在所涉交易日开日前按它修正缺省日历（内置交易所日历或工作日）。replay 回放可用 `gateway_options={"trading_day_hints": [(ts_ns, date), ...]}` 模拟。
 *   `sort()`: 对当前历史数据源按事件时间排序。
 
 **使用边界:**

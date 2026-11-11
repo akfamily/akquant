@@ -6,18 +6,25 @@
 ``unresolved-base``(warning): 类的基类无法静态确认(来自其他文件、或
 ``from akquant import *``)。这类类按"可能的策略"处理, 不报 no-strategy;
 对它不做 unknown-self-method 检查(方法可能定义在看不到的基类里)。
+
+``bad-call-args``(error): ``self.<Strategy 方法>(...)`` 的实参与签名对不上
+(位置参数过多、缺必填参数、同一参数传了两次)。``unknown-attribute``(error):
+回调入参(``on_bar`` 的 ``bar``、``on_bars`` 的 ``batch``、``on_tick`` 的
+``tick``)上访问了该类型没有的属性; 入参在函数里被重新赋值时不检查。
 """
 
 from __future__ import annotations
 
 import ast
+import difflib
 import inspect
 from dataclasses import asdict
 from functools import lru_cache
-from typing import Any, Dict, FrozenSet, List, Optional, Set
+from typing import Any, Dict, FrozenSet, List, Optional, Set, cast
 
 from ...strategy_inspect import inspect_strategy
 from . import ServiceError
+from .members import member_names
 from .paths import PathArg, ServiceConfig, resolve_in_root
 
 _INIT_METHODS = frozenset({"__init__", "on_start"})
@@ -59,6 +66,106 @@ def _strategy_signature(name: str) -> Optional[inspect.Signature]:
         return inspect.signature(obj)
     except (TypeError, ValueError):
         return None
+
+
+_BIND_MESSAGES = (
+    ("too many positional arguments", "位置参数过多"),
+    ("missing a required argument: ", "缺少必填参数 "),
+    ("multiple values for argument ", "同一个参数传了两次: "),
+)
+
+
+def _bind_problem(sig: inspect.Signature, call: ast.Call) -> Optional[str]:
+    """按签名试绑定实参, 返回对不上的原因(用了 ``*args`` / ``**kw`` 时不查)."""
+    if any(isinstance(a, ast.Starred) for a in call.args):
+        return None
+    if any(kw.arg is None for kw in call.keywords):
+        return None
+    first = next(iter(sig.parameters), None)
+    positional = [None] * (len(call.args) + (1 if first == "self" else 0))
+    try:
+        sig.bind(*positional, **{str(kw.arg): None for kw in call.keywords})
+    except TypeError as exc:
+        text = str(exc)
+        for needle, label in _BIND_MESSAGES:
+            if needle in text:
+                return label + text.split(needle, 1)[1].strip("'")
+        return text
+    return None
+
+
+@lru_cache(maxsize=None)
+def _callback_param_names(callback: str) -> Optional[FrozenSet[str]]:
+    """Strategy 回调首个入参的类型有哪些公开属性; 类型不明确时返回 None."""
+    import akquant
+
+    sig = _strategy_signature(callback)
+    if sig is None:
+        return None
+    params = [p for p in sig.parameters.values() if p.name != "self"]
+    if not params:
+        return None
+    annotation: Any = params[0].annotation
+    if isinstance(annotation, str):
+        annotation = getattr(akquant, annotation.strip("'\""), None)
+    if not isinstance(annotation, type) or annotation.__module__ == "typing":
+        return None
+    if getattr(akquant, annotation.__name__, None) is not annotation:
+        return None
+    return frozenset(member_names(cast(type, annotation)))
+
+
+def _rebinds(func: ast.AST, name: str) -> bool:
+    """函数体里是否重新绑定了 name(赋值、循环变量、内层函数的同名参数等)."""
+    args = 0
+    for sub in ast.walk(func):
+        if isinstance(sub, ast.Name) and sub.id == name:
+            if not isinstance(sub.ctx, ast.Load):
+                return True
+        elif isinstance(sub, ast.arg) and sub.arg == name:
+            args += 1
+        elif isinstance(sub, (ast.Global, ast.Nonlocal)) and name in sub.names:
+            return True
+    return args > 1
+
+
+def _check_callback_param(func: Any, cls: str) -> List[Dict[str, Any]]:
+    """回调入参上访问了该类型没有的属性(如 ``bar.clsoe``)."""
+    if len(func.args.args) < 2:
+        return []
+    allowed = _callback_param_names(func.name)
+    if allowed is None:
+        return []
+    param = func.args.args[1].arg
+    if _rebinds(func, param):
+        return []
+    out: List[Dict[str, Any]] = []
+    for sub in ast.walk(func):
+        if not (
+            isinstance(sub, ast.Attribute)
+            and isinstance(sub.ctx, ast.Load)
+            and isinstance(sub.value, ast.Name)
+            and sub.value.id == param
+        ):
+            continue
+        if sub.attr.startswith("_") or sub.attr in allowed:
+            continue
+        close = difflib.get_close_matches(sub.attr, sorted(allowed), n=3, cutoff=0.6)
+        if close:
+            tip = "相近的属性: " + ", ".join(close)
+        else:
+            tip = "可用属性: " + ", ".join(sorted(allowed))
+        out.append(
+            _diag(
+                "error",
+                "unknown-attribute",
+                sub.lineno,
+                sub.col_offset,
+                f"{cls}.{func.name} 的入参 {param} 没有属性 {sub.attr}",
+                tip,
+            )
+        )
+    return out
 
 
 def _self_call_attr(node: ast.AST) -> Optional[str]:
@@ -155,21 +262,34 @@ def _check_call(
     if sig is None:
         return out
     params = sig.parameters.values()
-    if any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params):
-        return out
     allowed = [p for p in sig.parameters if p != "self"]
-    for kw in call.keywords:
-        if kw.arg is not None and kw.arg not in sig.parameters:
-            out.append(
-                _diag(
-                    "error",
-                    "unknown-kwarg",
-                    call.lineno,
-                    call.col_offset,
-                    f"Strategy.{attr} 没有参数 {kw.arg}",
-                    "可用参数: " + ", ".join(allowed),
+    unknown = 0
+    if not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in params):
+        for kw in call.keywords:
+            if kw.arg is not None and kw.arg not in sig.parameters:
+                unknown += 1
+                out.append(
+                    _diag(
+                        "error",
+                        "unknown-kwarg",
+                        call.lineno,
+                        call.col_offset,
+                        f"Strategy.{attr} 没有参数 {kw.arg}",
+                        "可用参数: " + ", ".join(allowed),
+                    )
                 )
+    problem = None if unknown else _bind_problem(sig, call)
+    if problem:
+        out.append(
+            _diag(
+                "error",
+                "bad-call-args",
+                call.lineno,
+                call.col_offset,
+                f"self.{attr}(...) 的参数与签名不符: {problem}",
+                f"签名: {attr}{sig}",
             )
+        )
     return out
 
 
@@ -258,6 +378,7 @@ def _check_class(
     for stmt in node.body:
         if not isinstance(stmt, _FuncDef):
             continue
+        diags.extend(_check_callback_param(stmt, node.name))
         for sub in ast.walk(stmt):
             attr = _self_call_attr(sub)
             if attr is not None and isinstance(sub, ast.Call):

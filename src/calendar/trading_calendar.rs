@@ -1,5 +1,6 @@
-//! 交易日历：显式交易日集合，或“工作日 / 每天”的缺省规则。
+//! 交易日历：显式交易日集合，或“工作日 / 每天 / 内置中国交易所日历”的缺省规则。
 
+use super::cn_exchange;
 use chrono::{Datelike, Duration, NaiveDate, Weekday};
 use std::collections::BTreeSet;
 use std::fmt;
@@ -44,8 +45,11 @@ impl CalendarOverrides {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TradingCalendar {
-    /// 周一至周五为交易日（用户未传日历时的缺省，节假日会算错）。
+    /// 周一至周五为交易日（用户未传日历时非中国时区的缺省，节假日会算错）。
     Weekdays,
+    /// 内置的中国交易所日历（用户未传日历时中国时区的缺省）：覆盖范围内剔除节假日，
+    /// 覆盖范围之外同 `Weekdays`。
+    ChinaExchange,
     /// 每个自然日都是交易日。
     AllDays,
     /// 用户传入的交易日集合。
@@ -55,6 +59,7 @@ pub enum TradingCalendar {
 }
 
 /// 缺省规则加修正量：`added` 中的日期是交易日，`removed` 中的不是，其余按 `base`。
+/// 修正量来自行情源报告的交易日（实盘）或回测数据里出现过行情的日期。
 /// 只能经 [`TradingCalendar::with_overrides`] 构造（`base` 不会是显式日历或嵌套修正）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdjustedDays {
@@ -118,6 +123,10 @@ fn is_weekday(d: NaiveDate) -> bool {
     !matches!(d.weekday(), Weekday::Sat | Weekday::Sun)
 }
 
+fn is_china_exchange_day(d: NaiveDate) -> bool {
+    is_weekday(d) && !cn_exchange::is_closed_weekday(d)
+}
+
 impl TradingCalendar {
     pub fn explicit<I: IntoIterator<Item = NaiveDate>>(days: I) -> Result<Self, CalendarError> {
         let set: BTreeSet<NaiveDate> = days.into_iter().collect();
@@ -127,14 +136,16 @@ impl TradingCalendar {
         Ok(TradingCalendar::Explicit(ExplicitDays(set)))
     }
 
-    /// 缺省规则（`Weekdays` / `AllDays`）应用修正量；修正量为空或日历为显式日历时
-    /// 原样返回（显式日历以用户为准，不修正）。
+    /// 缺省规则（`Weekdays` / `AllDays` / `ChinaExchange`）应用修正量；修正量为空或
+    /// 日历为显式日历时原样返回（显式日历以用户为准，不修正）。
     pub fn with_overrides(self, overrides: &CalendarOverrides) -> Self {
         if overrides.is_empty() {
             return self;
         }
         match self {
-            TradingCalendar::Weekdays | TradingCalendar::AllDays => {
+            TradingCalendar::Weekdays
+            | TradingCalendar::AllDays
+            | TradingCalendar::ChinaExchange => {
                 let added: BTreeSet<NaiveDate> = overrides.added.iter().copied().collect();
                 let removed: BTreeSet<NaiveDate> = overrides
                     .removed
@@ -171,6 +182,7 @@ impl TradingCalendar {
         match self {
             TradingCalendar::Weekdays => is_weekday(d),
             TradingCalendar::AllDays => true,
+            TradingCalendar::ChinaExchange => is_china_exchange_day(d),
             TradingCalendar::Explicit(ExplicitDays(set)) => set.contains(&d),
             TradingCalendar::Adjusted(adj) => {
                 adj.added.contains(&d) || (!adj.removed.contains(&d) && adj.base.is_trading_day(d))
@@ -197,8 +209,8 @@ impl TradingCalendar {
                     .copied()
                     .ok_or_else(|| Self::bounds_error(set, d))
             }
-            // 基础规则每周都有交易日，剔除集合有限，循环必然终止。
-            TradingCalendar::Adjusted(_) => {
+            // 基础规则每周都有交易日，剔除集合（含内置休市日表）有限，循环必然终止。
+            TradingCalendar::ChinaExchange | TradingCalendar::Adjusted(_) => {
                 let mut x = d;
                 while !self.is_trading_day(x) {
                     x += Duration::days(1);
@@ -231,7 +243,7 @@ impl TradingCalendar {
                     .copied()
                     .ok_or_else(|| Self::bounds_error(set, d))
             }
-            TradingCalendar::Adjusted(_) => {
+            TradingCalendar::ChinaExchange | TradingCalendar::Adjusted(_) => {
                 let mut x = d - Duration::days(1);
                 while !self.is_trading_day(x) {
                     x -= Duration::days(1);
@@ -337,6 +349,36 @@ mod tests {
         assert_eq!(o.added, vec![d(2024, 10, 1)]);
         assert!(o.removed.is_empty());
         assert!(!o.add(d(2024, 10, 1)));
+    }
+
+    #[test]
+    fn china_exchange_skips_holidays_inside_coverage_only() {
+        let c = TradingCalendar::ChinaExchange;
+        // 2024 国庆：09-30（周一）后休市到 10-07，10-08 复市
+        assert_eq!(c.after(d(2024, 9, 30)).unwrap(), d(2024, 10, 8));
+        assert_eq!(c.before(d(2024, 10, 8)).unwrap(), d(2024, 9, 30));
+        assert_eq!(c.on_or_after(d(2024, 10, 3)).unwrap(), d(2024, 10, 8));
+        assert!(!c.is_trading_day(d(2024, 10, 1)));
+        assert!(!c.is_trading_day(d(2024, 10, 5))); // 周六
+        assert!(c.is_trading_day(d(2024, 10, 8)));
+        assert_eq!(c.first_day(), None);
+        // 覆盖范围之外按工作日：末日之后的每个工作日都是交易日
+        let (_, last) = cn_exchange::coverage();
+        let mut day = last + Duration::days(1);
+        for _ in 0..14 {
+            assert_eq!(c.is_trading_day(day), is_weekday(day), "{day}");
+            day += Duration::days(1);
+        }
+        // 修正量叠加在内置日历上：补入休市日、剔除交易日
+        let overrides = CalendarOverrides {
+            added: vec![d(2024, 10, 1)],
+            removed: vec![d(2024, 10, 8)],
+        };
+        let adjusted = TradingCalendar::ChinaExchange.with_overrides(&overrides);
+        assert!(adjusted.is_trading_day(d(2024, 10, 1)));
+        assert!(!adjusted.is_trading_day(d(2024, 10, 8)));
+        assert!(!adjusted.is_trading_day(d(2024, 10, 2)));
+        assert_eq!(adjusted.after(d(2024, 10, 1)).unwrap(), d(2024, 10, 9));
     }
 
     #[test]

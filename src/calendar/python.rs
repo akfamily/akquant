@@ -3,7 +3,7 @@
 use super::clock::LocalClock;
 use super::resolver::{SessionResolver, SessionSpec, build_sessions, effective_sessions};
 use super::schedule::{CustomSegment, TEMPLATE_NAMES};
-use super::trading_calendar::{CalendarError, TradingCalendar};
+use super::trading_calendar::{CalendarError, CalendarOverrides, TradingCalendar};
 use crate::model::{AssetType, TradingSession};
 use chrono::NaiveDate;
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -96,7 +96,9 @@ fn type_name(obj: &Bound<'_, PyAny>) -> String {
 ///     自定义段写 ``(start, end, session)``，可选第 4 项锚定 ``"prev"``/``"day"``；
 ///     未匹配时按资产类型取默认（股票/基金 CN_STOCK、期货 CN_FUTURES_DAY、
 ///     期权 CN_OPTION、其他 ALWAYS_OPEN）。
-/// :param trading_calendar: 交易日列表；不传时中国市场按工作日推算（节假日会算错），ALWAYS_OPEN 每天都算。
+/// :param trading_calendar: 交易日列表；不传时中国时区用内置的交易所日历（覆盖范围见
+///     :meth:`builtin_calendar_range`，范围之外按工作日推算），其他时区的非全天候时段表按
+///     工作日推算，ALWAYS_OPEN 每天都算。
 /// :param timezone: IANA 时区名，默认 ``"Asia/Shanghai"``。
 #[gen_stub_pyclass]
 #[pyclass(name = "SessionResolver", module = "akquant")]
@@ -253,6 +255,43 @@ impl PySessionResolver {
     #[getter]
     fn uses_all_days_fallback(&self) -> bool {
         self.inner.uses_all_days_fallback()
+    }
+
+    /// 返回叠加了日历修正量的新解析器（时段表、在用标的等配置不变）.
+    ///
+    /// ``added`` 并入交易日、``removed`` 从交易日中剔除，叠加在缺省日历上；传了
+    /// ``trading_calendar`` 的解析器不受影响。
+    fn with_calendar_adjustments(&self, added: Vec<NaiveDate>, removed: Vec<NaiveDate>) -> Self {
+        let mut overrides = CalendarOverrides::default();
+        for day in removed {
+            overrides.remove(day);
+        }
+        for day in added {
+            overrides.add(day);
+        }
+        let mut next = self.inner.as_ref().clone();
+        next.set_calendar_overrides(&overrides);
+        Self {
+            inner: Arc::new(next),
+        }
+    }
+
+    /// 会话日历是否为内置的中国交易所日历（未传 ``trading_calendar``、中国时区、且在用
+    /// 时段表不全是 ALWAYS_OPEN）。
+    #[getter]
+    fn uses_builtin_calendar(&self) -> bool {
+        self.inner.uses_builtin_calendar()
+    }
+
+    /// 会话日历在 ``day`` 是否有内置交易所日历的数据；否则该日按“周一至周五”推算。
+    fn builtin_calendar_covers(&self, day: NaiveDate) -> bool {
+        self.inner.builtin_calendar_covers(day)
+    }
+
+    /// 内置中国交易所日历的覆盖范围 ``(首日, 末日)``（含两端）。
+    #[staticmethod]
+    fn builtin_calendar_range() -> (NaiveDate, NaiveDate) {
+        super::cn_exchange::coverage()
     }
 
     /// 品种在交易日 ``trading_day`` 的交易块 ``[(起点, 终点), ...]``（UTC 纳秒，半开区间）。
