@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.85] - 2026-11-11
+
+> 规则版本不变（2.3.1）：回测结果不受影响。实盘重写了 `on_cross_section` 的策略，该钩子现在会被调用（此前从不触发）。
+
 ### Added
 - **`on_bars(batch)`：同一时间片的 bar 到齐后回调一次**（#441，实验性）：多标的策略要在每根 bar 上对全部标的统一打分、调仓时，重写 `Strategy.on_bars(batch)`（函数式：`run_backtest(..., on_bars=fn)` / `run_live(..., on_bars=fn)`）。`batch` 是新增的 `akquant.BarBatch`：`batch.bars` 按标的升序，`batch["600000"]` / `batch.get(...)` 按标的取，`batch.missing` 是此前出现过、本片没有 bar 的标的，`batch.flush_reason` 是派发原因。回测（及 `broker="replay"`）在时间片结束、下一片开始之前触发，缺 bar 的时间片与最后一片都触发，其中下的单与在本片最后一根 `on_bar` 里下单同一口径。实盘在此前见过的标的全部到齐时触发，否则等到时间片时刻 + `bars_deadline_seconds`（策略类属性，默认 5 秒，须大于行情源的补发延迟）；截止后才到的 bar 只触发 `on_bar`。`on_bar` 不变，两者可同时重写（先逐根 `on_bar`，再 `on_bars`）；不重写 `on_bars` 的策略行为与结果不变。
 
