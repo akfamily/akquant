@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.87] - 2026-11-13
+
 ### Fixed
 - **因子表达式支持逻辑组合**（#446）：文档一直写着条件里可以用 `&`、`|`，但解析器从未实现，照文档写会报 `ValueError: Unsupported binary operator: <class 'ast.BitAnd'>`。现在 `&`、`|`、`~` 以及等价的 `and`、`or`、`not` 都可用，如 `If((Close > Open) & (Volume > Ts_Mean(Volume, 20)), 1, 0)`。逐元素计算、没有短路；空值按三值逻辑处理（`空 & False` 得 `False`、`空 | True` 得 `True`）。`&`、`|` 两侧的比较漏写括号时，报错会说明加括号或改用 `and`、`or`。旧版本可用嵌套写法 `If(A, If(B, 1, 0), 0)` 代替。
 
