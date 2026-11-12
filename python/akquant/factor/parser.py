@@ -126,6 +126,33 @@ class ExpressionParser:
 
         return steps
 
+    @staticmethod
+    def _as_expr(value: Any) -> pl.Expr:
+        """Wrap Python constants so logical operators always act on expressions."""
+        if isinstance(value, pl.Expr):
+            return value
+        return pl.lit(value)
+
+    @staticmethod
+    def _chained_comparison_message(node: ast.Compare) -> str:
+        """Explain a chained comparison, which is usually a precedence slip."""
+        operands = [node.left, *node.comparators]
+        bitwise = any(
+            isinstance(operand, ast.BinOp)
+            and isinstance(operand.op, (ast.BitAnd, ast.BitOr))
+            for operand in operands
+        )
+        if bitwise:
+            return (
+                "Chained comparisons not supported: & and | bind tighter than "
+                "comparisons, so wrap each comparison in parentheses, "
+                "e.g. (Close > Open) & (Volume > 0), or use and / or instead."
+            )
+        return (
+            "Chained comparisons not supported: split into two comparisons "
+            "joined by & (or and), e.g. (1 < Close) & (Close < 5)."
+        )
+
     def _visit(self, node: Any) -> Any:
         # Handle Function Calls
         if isinstance(node, ast.Call):
@@ -166,24 +193,41 @@ class ExpressionParser:
                 return left**right
             elif isinstance(node.op, ast.Mod):
                 return left % right
+            elif isinstance(node.op, ast.BitAnd):
+                return left & right
+            elif isinstance(node.op, ast.BitOr):
+                return left | right
             else:
                 raise ValueError(f"Unsupported binary operator: {type(node.op)}")
 
-        # Handle Unary Operators (-, ~)
+        # Handle Logical Operators (and, or)
+        # Element-wise like & and |: no short-circuit, nulls follow
+        # three-valued logic.
+        elif isinstance(node, ast.BoolOp):
+            values = [self._as_expr(self._visit(value)) for value in node.values]
+            combined = values[0]
+            for value in values[1:]:
+                if isinstance(node.op, ast.And):
+                    combined = combined & value
+                else:
+                    combined = combined | value
+            return combined
+
+        # Handle Unary Operators (-, not, ~)
         elif isinstance(node, ast.UnaryOp):
             operand = self._visit(node.operand)
 
             if isinstance(node.op, ast.USub):
                 return -operand
-            elif isinstance(node.op, ast.Not):
-                return ~operand  # Logical NOT
+            elif isinstance(node.op, (ast.Not, ast.Invert)):
+                return ~self._as_expr(operand)  # Logical NOT
             else:
                 raise ValueError(f"Unsupported unary operator: {type(node.op)}")
 
         # Handle Comparisons (<, >, ==)
         elif isinstance(node, ast.Compare):
             if len(node.ops) != 1:
-                raise ValueError("Chained comparisons not supported")
+                raise ValueError(self._chained_comparison_message(node))
 
             left = self._visit(node.left)
             right = self._visit(node.comparators[0])

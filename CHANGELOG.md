@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.87] - 2026-11-13
+
+### Fixed
+- **因子表达式支持逻辑组合**（#446）：文档一直写着条件里可以用 `&`、`|`，但解析器从未实现，照文档写会报 `ValueError: Unsupported binary operator: <class 'ast.BitAnd'>`。现在 `&`、`|`、`~` 以及等价的 `and`、`or`、`not` 都可用，如 `If((Close > Open) & (Volume > Ts_Mean(Volume, 20)), 1, 0)`。逐元素计算、没有短路；空值按三值逻辑处理（`空 & False` 得 `False`、`空 | True` 得 `True`）。`&`、`|` 两侧的比较漏写括号时，报错会说明加括号或改用 `and`、`or`。旧版本可用嵌套写法 `If(A, If(B, 1, 0), 0)` 代替。
+
+### Changed
+- 文档补充 0.3.86 内置交易所日历的一处影响：`broker="replay"` 回放走实盘入口，不按数据修正日历，回放数据落在休市日（如手工造的从 2024-01-01 元旦起的数据）时当天全天闭市、订单不成交（0.3.85 及以前按工作日推算，会成交）。请把数据放在真实交易日，或用 `trading_calendar=` 把这些日期列为交易日。
+
 ## [0.3.86] - 2026-11-11
 
 > **规则版本 2.4.0**：不传 `trading_calendar` 时的缺省交易日历变了。受影响的是此前靠“周一至周五”推算交易日的运行：`schedule_daily` 等按交易日触发的定时任务不再在节假日触发；节前收盘后 `self.trading_day` 直接是节后首个交易日；数据里含周末或节假日日期的回测，这些日期各自成为一个交易日（此前并入下一交易日）。只含真实交易日的 A 股日线回测，收益、回撤等数值不变。显式传了 `trading_calendar` 的运行不受影响。
