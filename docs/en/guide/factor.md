@@ -97,6 +97,26 @@ df_batch = engine.run_batch([
 
 Expressions support variables (column names, case-insensitive, e.g., `Close`, `open`) and constants.
 
+### Arithmetic, Comparison & Logical Operators
+
+- Arithmetic: `+`, `-`, `*`, `/`, `**`, `%`
+- Comparison: `>`, `<`, `>=`, `<=`, `==`, `!=`
+- Logical: `&` (and), `|` (or), `~` (not); the keywords `and`, `or`, `not` are equivalent
+
+```python
+If((Close > Open) & (Volume > Ts_Mean(Volume, 20)), 1, 0)
+If(Close > Open and Volume > Ts_Mean(Volume, 20), 1, 0)
+```
+
+Notes:
+
+- **Parenthesize each comparison around `&` and `|`.** They bind tighter than comparisons, so `Close > Open & Volume > 0` is read as `Close > (Open & Volume) > 0` and raises an error. `and` / `or` bind looser than comparisons and need no parentheses.
+- **Element-wise, no short-circuit.** `and` / `or` behave exactly like `&` / `|` and are evaluated row by row.
+- **Nulls follow three-valued logic.** A comparison against a rolling window that is not yet full is null; `null & False` is `False`, `null | True` is `True`, and other combinations stay null. `If` takes its third argument when the condition is null.
+- Chained comparisons such as `1 < Close < 5` are not supported; write `(1 < Close) & (Close < 5)`.
+
+Logical operators are available since 0.3.87. On 0.3.86 and earlier, nest instead: `If(A, If(B, 1, 0), 0)`.
+
 ### Time Series Operators
 
 Calculated independently for each symbol over time.
