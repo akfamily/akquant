@@ -8,8 +8,6 @@ from ...akquant import DataFeed
 from ..protocols import GatewayBundle, MarketGateway, TraderGateway
 from ..registry import register_broker
 from .ctp.adapter import CTPMarketAdapter, CTPTraderAdapter
-from .miniqmt.stub import MiniQMTMarketGateway, MiniQMTTraderGateway
-from .ptrade.stub import PTradeMarketGateway, PTradeTraderGateway
 from .replay.gateway import build_replay_bundle
 
 
@@ -67,35 +65,7 @@ def _build_ctp(
     )
 
 
-def _build_miniqmt(
-    feed: DataFeed, symbols: Sequence[str], use_aggregator: bool, **kwargs: Any
-) -> GatewayBundle:
-    market_gateway = MiniQMTMarketGateway(feed=feed, symbols=list(symbols), **kwargs)
-    trader_gateway: TraderGateway | None = MiniQMTTraderGateway(**kwargs)
-    return GatewayBundle(
-        market_gateway=market_gateway,
-        trader_gateway=trader_gateway,
-        trader_capabilities=_resolve_trader_capabilities(trader_gateway),
-        metadata={"broker": "miniqmt"},
-    )
-
-
-def _build_ptrade(
-    feed: DataFeed, symbols: Sequence[str], use_aggregator: bool, **kwargs: Any
-) -> GatewayBundle:
-    market_gateway = PTradeMarketGateway(feed=feed, symbols=list(symbols), **kwargs)
-    trader_gateway: TraderGateway | None = PTradeTraderGateway(**kwargs)
-    return GatewayBundle(
-        market_gateway=market_gateway,
-        trader_gateway=trader_gateway,
-        trader_capabilities=_resolve_trader_capabilities(trader_gateway),
-        metadata={"broker": "ptrade"},
-    )
-
-
 def register_builtin_brokers() -> None:
     """Register all built-in brokers into the shared registry (idempotent)."""
     register_broker("ctp", _build_ctp)
-    register_broker("miniqmt", _build_miniqmt)
-    register_broker("ptrade", _build_ptrade)
     register_broker("replay", build_replay_bundle)

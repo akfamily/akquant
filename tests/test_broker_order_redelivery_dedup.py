@@ -137,7 +137,7 @@ def test_distinct_orders_are_independent() -> None:
 def test_order_and_execution_report_dedupe_independently() -> None:
     """内置 broker 对同一状态成对派发 order+execution_report, 两者互不吞对方.
 
-    ctp/miniqmt/ptrade 的 ingest 路径用**同一个** payload 先触发
+    ctp 等 broker 的 ingest 路径用**同一个** payload 先触发
     order_callback、紧接着触发 execution_callback, 四个指纹字段(status/
     filled_quantity/avg_fill_price/reject_reason)逐字相同。去重键必须带
     事件类型前缀, 否则先入队的 order 会让随后同指纹的 execution_report

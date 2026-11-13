@@ -4024,7 +4024,7 @@ def test_run_backtest_broker_profile_applies_defaults() -> None:
         strategy=ProfileCaptureStrategy,
         symbols="PROFILE",
         fill_policy=CurrentClose(),
-        broker_profile="cn_stock_miniqmt",
+        broker_profile="cn_stock_standard",
         show_progress=False,
     )
 
@@ -4043,7 +4043,7 @@ def test_run_backtest_broker_profile_explicit_args_override_profile() -> None:
         strategy=ProfileCaptureStrategy,
         symbols="PROFILE_OVERRIDE",
         fill_policy=CurrentClose(),
-        broker_profile="cn_stock_miniqmt",
+        broker_profile="cn_stock_standard",
         commission_rate=0.0011,
         stamp_tax_rate=0.0022,
         min_commission=1.5,
@@ -4088,7 +4088,7 @@ def test_run_backtest_broker_profile_explicit_zero_values_are_preserved() -> Non
         strategy=ProfileCaptureStrategy,
         symbols="PROFILE_ZERO",
         fill_policy=CurrentClose(),
-        broker_profile="cn_stock_miniqmt",
+        broker_profile="cn_stock_standard",
         stamp_tax_rate=0.0,
         transfer_fee_rate=0.0,
         min_commission=0.0,

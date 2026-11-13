@@ -13,7 +13,6 @@
 ## 重要说明
 
 - 本页的能力矩阵用于描述统一接口层的目标形态与当前适配状态，不等同于“对应 broker 已完成生产级实盘接入”。
-- 对于内置 `MiniQMT` / `PTrade`，当前仓库中的 trader gateway 仍以占位适配和联调骨架为主；若要用于真实 A 股交易，通常仍需补齐券商专有字段、订单回报映射和账户/持仓同步逻辑。
 - 文档中出现的“集合竞价/盘前”更多指框架侧的时序与成交语义钩子，不应直接理解为已支持交易所或券商柜台的“集合竞价专用委托类型”。
 - 新股/新债打新、ETF 申赎等券商专有业务，不在当前内置统一下单接口的默认承诺范围内。
 
@@ -25,8 +24,6 @@
 | Oanda | Tick/Bar | Market/Limit/Stop | Yes | Yes | Yes | GTC/GTD/FOK/IOC | FX/CFD 语义 |
 | CCXT | Tick/Bar(交易所相关) | Market/Limit(主) | Yes | Yes | Yes | 交易所相关 | 需按交易所分层 |
 | CTP | Tick/Bar | Market/Limit/Stop(经映射) | Yes | Yes | Yes | 交易所相关 | 已有本地适配，当前更适合作为已落地的内置实盘链路参考 |
-| MiniQMT | Tick/Bar(占位) | Market/Limit(占位) | 占位 | 占位 | 占位 | DAY/GTC(目标形态) | 当前仓库以内存/联调骨架为主，不应视为已完成生产级 A 股实盘适配 |
-| PTrade | Bar(占位) | Market/Limit(占位) | 占位 | 占位 | 占位 | DAY(目标形态) | 当前仓库以内存/联调骨架为主，不应视为已完成生产级 A 股实盘适配 |
 
 ## 统一错误规范
 
@@ -57,5 +54,3 @@
 - [protocols.py](https://github.com/akfamily/akquant/blob/main/python/akquant/gateway/protocols.py)
 - [broker_runtime.py](https://github.com/akfamily/akquant/blob/main/python/akquant/gateway/broker_runtime.py)
 - [brokers/ctp/adapter.py](https://github.com/akfamily/akquant/blob/main/python/akquant/gateway/brokers/ctp/adapter.py)
-- [brokers/miniqmt/stub.py](https://github.com/akfamily/akquant/blob/main/python/akquant/gateway/brokers/miniqmt/stub.py)
-- [brokers/ptrade/stub.py](https://github.com/akfamily/akquant/blob/main/python/akquant/gateway/brokers/ptrade/stub.py)

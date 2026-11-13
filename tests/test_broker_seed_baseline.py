@@ -160,7 +160,7 @@ def test_baseline_broker_state_seeds_and_marks_seen() -> None:
             return [type("T", (), {"trade_id": "s1"})()]
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "ptrade"
+    runner.broker = "fake_b"
     runner._init_broker_bridge_state()
     assert runner._broker_baseline_done is False
     cache = _Cache()

@@ -2,7 +2,7 @@
 第 15 章：实盘交易系统 (Live Trading).
 
 本示例展示了如何将策略部署到实盘环境。
-AKQuant 支持通过内置 broker 网关（ctp/miniqmt/ptrade）接入行情与交易链路。
+AKQuant 支持通过内置 broker 网关（ctp）或自定义 broker接入行情与交易链路。
 
 注意：
 1. 实盘交易涉及真实资金，请务必在模拟盘充分测试。

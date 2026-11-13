@@ -555,4 +555,4 @@ class TargetPositionsDemoStrategy(Strategy):
 
 *   **[46_broker_profile_demo.py](https://github.com/akfamily/akquant/blob/main/examples/46_broker_profile_demo.py)**:
     *   演示 `run_backtest(..., broker_profile=...)` 的模板注入行为，并打印策略启动时实际生效的费率与手数参数。
-    *   适合快速对齐 `cn_stock_miniqmt`、`cn_stock_t1_low_fee`、`cn_stock_sim_high_slippage` 等预设风格。
+    *   适合快速对齐 `cn_stock_standard`、`cn_stock_t1_low_fee`、`cn_stock_sim_high_slippage` 等预设风格。

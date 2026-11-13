@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **移除内置的 `miniqmt` 与 `ptrade` 券商接口（破坏性变更）**。这两个接口一直是占位实现：不连接真实柜台，下单只在内存里记一笔，从未具备实盘能力；加之 2026 年下半年起多家券商已停止个人客户的 miniQMT 接入，继续保留只会让人误以为可用。
+    - `run_live(broker="miniqmt")`、`run_live(broker="ptrade")` 以及 `create_gateway_bundle` 的这两个名字不再可用，会报未知 broker。
+    - 删除 `MiniQMTMarketGateway`、`MiniQMTTraderGateway`、`PTradeMarketGateway`、`PTradeTraderGateway` 四个类，以及模块 `akquant.gateway.miniqmt`、`akquant.gateway.ptrade`、`akquant.gateway.brokers.miniqmt`、`akquant.gateway.brokers.ptrade`。
+    - 内置的实盘柜台接口现在只有 `ctp`（期货），另有 `replay` 用于回放；A 股等其他柜台请通过 `register_broker` 注册自定义 broker 接入。
+
+### Changed
+- **A 股费率模板 `cn_stock_miniqmt` 改名为 `cn_stock_standard`（破坏性变更，不保留别名）**。模板参数不变（佣金 0.0003、最低 5 元、印花税 0.0005、过户费 0.00001、滑点 0.0002、成交量上限 0.2、一手 100 股、T+1），回测结果不受影响。继续传旧名会报错并提示新名字，把 `broker_profile="cn_stock_miniqmt"` 改成 `broker_profile="cn_stock_standard"` 即可。
+- README 重写：补充实盘与品种范围的说明，快速开始不再传交易日历（0.3.86 起中国时区已内置交易所日历，传与不传结果相同），中英文文档的快速开始同步修改；删除失效的报表示例链接。
+
 ## [0.3.88] - 2026-11-13
 
 ### Changed

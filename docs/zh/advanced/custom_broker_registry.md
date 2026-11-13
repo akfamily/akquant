@@ -18,7 +18,7 @@
 - `list_registered_brokers()`
 - `create_gateway_bundle(...)`
 
-注册后的 broker 会被 `create_gateway_bundle` 优先解析；未命中时才走内置 `ctp/miniqmt/ptrade`。
+注册后的 broker 会被 `create_gateway_bundle` 优先解析；未命中时才走内置 `ctp`。
 
 ## 3. Builder 签名
 

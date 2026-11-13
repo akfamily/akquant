@@ -6,7 +6,8 @@ from akquant.gateway import create_gateway_bundle, list_registered_brokers
 def test_builtins_registered_on_import() -> None:
     """Importing akquant.gateway registers all built-in brokers."""
     names = set(list_registered_brokers())
-    assert {"ctp", "miniqmt", "ptrade"} <= names
+    assert {"ctp", "replay"} <= names
+    assert not {"miniqmt", "ptrade"} & names
 
 
 def test_unknown_broker_lists_builtins() -> None:

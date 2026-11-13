@@ -66,7 +66,7 @@ def test_live_runner_broker_bridge_recovers_from_sync() -> None:
             return None
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "ptrade"
+    runner.broker = "fake_b"
     runner._init_broker_bridge_state()
     runner._broker_recovery_interval_sec = 0.05
     gateway = _DummyTraderGateway()

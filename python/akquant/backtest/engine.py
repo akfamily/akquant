@@ -1464,7 +1464,7 @@ BacktestDataInput = Union[
 # A 股模板: 印花税取 2023-08-28 起的现行税率 0.05%(卖出单边), 回测此前的数据需
 # 显式传 stamp_tax_rate=0.001; 三个模板都按 A 股制度开 T+1。
 _BROKER_PROFILE_TEMPLATES: Dict[str, Dict[str, Any]] = {
-    "cn_stock_miniqmt": {
+    "cn_stock_standard": {
         "commission_rate": 0.0003,
         "stamp_tax_rate": 0.0005,
         "transfer_fee_rate": 0.00001,
@@ -1974,6 +1974,11 @@ def _resolve_broker_profile(profile: Optional[str]) -> Dict[str, Any]:
     key = str(profile).strip().lower()
     if not key:
         return {}
+    if key == "cn_stock_miniqmt":
+        raise ValueError(
+            "broker_profile 'cn_stock_miniqmt' 已改名为 'cn_stock_standard'"
+            "（参数不变），请改用新名字"
+        )
     if key not in _BROKER_PROFILE_TEMPLATES:
         available = ", ".join(sorted(_BROKER_PROFILE_TEMPLATES.keys()))
         raise ValueError(
@@ -3400,7 +3405,7 @@ def run_backtest(
     :param on_event: 可选流式事件回调。阶段 5 后 `run_backtest` 始终走统一事件内核；
                      不传时内部使用 no-op 回调并保持返回语义不变。
     :param broker_profile: 可选 broker 参数模板名称，
-                           如 "cn_stock_miniqmt" / "cn_stock_t1_low_fee" /
+                           如 "cn_stock_standard" / "cn_stock_t1_low_fee" /
                            "cn_stock_sim_high_slippage"，
                            用于快速注入一组回测参数默认值。
     故障速查可参考 docs/zh/advanced/runtime_config.md，

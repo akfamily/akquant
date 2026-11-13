@@ -273,7 +273,7 @@ def run_from_checkpoint(
 *   T+1 范围说明：当前 `t_plus_one` 仍是运行级/市场级开关，不支持按 `strategy_id` 分层配置。
 *   `analyzer_plugins`: 可选 Analyzer 插件列表。插件接收 `on_start/on_bar/on_trade/on_finish` 生命周期回调，结果汇总到 `result.analyzer_outputs`。
 *   `on_event`: 可选事件回调。不传时内部使用 no-op 回调并保持阻塞返回语义；传入时可实时消费事件。
-*   `broker_profile`: 可选 broker 参数模板，用于快速注入费率/滑点/最小手数/T+1 等默认值，显式参数优先（滑点同理：要覆盖模板里的滑点须显式传 `slippage={"type": "zero"}` 或其他策略字典，不传或传 `None` 时模板滑点生效）。内置模板：`cn_stock_miniqmt`、`cn_stock_t1_low_fee`、`cn_stock_sim_high_slippage`。
+*   `broker_profile`: 可选 broker 参数模板，用于快速注入费率/滑点/最小手数/T+1 等默认值，显式参数优先（滑点同理：要覆盖模板里的滑点须显式传 `slippage={"type": "zero"}` 或其他策略字典，不传或传 `None` 时模板滑点生效）。内置模板：`cn_stock_standard`、`cn_stock_t1_low_fee`、`cn_stock_sim_high_slippage`。
 
 **fill_policy 推荐示例（主路径）：**
 

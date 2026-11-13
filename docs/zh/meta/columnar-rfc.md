@@ -104,7 +104,7 @@ trait ExecutionClient { fn submit(&mut self, order); ... }       // 模拟撮合
 trait Clock           { fn now(&self) -> i64; fn timers(); }     // 随事件推进 / 墙钟
 ```
 
-策略只依赖账户与订单的门面，回测与实盘的唯一差异是注入哪一套实现。现有 `gateway/`（ctp/miniqmt/ptrade + middleware 插件）接到 `ExecutionClient` 与实盘数据源。
+策略只依赖账户与订单的门面，回测与实盘的唯一差异是注入哪一套实现。现有 `gateway/`（ctp + middleware 插件）接到 `ExecutionClient` 与实盘数据源。
 
 这个形态的前提是引擎核心不依赖 Python：上面三个 trait 和策略派发都要能在没有 Python 解释器的情况下运行和测试。
 

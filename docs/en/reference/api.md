@@ -169,7 +169,7 @@ def run_backtest(
 *   `risk_budget_mode` / `risk_budget_reset_daily`: Risk budget accounting mode and reset policy.
 *   `analyzer_plugins`: Optional analyzer plugin list. Plugins receive `on_start/on_bar/on_trade/on_finish` callbacks and final outputs are stored in `result.analyzer_outputs`.
 *   `on_event`: Optional stream callback. When omitted, an internal no-op callback keeps legacy blocking return semantics; when provided, runtime events are emitted.
-*   `broker_profile`: Optional broker template preset for quick defaults (fees/slippage/lot size/T+1); explicit arguments take precedence (for slippage too: to override the template's slippage you must pass an explicit `slippage={"type": "zero"}` or another policy dict; omitting it or passing `None` leaves the template's slippage in effect). Built-ins: `cn_stock_miniqmt`, `cn_stock_t1_low_fee`, `cn_stock_sim_high_slippage`.
+*   `broker_profile`: Optional broker template preset for quick defaults (fees/slippage/lot size/T+1); explicit arguments take precedence (for slippage too: to override the template's slippage you must pass an explicit `slippage={"type": "zero"}` or another policy dict; omitting it or passing `None` leaves the template's slippage in effect). Built-ins: `cn_stock_standard`, `cn_stock_t1_low_fee`, `cn_stock_sim_high_slippage`.
 
 **Recommended fill_policy examples (primary path):**
 

@@ -437,7 +437,7 @@ class BrokerEventBridge:
             order_id = str(self._payload_field(payload, "broker_order_id") or "")
             if order_id:
                 # 键带事件类型: order 与 execution_report 是两类独立回调, 内置
-                # broker(ctp/miniqmt/ptrade)对同一次状态变化会用同一 payload 成对
+                # broker(如 ctp)对同一次状态变化会用同一 payload 成对
                 # 派发 order + execution_report, 四个指纹字段逐字相同; 共用命名
                 # 空间会让第二个事件被误判"已派发过"而永久吞掉。
                 state_key = f"{event_name}:{order_id}"
