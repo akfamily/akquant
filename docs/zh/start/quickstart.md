@@ -29,8 +29,6 @@ from akquant import Strategy, run_backtest
 
 # 1. 准备数据 (这里利用 AKShare 来获取数据；若尚未安装，可先执行 `uv pip install akshare`)
 df = ak.stock_zh_a_daily(symbol="sh600000", start_date="20250101", end_date="20260212")
-# 交易日历：不传时按工作日推算，节假日会被当作交易日
-trade_dates = ak.tool_trade_date_hist_sina()["trade_date"]
 
 
 # 2. 策略定义
@@ -57,7 +55,6 @@ result = run_backtest(
     initial_cash=100000.0,  # 初始资金
     symbols="sh600000",  # 交易的股票代码
     broker_profile="cn_stock_t1_low_fee",  # A 股佣金/印花税/过户费、T+1、一手 100 股
-    trading_calendar=trade_dates,  # 交易日历
 )
 
 # 4. 查看结果

@@ -29,8 +29,6 @@ from akquant import Strategy, run_backtest
 
 # 1. Prepare Data (Using AKShare to get data; if needed, install it first via `uv pip install akshare`)
 df = ak.stock_zh_a_daily(symbol="sh600000", start_date="20250101", end_date="20260212")
-# Trading calendar: without it, every weekday (holidays included) is treated as a trading day
-trade_dates = ak.tool_trade_date_hist_sina()["trade_date"]
 
 
 # 2. Define Strategy
@@ -57,7 +55,6 @@ result = run_backtest(
     initial_cash=100000.0,  # Initial cash
     symbols="sh600000",  # Trading symbol
     broker_profile="cn_stock_t1_low_fee",  # China A-share fees, T+1, 100-share lots
-    trading_calendar=trade_dates,  # Trading calendar
 )
 
 # 4. View Results
