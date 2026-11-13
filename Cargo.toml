@@ -1,6 +1,6 @@
 [package]
 name = "akquant"
-version = "0.3.87"
+version = "0.3.88"
 edition = "2024"
 description = "High-performance quantitative trading framework based on Rust and Python"
 license = "MIT"
@@ -13,8 +13,8 @@ name = "akquant"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-pyo3 = { version = "0.29.2", features = ["abi3-py310", "chrono"] }
-numpy = "0.29"
+pyo3 = { version = "0.30.1", features = ["abi3-py310", "chrono"] }
+numpy = "0.30"
 pyo3-stub-gen = "0.23.0"
 # `rc`: tracker.rs / portfolio.rs 给 `Arc<..>` 字段 derive(Serialize)。
 serde = { version = "1.0", features = ["derive", "rc"] }
@@ -31,12 +31,15 @@ rust_decimal = { version = "1.40", features = ["serde-with-str", "maths"] }
 indicatif = "0.18"
 csv = "1.3"
 thiserror = "2.0.18"
-rust_decimal_macros = "1.40"
 log = "0.4"
 pyo3-log = "0.13.1"
 crossbeam-channel = "0.5"
 rmp-serde = "1.3.1"
 serde_json = "1.0"
+
+[dev-dependencies]
+# 只在 #[cfg(test)] 里用 dec!; 放进 [dependencies] 会触发 cargo 的 unused_dependencies 告警。
+rust_decimal_macros = "1.40"
 
 [features]
 default = []

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.88] - 2026-11-13
+
+### Changed
+- 依赖升级：PyO3 0.29.2 → 0.30.1、rust-numpy 0.29 → 0.30，并更新 `Cargo.lock` 中的其余依赖（uuid 1.29.2、rust_decimal 1.43.0、pyo3-log 0.13.5、pyo3-stub-gen 0.23.2 等）。PyO3 0.30 修复了 `#[pyclass]` 类型可能的内存泄漏和 `#[pyfunction]` 自 0.28 起在 CPython 3.11+ 上调用变慢的问题，并确认支持 Python 3.15 正式版。对外接口与回测结果不变，规则版本不变。
+- `rust_decimal_macros` 只在测试中使用，从 `[dependencies]` 挪到 `[dev-dependencies]`，消除 cargo 的未使用依赖告警。
+
 ## [0.3.87] - 2026-11-13
 
 ### Fixed
