@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - 内置的实盘柜台接口现在只有 `ctp`（期货），另有 `replay` 用于回放；A 股等其他柜台请通过 `register_broker` 注册自定义 broker 接入。
 
 ### Changed
+- **`run_live` 的 CTP 连接参数移入 `gateway_options`（破坏性变更）**。`run_live` 与 `LiveRunner` 顶层的 `md_front`、`td_front`、`broker_id`、`user_id`、`password`、`app_id`、`auth_code` 七个参数已删除，继续传会报 `TypeError`。键名不变，改放进 `gateway_options`：`run_live(..., broker="ctp", gateway_options={"md_front": ..., "td_front": ..., "broker_id": ..., "user_id": ..., "password": ..., "app_id": ..., "auth_code": ...})`。这样所有 broker 的连接参数走同一个入口，`broker`（用哪个接口）与 `broker_id`（CTP 的期货公司代码）也不再并排出现。
+- **`run_live` 的 `broker` 不再默认 `"ctp"`（破坏性变更）**。必须显式传 `broker`，或同时传 `market_broker` 与 `trader_broker`；都不传会报错并列出可用的名字。此前只传 `market_broker`/`trader_broker` 而不传 `broker` 的会话，`client_order_id` 的前缀由 `ctp-` 变为交易侧 broker 的名字。
+- **`broker="ctp"` 的交易通道参数收紧（破坏性变更）**。`td_front`、`broker_id`、`user_id`、`password`、`app_id`、`auth_code` 六项要么都不给（只接行情），要么全给；只给一部分会报错并指出缺哪几项。此前缺 `broker_id`、`app_id`、`auth_code` 时会悄悄使用 SimNow 仿真环境的值，缺 `td_front` 或 `user_id` 时会悄悄不建交易通道。连接 SimNow 请显式传 `broker_id="9999"`、`app_id="simnow_client_test"`、`auth_code="0000000000000000"`。
 - **A 股费率模板 `cn_stock_miniqmt` 改名为 `cn_stock_standard`（破坏性变更，不保留别名）**。模板参数不变（佣金 0.0003、最低 5 元、印花税 0.0005、过户费 0.00001、滑点 0.0002、成交量上限 0.2、一手 100 股、T+1），回测结果不受影响。继续传旧名会报错并提示新名字，把 `broker_profile="cn_stock_miniqmt"` 改成 `broker_profile="cn_stock_standard"` 即可。
 - README 重写：补充实盘与品种范围的说明，快速开始不再传交易日历（0.3.86 起中国时区已内置交易所日历，传与不传结果相同），中英文文档的快速开始同步修改；删除失效的报表示例链接。
 

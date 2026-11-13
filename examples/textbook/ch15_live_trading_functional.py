@@ -103,13 +103,10 @@ if __name__ == "__main__":
             strategy_cls=on_bar,
             initialize=initialize,
             instruments=[rb2310],
-            md_front=CTP_CONFIG["md_front"],
-            td_front=CTP_CONFIG["td_front"],
-            broker_id=CTP_CONFIG["broker_id"],
-            user_id=CTP_CONFIG["user_id"],
-            password=CTP_CONFIG["password"],
-            app_id=CTP_CONFIG["app_id"],
-            auth_code=CTP_CONFIG["auth_code"],
+            broker="ctp",
+            # CTP 的连接参数都经 gateway_options 传入；交易通道的六项
+            # （td_front 到 auth_code）要么都不给（只接行情），要么全给。
+            gateway_options=CTP_CONFIG,
             cash=500_000,
         )
 

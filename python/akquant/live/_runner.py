@@ -35,6 +35,7 @@ from ..gateway.order_submitter import (
     resolve_live_order_legs,
     validate_live_order_client_ids,
 )
+from ..gateway.registry import list_registered_brokers
 from ..gateway.symbol_match import normalize_symbol_for_match
 from ..gateway.trader_base import TraderGatewayBase
 from ..indicator_recording import IndicatorSink, declare_plotted_indicators
@@ -62,8 +63,6 @@ from ..strategy_runtime_config import apply_strategy_runtime_config
 from ..strategy_window import configure_engine_window_subscriptions
 from ..utils import format_metric_value
 from ._gateway_setup import (
-    LEGACY_GATEWAY_OPTION_KEYS,
-    normalize_gateway_options,
     start_gateway_thread,
 )
 from ._paper_execution import (
@@ -104,7 +103,6 @@ _CHINA_TIMEZONES = frozenset(
 _DEFAULT_HISTORY_CAPACITY = 10000
 
 # Backward-compatible alias; canonical definition lives in _gateway_setup.
-_LEGACY_GATEWAY_OPTION_KEYS = LEGACY_GATEWAY_OPTION_KEYS
 
 #: recovery 三档节奏的默认间隔(秒): 心跳每拍 / 资金中频 / 全量 sync 低频兜底。
 _DEFAULT_RECOVERY_TICK_SEC = 1.0
@@ -416,15 +414,8 @@ class LiveRunner:
         strategies_by_slot: Optional[
             Dict[str, Union[Type[Strategy], Strategy, Callable[[Any, Bar], None]]]
         ] = None,
-        md_front: str = "",
-        td_front: Optional[str] = None,
-        broker_id: str = "",
-        user_id: str = "",
-        password: str = "",
-        app_id: str = "",
-        auth_code: str = "",
         use_aggregator: bool = True,
-        broker: str = "ctp",
+        broker: Optional[str] = None,
         market_broker: Optional[str] = None,
         trader_broker: Optional[str] = None,
         trading_mode: str = "paper",
@@ -488,17 +479,11 @@ class LiveRunner:
         :param strategies_by_slot: Optional slot->strategy mapping
                                    for multi-slot runtime.
         :param instruments: List of instruments to trade.
-        :param md_front: CTP Market Data Front URL.
-        :param td_front: CTP Trade Front URL (optional).
-        :param broker_id: CTP Broker ID (optional).
-        :param user_id: CTP User ID (optional).
-        :param password: CTP Password (optional).
-        :param app_id: CTP App ID (optional).
-        :param auth_code: CTP Auth Code (optional).
         :param use_aggregator: Whether to use BarAggregator (default True).
-        :param broker: Broker supplying **both** market data and trading
-            (default ``"ctp"``). Used when ``market_broker`` / ``trader_broker``
-            are both unset.
+        :param broker: Broker supplying **both** market data and trading.
+            No default: pass either ``broker`` or the ``market_broker`` /
+            ``trader_broker`` pair. Broker connection settings go into
+            ``gateway_options``.
         :param market_broker: Market-data source, overriding ``broker`` for that
             side. Must be given together with ``trader_broker``; passing only one
             raises ``ValueError``. When both are given, ``broker`` is unused.
@@ -578,25 +563,9 @@ class LiveRunner:
         self.strategies_by_slot = strategies_by_slot or {}
         self.instruments = instruments
         self._subscribed_symbols_cache: set[str] | None = None
-        self.gateway_options = self._normalize_gateway_options(
-            gateway_options=gateway_options,
-            md_front=md_front,
-            td_front=td_front,
-            broker_id=broker_id,
-            user_id=user_id,
-            password=password,
-            app_id=app_id,
-            auth_code=auth_code,
-        )
-        self.md_front = cast(str, self.gateway_options.get("md_front", ""))
-        self.td_front = cast(Optional[str], self.gateway_options.get("td_front"))
-        self.broker_id = cast(str, self.gateway_options.get("broker_id", ""))
-        self.user_id = cast(str, self.gateway_options.get("user_id", ""))
-        self.password = cast(str, self.gateway_options.get("password", ""))
-        self.app_id = cast(str, self.gateway_options.get("app_id", ""))
-        self.auth_code = cast(str, self.gateway_options.get("auth_code", ""))
+        self.gateway_options = dict(gateway_options or {})
         self.use_aggregator = use_aggregator
-        self.broker = broker
+        self.broker = self._resolve_broker_label(broker, market_broker, trader_broker)
         # 行情源与交易源可分别覆盖 broker: 补齐单边 broker
         # (middleware 只有交易 / replay 只有行情)。
         self.market_broker = market_broker
@@ -1785,12 +1754,30 @@ class LiveRunner:
         if hasattr(self.engine, "set_risk_budget_reset_daily"):
             cast(Any, self.engine).set_risk_budget_reset_daily(risk_budget_reset_daily)
 
-    def _normalize_gateway_options(
-        self,
-        gateway_options: Optional[Dict[str, Any]],
-        **legacy_values: Any,
-    ) -> Dict[str, Any]:
-        return normalize_gateway_options(gateway_options, **legacy_values)
+    @staticmethod
+    def _resolve_broker_label(
+        broker: Optional[str],
+        market_broker: Optional[str],
+        trader_broker: Optional[str],
+    ) -> str:
+        """校验接口来源已写明, 返回 ``self.broker`` 用的名字.
+
+        ``broker`` 没有默认值: 要么传它, 要么成对传 ``market_broker`` /
+        ``trader_broker``。成对指定时 ``broker`` 不参与构建(见
+        ``create_gateway_bundle``), 但 ``self.broker`` 仍要有值——它是
+        ``client_order_id`` 前缀的一部分(见 ``_broker_name_for_cid``), 所以取
+        交易侧的名字: 委托是发给它的, 且不引入额外字符。只传了一侧的情形留给
+        ``create_gateway_bundle`` 报错, 那里的提示更具体。
+        """
+        for value in (broker, trader_broker, market_broker):
+            name = str(value or "").strip()
+            if name:
+                return name
+        available = ", ".join(sorted(list_registered_brokers()))
+        raise ValueError(
+            "run_live 需要指定 broker（或同时指定 market_broker 与 "
+            f"trader_broker），可用的 broker: {available}"
+        )
 
     def _warn_non_china_timezone(self) -> None:
         """真实行情源配了非中国时区时告警一次(replay 回放的数据可来自任意市场)."""

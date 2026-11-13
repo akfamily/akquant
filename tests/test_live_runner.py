@@ -4,14 +4,15 @@ from typing import Any, cast
 
 import akquant.live._runner as live_module
 import pytest
+from akquant import run_live
 from akquant.live._runner import LiveRunner
 from akquant.strategy import Strategy
 
 
-def test_live_runner_init_normalizes_legacy_gateway_options(
+def test_live_runner_keeps_gateway_options_as_given(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """LiveRunner should fold legacy broker args into gateway_options at init."""
+    """连接参数只走 gateway_options, 构造器原样保存、原样下发."""
 
     class _DummyDataFeed:
         @staticmethod
@@ -24,66 +25,52 @@ def test_live_runner_init_normalizes_legacy_gateway_options(
     monkeypatch.setattr(live_module, "DataFeed", _DummyDataFeed)
     monkeypatch.setattr(live_module, "Engine", _DummyEngine)
 
-    runner = LiveRunner(
-        strategy_cls=None,
-        instruments=[],
-        md_front="tcp://md-front",
-        broker_id="9999",
-        user_id="trader-a",
-        password="secret",
-        gateway_options={"recovery_mode": "strict", "custom": "value"},
-    )
-
-    assert runner.gateway_options == {
+    options = {
         "recovery_mode": "strict",
-        "custom": "value",
         "md_front": "tcp://md-front",
         "broker_id": "9999",
         "user_id": "trader-a",
-        "password": "secret",
     }
-    assert runner.md_front == "tcp://md-front"
-    assert runner.broker_id == "9999"
-    assert runner.user_id == "trader-a"
-    assert runner.password == "secret"
-    assert runner._build_gateway_kwargs() == runner.gateway_options
-
-
-def test_live_runner_init_prefers_gateway_options_over_legacy_args(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Explicit gateway_options values should win over legacy init args."""
-
-    class _DummyDataFeed:
-        @staticmethod
-        def create_live() -> object:
-            return object()
-
-    class _DummyEngine:
-        pass
-
-    monkeypatch.setattr(live_module, "DataFeed", _DummyDataFeed)
-    monkeypatch.setattr(live_module, "Engine", _DummyEngine)
-
     runner = LiveRunner(
         strategy_cls=None,
         instruments=[],
-        md_front="tcp://legacy-md-front",
-        broker_id="legacy-broker",
-        user_id="legacy-user",
-        gateway_options={
-            "md_front": "tcp://explicit-md-front",
-            "broker_id": "explicit-broker",
-            "user_id": "explicit-user",
-        },
+        broker="ctp",
+        gateway_options=options,
     )
 
-    assert runner.gateway_options["md_front"] == "tcp://explicit-md-front"
-    assert runner.gateway_options["broker_id"] == "explicit-broker"
-    assert runner.gateway_options["user_id"] == "explicit-user"
-    assert runner.md_front == "tcp://explicit-md-front"
-    assert runner.broker_id == "explicit-broker"
-    assert runner.user_id == "explicit-user"
+    assert runner.gateway_options == options
+    assert runner.gateway_options is not options
+    assert runner._build_gateway_kwargs() == options
+    assert not hasattr(runner, "md_front")
+
+
+@pytest.mark.parametrize(
+    "legacy",
+    ["md_front", "td_front", "broker_id", "user_id", "password", "app_id", "auth_code"],
+)
+def test_live_runner_rejects_removed_ctp_top_level_args(legacy: str) -> None:
+    """CTP 连接参数已从顶层移除, 再传就是未知参数."""
+    kwargs: Any = {legacy: "x"}
+    with pytest.raises(TypeError, match=legacy):
+        LiveRunner(strategy_cls=None, instruments=[], broker="ctp", **kwargs)
+    with pytest.raises(TypeError, match=legacy):
+        run_live(strategy_cls=None, instruments=[], broker="ctp", **kwargs)
+
+
+def test_live_runner_requires_broker() -> None:
+    """Broker 没有默认值: 三个来源都没写时报错并列出可用名字."""
+    with pytest.raises(ValueError, match="需要指定 broker") as exc:
+        LiveRunner(strategy_cls=None, instruments=[])
+    assert "ctp" in str(exc.value)
+    assert "replay" in str(exc.value)
+
+
+def test_broker_label_prefers_broker_then_trader_side() -> None:
+    """成对指定时取交易侧名字: 它会进 client_order_id 前缀."""
+    label = LiveRunner._resolve_broker_label
+    assert label("ctp", None, None) == "ctp"
+    assert label(None, "replay", "middleware") == "middleware"
+    assert label(" ", "replay", None) == "replay"
 
 
 def test_live_runner_builds_strategy_instance_from_class() -> None:

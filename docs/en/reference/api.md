@@ -4,6 +4,7 @@ This API documentation covers the core classes and methods of AKQuant.
 
 Quick links:
 
+*   [run_live broker selection and connection settings](#live-broker-options)
 *   [run_live broker-live semantics](#live-broker-semantics)
 *   [run_live live history preload](#live-preload-history)
 *   [run_live live timezone, sessions and post-close grace](#live-timezone-sessions)
@@ -1124,6 +1125,42 @@ Tick data object.
     *   In contrast, the `BarAggregator` the gateway uses internally for `freq` aggregation (synthesizing bars from ticks) consumes the **raw cumulative volume** (constructed with `volume_is_cumulative=True`, and the aggregator does its own diff-and-sum). This split is intentional — don't "fix" it into per-trade volume, or the aggregated volume will be cut in half.
     *   **Known trade-off**: when a process starts mid-session, the first frame received for a symbol has no prior cumulative value to diff against, so the real per-trade volume can't be derived; `Tick.volume` is recorded as `0` in that case (meaning "unknown", not the cumulative value masquerading as per-trade). If a strategy has defensive logic like "skip if `volume == 0`", it will also skip each symbol's very first tick.
 *   `symbol`: Instrument symbol.
+
+### `akquant.run_live` (choosing a broker and its connection settings) {: #live-broker-options }
+
+`broker` has **no default**: pass either `broker` (one broker supplying both market data and trading) or the `market_broker` / `trader_broker` pair. Passing none raises `ValueError` listing the registered names.
+
+Broker-specific connection settings always go into `gateway_options`; `run_live` has no broker-specific top-level arguments. Keys of the built-in `ctp` broker:
+
+| Key | Meaning | Required |
+| :--- | :--- | :--- |
+| `md_front` | Market-data front address | Yes |
+| `td_front` | Trading front address | The six trading keys: give none (market data only) or all |
+| `broker_id` | Futures company code (BrokerID) | Same |
+| `user_id` | Investor account | Same |
+| `password` | Password | Same |
+| `app_id` | AppID for terminal authentication | Same |
+| `auth_code` | Terminal authentication code | Same |
+
+```python
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=instruments,
+    broker="ctp",
+    trading_mode="broker_live",
+    gateway_options={
+        "md_front": "tcp://...",
+        "td_front": "tcp://...",
+        "broker_id": "9999",
+        "user_id": "YOUR_USER_ID",
+        "password": "YOUR_PASSWORD",
+        "app_id": "simnow_client_test",
+        "auth_code": "0000000000000000",
+    },
+)
+```
+
+Giving only some of the six trading keys raises `ValueError` naming the missing ones: SimNow defaults are not filled in for you, and the trading channel is never silently skipped.
 
 ### `akquant.run_live` (broker live semantics) {: #live-broker-semantics }
 

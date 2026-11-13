@@ -103,7 +103,8 @@ The typical use is running one strategy under different error policies on each s
 ```python
 run_backtest(data=data, strategy=MyStrategy,
              strategy_runtime_config={"error_mode": "raise"})
-run_live(strategy_cls=MyStrategy, instruments=instruments,
+run_live(strategy_cls=MyStrategy, instruments=instruments, broker="ctp",
+         gateway_options=ctp_options,
          strategy_runtime_config={"error_mode": "continue"})
 ```
 
