@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.89] - 2026-11-14
+
+> **规则版本 2.4.1**：把订单对象直接传给 `cancel_order` 的策略（如 `for o in self.get_open_orders(): self.cancel_order(o)`），回测结果会变——此前撤单不生效、订单照常挂着或成交，现在会被撤掉。其余策略的回测结果不变（本版的性能改动逐值不变）。
+> 本版含破坏性变更：移除 `miniqmt` / `ptrade` 占位接口、`run_live` 的 CTP 参数移入 `gateway_options` 且 `broker` 不再有默认值、费率模板 `cn_stock_miniqmt` 改名 `cn_stock_standard`，详见下文。
+
 ### Removed
 - **移除内置的 `miniqmt` 与 `ptrade` 券商接口（破坏性变更）**。这两个接口一直是占位实现：不连接真实柜台，下单只在内存里记一笔，从未具备实盘能力；加之 2026 年下半年起多家券商已停止个人客户的 miniQMT 接入，继续保留只会让人误以为可用。
     - `run_live(broker="miniqmt")`、`run_live(broker="ptrade")` 以及 `create_gateway_bundle` 的这两个名字不再可用，会报未知 broker。
@@ -19,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **同一个 `Engine` 跑完一次后改配置再跑，策略仍按旧配置算**：策略上下文里的风控配置与合约表是首次回调时的快照，再次 `run()` 不刷新，第二次运行里 `ctx.risk_config`、可用买入力（`ctx.buying_power`）等仍按第一次运行时的配置。现在每次 `run()` 开始时刷新。只影响手工复用 `Engine` 的用法；`run_backtest` 每次新建引擎，不受影响。
 
 ### Changed
-- **回测提速：用到指标、持仓较多或下单较多的策略明显变快，回测结果不变**（规则版本不变）。空策略本来就快，慢的是下面四处，现已分别处理：
+- **回测提速：用到指标、持仓较多或下单较多的策略明显变快，回测结果不变**。空策略本来就快，慢的是下面四处，现已分别处理：
     - `self.I(PrecomputedIndicator(...))` 的逐 bar 取值不再每次构造 pandas 时间对象并调用 `Series.asof`，改为在整数时间戳数组上定位。两个指标的策略每根 bar 从约 48 微秒降到约 18 微秒。顺带修正：时间索引精度比纳秒粗（如秒级）而查询时刻带零头时，此前会取到 NaN，现在取到前一个值。
     - 账户指标（权益、占用保证金等）在一根 bar 上原先要把全部持仓遍历五遍，现在输入没变就复用上一次的结果；没有在途订单时不再做撮合前的资金推演，有在途订单时也推迟到真有订单成交才做。`get_account()` 里的 `frozen_cash` 改为策略读到时才算（数值不变）。100 个持仓只持有不交易的回测每根 bar 从约 115 微秒降到约 30 微秒。
     - 持仓均价表只在成交或拆股后重建，不再每根 bar 重算。分批建仓、持有很多批次的策略（7200 批）每根 bar 从约 85 微秒降到约 27 微秒。
