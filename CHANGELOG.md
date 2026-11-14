@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - 删除 `MiniQMTMarketGateway`、`MiniQMTTraderGateway`、`PTradeMarketGateway`、`PTradeTraderGateway` 四个类，以及模块 `akquant.gateway.miniqmt`、`akquant.gateway.ptrade`、`akquant.gateway.brokers.miniqmt`、`akquant.gateway.brokers.ptrade`。
     - 内置的实盘柜台接口现在只有 `ctp`（期货），另有 `replay` 用于回放；A 股等其他柜台请通过 `register_broker` 注册自定义 broker 接入。
 
+### Fixed
+- **`cancel_order` 传订单对象时悄悄不撤单**：`for o in self.get_open_orders(): self.cancel_order(o)` 这种写法此前不生效——订单对象被转成一串描述文字当作订单号，引擎找不到这个号也不提示，订单一直挂着。现在订单对象取其 `id` 正常撤单；回测与实盘同一入口，都已修正。此前这样写的策略，订单现在会真的被撤掉，回测结果会随之变化。
+- `cancel_order` / `cancel_group` 收到认不出的入参（`None`、数字、列表等）时抛 `TypeError` 并说明可接受的类型，不再转成字符串去撤一个不存在的订单。`cancel_group` 传订单对象同样报错，并提示改用 `cancel_order`。
+
 ### Changed
 - **回测提速：用到指标、持仓较多或下单较多的策略明显变快，回测结果不变**（规则版本不变）。空策略本来就快，慢的是下面四处，现已分别处理：
     - `self.I(PrecomputedIndicator(...))` 的逐 bar 取值不再每次构造 pandas 时间对象并调用 `Series.asof`，改为在整数时间戳数组上定位。两个指标的策略每根 bar 从约 48 微秒降到约 18 微秒。顺带修正：时间索引精度比纳秒粗（如秒级）而查询时刻带零头时，此前会取到 NaN，现在取到前一个值。

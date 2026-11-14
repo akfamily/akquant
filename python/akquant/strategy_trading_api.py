@@ -1,7 +1,7 @@
 from collections import deque
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union, cast
 
-from .akquant import OrderStatus, OrderType, PositionEffect, TimeInForce
+from .akquant import Order, OrderStatus, OrderType, PositionEffect, TimeInForce
 from .config import bare_slippage_error
 
 if TYPE_CHECKING:
@@ -153,15 +153,49 @@ def _attach_broker_options(strategy: Any, order_id: str, order: Any) -> None:
         return
 
 
+def _resolve_cancel_order_id(order_id: Any) -> str:
+    """把 cancel_order 的入参换成订单号.
+
+    认不出的类型报错: 以前一律 ``str()``, 订单对象会变成一串描述文字被当成订单号
+    去撤, 引擎找不到这个号也不提示, 订单一直挂着。
+    """
+    if isinstance(order_id, str):
+        return order_id
+    if isinstance(order_id, OrderReceipt):
+        return order_id.primary
+    if isinstance(order_id, Order):
+        return str(order_id.id)
+    raise TypeError(
+        "cancel_order 接受订单号(str)、下单回执(OrderReceipt)或订单对象(Order), "
+        f"收到 {type(order_id).__name__}"
+    )
+
+
 def cancel_order(strategy: Any, order_id: Any) -> None:
-    """取消指定订单（经执行后端）；order_id 可为 str 或 OrderReceipt（取 .primary）."""
-    strategy.execution.cancel_order(str(getattr(order_id, "primary", order_id)))
+    """取消指定订单（经执行后端）.
+
+    order_id 可为订单号、OrderReceipt（取 .primary）或 Order 对象（取 .id）。
+    """
+    strategy.execution.cancel_order(_resolve_cancel_order_id(order_id))
 
 
 def cancel_group(strategy: Any, group_id: Any) -> None:
     """按 group_id（或 OrderReceipt）撤销一个逻辑委托的全部腿（经执行后端）."""
     execution = strategy.execution
-    gid = str(getattr(group_id, "group_id", group_id))
+    if isinstance(group_id, str):
+        gid = group_id
+    elif isinstance(group_id, OrderReceipt):
+        gid = group_id.group_id
+    elif isinstance(group_id, Order):
+        raise TypeError(
+            "cancel_group 接受 group_id(str) 或下单回执(OrderReceipt); "
+            "订单对象不带 group_id, 撤单笔订单请用 cancel_order(order)"
+        )
+    else:
+        raise TypeError(
+            "cancel_group 接受 group_id(str) 或下单回执(OrderReceipt), "
+            f"收到 {type(group_id).__name__}"
+        )
     cancel_group_method = getattr(execution, "cancel_group", None)
     if callable(cancel_group_method):
         cancel_group_method(gid)

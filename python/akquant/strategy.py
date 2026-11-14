@@ -3286,7 +3286,8 @@ class Strategy:
         取消指定订单.
 
         Args:
-            order_id: 订单 ID，接受 str | OrderReceipt（传 OrderReceipt 时取 .primary）
+            order_id: 订单 ID，接受 str | OrderReceipt（取 .primary）| Order（取 .id，
+                如 get_open_orders() 返回的订单对象）；其他类型抛 TypeError
         """
         _cancel_order_impl(self, order_id)
 
