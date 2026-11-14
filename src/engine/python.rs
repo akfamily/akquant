@@ -1868,6 +1868,7 @@ impl Engine {
         }
         self.run_instruments = Some(run_instruments);
         let pipeline_result = pipeline.run(self, py, strategy);
+        self.execution_model.flush_run_summary();
         self.run_instruments = None;
         self.account_metrics_memo_enabled = false;
         self.account_metrics_memo = None;

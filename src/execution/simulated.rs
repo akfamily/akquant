@@ -94,6 +94,10 @@ pub struct SimulatedExecutionClient {
     slice_tracking_timestamp: Option<i64>,
     attempted_same_cycle_order_ids: HashSet<String>,
     deferred_same_cycle_order_ids: HashSet<String>,
+    /// 本次运行里被延后的同周期订单笔数。多标的策略一次回测可达数千笔, 逐条告警会
+    /// 淹没日志: 只有第一笔按 WARNING 输出(带完整订单上下文), 其余降为 DEBUG,
+    /// 运行结束时汇总一条(见 `flush_run_summary`)。
+    deferred_same_cycle_total: u64,
     /// 在 tick/定时器回调里下的订单(见 [`ExecutionClient::mark_created_off_bar`])。
     /// 同一时刻、同品种的带区间 bar 在它们之后处理, 其 OHLC 来自
     /// `(interval_start, timestamp]`, 早于下单时刻, 故不由这根 bar 撮合。
@@ -176,6 +180,12 @@ impl SimulatedExecutionClient {
         )
     }
 
+    fn deferred_same_cycle_summary(total: u64) -> String {
+        format!(
+            "Deferred {total} same-cycle orders in this run until cross-symbol reduce-first orders finished in their slice (only the first was logged at WARNING; the rest are at DEBUG)"
+        )
+    }
+
     fn rebuild_futures_matcher(&mut self) {
         self.matchers.insert(
             AssetType::Futures,
@@ -229,6 +239,7 @@ impl SimulatedExecutionClient {
             created_off_bar_ids: HashSet::new(),
             last_interval_bar_ts: HashMap::new(),
             deferred_same_cycle_order_ids: HashSet::new(),
+            deferred_same_cycle_total: 0,
             auctions: HashMap::new(),
             zero_volume_auction_warned: HashSet::new(),
         }
@@ -658,10 +669,14 @@ impl SimulatedExecutionClient {
                     self.attempted_same_cycle_order_ids
                         .insert(order_snapshot.id.clone());
                     if first_defer {
-                        log::warn!(
-                            "{}",
-                            Self::deferred_same_cycle_order_warning(&order_snapshot, event_time)
-                        );
+                        self.deferred_same_cycle_total += 1;
+                        let message =
+                            Self::deferred_same_cycle_order_warning(&order_snapshot, event_time);
+                        if self.deferred_same_cycle_total == 1 {
+                            log::warn!("{message}");
+                        } else {
+                            log::debug!("{message}");
+                        }
                     }
                     continue;
                 }
@@ -1159,6 +1174,13 @@ impl ExecutionClient for SimulatedExecutionClient {
             None => {
                 log::warn!("{}", Self::ignored_unknown_cancel_warning(order_id));
             }
+        }
+    }
+
+    fn flush_run_summary(&mut self) {
+        let total = std::mem::take(&mut self.deferred_same_cycle_total);
+        if total > 1 {
+            log::warn!("{}", Self::deferred_same_cycle_summary(total));
         }
     }
 
@@ -2604,6 +2626,20 @@ mod tests {
     }
 
     #[test]
+    fn test_flush_run_summary_resets_deferred_counter() {
+        // 同一个撮合客户端可跨多次 run() 复用: 汇总后计数清零, 下一次运行重新从首笔
+        // 告警起算。
+        let mut sim = SimulatedExecutionClient::new();
+        sim.deferred_same_cycle_total = 5;
+        sim.flush_run_summary();
+        assert_eq!(sim.deferred_same_cycle_total, 0);
+        assert!(
+            SimulatedExecutionClient::deferred_same_cycle_summary(5)
+                .starts_with("Deferred 5 same-cycle orders in this run")
+        );
+    }
+
+    #[test]
     fn test_deferred_same_cycle_order_warning_includes_order_context() {
         let mut order = create_test_order(
             "MSFT",
@@ -2763,6 +2799,32 @@ mod tests {
                 .contains("Insufficient available position")
         );
         assert!(sim.orders.is_empty());
+    }
+
+    #[test]
+    fn test_terminal_order_in_queue_is_skipped_and_dropped() {
+        // 队列里已终结的订单(同一次撮合里前一个事件刚成交/被撤、尚未清理)不能再撮合:
+        // 没有回报, 调用结束后被清出队列。
+        for status in [
+            OrderStatus::Cancelled,
+            OrderStatus::Filled,
+            OrderStatus::Rejected,
+            OrderStatus::Expired,
+        ] {
+            let mut order = create_test_order(
+                "AAPL",
+                crate::model::OrderSide::Buy,
+                crate::model::OrderType::Market,
+                Decimal::from(100),
+                None,
+            );
+            order.status = status;
+            let (sim, events) =
+                run_stock_order_at_100(order, Decimal::from(50000), Decimal::ZERO, Decimal::ZERO);
+            assert!(events.is_empty(), "{status:?}: {events:?}");
+            assert!(sim.orders.is_empty(), "{status:?}");
+            assert!(sim.order_queue.is_empty(), "{status:?}");
+        }
     }
 
     #[test]
