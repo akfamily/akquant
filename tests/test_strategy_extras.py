@@ -5455,7 +5455,7 @@ def test_strategy_rebalance_positions_rejects_when_short_is_disallowed() -> None
         def capabilities(self) -> dict:
             return {
                 "broker_live": True,
-                "broker_name": "miniqmt",
+                "broker_name": "fake_a",
                 "account_mode": "margin",
                 "supports_short_sell": False,
             }

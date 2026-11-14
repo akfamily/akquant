@@ -44,6 +44,9 @@ pub trait ExecutionClient: Send + Sync {
     /// 处理市场事件并返回执行报告
     fn on_event(&mut self, event: &Event, ctx: &EngineContext) -> Vec<Event>;
 
+    /// 一次 `Engine::run()` 结束时调用: 输出本次运行攒下的汇总日志并清零计数。
+    fn flush_run_summary(&mut self) {}
+
     /// 在一个时间片结束时补充处理延迟的 same-cycle 订单。
     fn finalize_timestamp(&mut self, _events: &[Event], _ctx: &EngineContext) -> Vec<Event> {
         Vec::new()

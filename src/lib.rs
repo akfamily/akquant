@@ -22,6 +22,7 @@ pub mod order_manager;
 pub mod order_ledger;
 pub mod pipeline;
 mod portfolio;
+mod revision;
 mod risk;
 pub mod settlement;
 pub mod signal_port;

@@ -142,7 +142,8 @@ def main() -> None:
     run_live(
         strategy_cls=DemoLiveStrategy,
         instruments=instruments,
-        md_front=MD_FRONT,
+        broker="ctp",
+        gateway_options={"md_front": MD_FRONT},
         use_aggregator=False,  # Set to True for 1-minute bars
         cash=1_000_000,
         show_progress=False,

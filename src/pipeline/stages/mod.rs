@@ -21,10 +21,11 @@ mod tests {
     use crate::engine::strategy_handler::{PyStrategy, StrategyHandle};
     use crate::model::{
         AssetType, Bar, Instrument, InstrumentEnum, Order, OrderSide, OrderStatus, OrderType,
-        StockInstrument, TimeInForce,
+        StockInstrument, TimeInForce, Trade,
     };
     use crate::pipeline::processor::Processor;
     use pyo3::prelude::*;
+    use rust_decimal::Decimal;
     use rust_decimal_macros::dec;
     use std::collections::HashMap;
     use std::sync::Arc;
@@ -45,6 +46,283 @@ mod tests {
                 sellable_after_days: 1,
             }),
         }
+    }
+
+    fn cache_test_trade(symbol: &str, side: OrderSide, quantity: Decimal, price: Decimal) -> Trade {
+        Trade {
+            id: "t".to_string(),
+            order_id: "o".to_string(),
+            symbol: symbol.to_string(),
+            side,
+            position_effect: Default::default(),
+            quantity,
+            price,
+            commission: dec!(1),
+            timestamp: 1,
+            bar_index: 0,
+            owner_strategy_id: None,
+        }
+    }
+
+    /// 账户指标缓存与均价表缓存: 每改动一种输入后, 取到的都必须与现算的一致。
+    /// (命中缓存时 debug 构建还会在 Engine 内部再核对一次。)
+    #[test]
+    fn account_caches_follow_every_input_change() {
+        pyo3::Python::initialize();
+
+        let mut engine = Engine::new();
+        for symbol in ["A", "B"] {
+            engine
+                .instruments
+                .insert(symbol.to_string(), create_instrument(symbol));
+        }
+        engine.account_metrics_memo_enabled = true;
+        engine.state.portfolio.cash = dec!(100000);
+
+        let fresh = |engine: &Engine| {
+            let prices = engine.last_prices.read().unwrap();
+            crate::account::calculate_account_metrics(
+                &engine.state.portfolio,
+                &prices,
+                &engine.instruments,
+                &engine.state.order_manager.trade_tracker,
+                &engine.risk_manager.config,
+            )
+        };
+        let expected_entry = |engine: &Engine| -> HashMap<String, Decimal> {
+            engine
+                .state
+                .portfolio
+                .positions
+                .iter()
+                .filter(|(_, q)| !q.is_zero())
+                .map(|(s, _)| {
+                    let tracker = &engine.state.order_manager.trade_tracker;
+                    (s.clone(), tracker.get_average_price(s))
+                })
+                .collect()
+        };
+        macro_rules! check {
+            ($what:expr) => {{
+                // 连取两次: 第二次必然走缓存
+                for round in 0..2 {
+                    assert_eq!(
+                        engine.current_account_metrics(),
+                        fresh(&engine),
+                        "账户指标 {} 第 {} 次",
+                        $what,
+                        round
+                    );
+                    assert_eq!(
+                        *engine.build_position_entry_prices(),
+                        expected_entry(&engine),
+                        "均价表 {} 第 {} 次",
+                        $what,
+                        round
+                    );
+                }
+            }};
+        }
+        let buy = |engine: &mut Engine, symbol: &str, quantity: Decimal, price: Decimal| {
+            let trade = cache_test_trade(symbol, OrderSide::Buy, quantity, price);
+            engine.state.order_manager.trade_tracker.process_trade(
+                &trade,
+                Decimal::ONE,
+                None,
+                None,
+                dec!(100000),
+            );
+            engine.state.portfolio.adjust_position(symbol, quantity);
+            engine.state.portfolio.adjust_cash(-quantity * price);
+        };
+
+        check!("初始");
+        buy(&mut engine, "A", dec!(100), dec!(10));
+        check!("首次买入(尚无价格)");
+        engine
+            .last_prices
+            .write()
+            .unwrap()
+            .insert("A".to_string(), dec!(11));
+        engine.prices_revision.bump();
+        check!("有了价格");
+        let equity_before = engine.current_account_metrics().equity;
+        engine
+            .last_prices
+            .write()
+            .unwrap()
+            .insert("A".to_string(), dec!(12));
+        engine.prices_revision.bump();
+        check!("价格变动");
+        assert_eq!(
+            engine.current_account_metrics().equity - equity_before,
+            dec!(100),
+            "价格变动必须反映到权益上"
+        );
+        // 同一标的再买一批: 持仓数量与批次都变
+        buy(&mut engine, "A", dec!(100), dec!(20));
+        check!("加仓");
+        assert_eq!(
+            engine.build_position_entry_prices().get("A"),
+            Some(&dec!(15)),
+            "加仓后均价必须重算"
+        );
+        // 只动现金(分红、利息、手续费): 持仓表与批次都不变
+        engine.state.portfolio.adjust_cash(dec!(-5));
+        check!("现金变动");
+        // 只动持仓表不动批次(到期交割、公司行为直接改持仓)
+        engine
+            .last_prices
+            .write()
+            .unwrap()
+            .insert("B".to_string(), dec!(3));
+        engine.prices_revision.bump();
+        check!("无持仓标的有了价格");
+        engine.state.portfolio.adjust_position("B", dec!(50));
+        check!("新增标的持仓");
+        // 拆股: 批次价格与数量换算
+        engine
+            .state
+            .order_manager
+            .trade_tracker
+            .on_split("A", dec!(2));
+        check!("拆股");
+        assert_eq!(
+            engine.build_position_entry_prices().get("A"),
+            Some(&dec!(7.5)),
+            "拆股后均价必须重算"
+        );
+        // 整个状态被换掉(恢复存档): 新状态与旧状态各算各的
+        let saved = engine.state.order_manager.trade_tracker.clone();
+        buy(&mut engine, "A", dec!(100), dec!(30));
+        check!("存档后继续交易");
+        engine.state.order_manager.trade_tracker = saved;
+        check!("换回存档时的批次");
+        assert_eq!(
+            engine.build_position_entry_prices().get("A"),
+            Some(&dec!(7.5)),
+            "换回存档后均价必须回到存档时的值"
+        );
+        // 缓存只在 run() 期间启用: 关掉后不读也不写
+        engine.account_metrics_memo_enabled = false;
+        engine.account_metrics_memo = None;
+        check!("停用缓存");
+        assert!(engine.account_metrics_memo.is_none());
+    }
+
+    /// 期货保证金账户的权益含浮动盈亏, 浮动盈亏按持仓批次算: 批次变了(这里模拟恢复
+    /// 存档——持仓表、现金、价格都没动, 只有批次换了)账户指标必须重算。
+    #[test]
+    fn account_metrics_memo_follows_inventory_for_futures() {
+        pyo3::Python::initialize();
+
+        let mut engine = Engine::new();
+        engine.instruments.insert(
+            "IF".to_string(),
+            Instrument {
+                asset_type: AssetType::Futures,
+                inner: InstrumentEnum::Futures(crate::model::instrument::FuturesInstrument {
+                    symbol: "IF".to_string(),
+                    multiplier: dec!(300),
+                    margin_ratio: dec!(0.1),
+                    tick_size: dec!(0.2),
+                    expiry_date: None,
+                    settlement_type: None,
+                    settlement_price: None,
+                }),
+            },
+        );
+        engine.risk_manager.config.account_mode = "margin".to_string();
+        engine.account_metrics_memo_enabled = true;
+        engine.state.portfolio.cash = dec!(1000000);
+        engine.state.portfolio.adjust_position("IF", dec!(2));
+        engine
+            .last_prices
+            .write()
+            .unwrap()
+            .insert("IF".to_string(), dec!(4000));
+        engine.prices_revision.bump();
+
+        let open = |engine: &mut Engine, price: Decimal| {
+            let trade = cache_test_trade("IF", OrderSide::Buy, dec!(2), price);
+            engine.state.order_manager.trade_tracker.process_trade(
+                &trade,
+                dec!(300),
+                None,
+                None,
+                dec!(1000000),
+            );
+        };
+        open(&mut engine, dec!(3900));
+        let at_3900 = engine.current_account_metrics();
+        assert_eq!(at_3900.unrealized_pnl, dec!(60000));
+        assert_eq!(engine.current_account_metrics(), at_3900);
+
+        // 换成另一份批次(开仓价 3950): 浮动盈亏应为 (4000-3950)*2*300
+        engine.state.order_manager.trade_tracker = crate::analysis::TradeTracker::new();
+        open(&mut engine, dec!(3950));
+        assert_eq!(engine.current_account_metrics().unrealized_pnl, dec!(30000));
+    }
+
+    /// 冻结资金 = 在途订单成交后多占的保证金。已有持仓的保证金不算在内: 这部分取自
+    /// 调用方传入的账户指标, 而不是在函数里重算。
+    #[test]
+    fn frozen_cash_is_margin_added_by_open_orders() {
+        pyo3::Python::initialize();
+
+        let mut engine = Engine::new();
+        engine.instruments.insert(
+            "IF".to_string(),
+            Instrument {
+                asset_type: AssetType::Futures,
+                inner: InstrumentEnum::Futures(crate::model::instrument::FuturesInstrument {
+                    symbol: "IF".to_string(),
+                    multiplier: dec!(300),
+                    margin_ratio: dec!(0.1),
+                    tick_size: dec!(0.2),
+                    expiry_date: None,
+                    settlement_type: None,
+                    settlement_price: None,
+                }),
+            },
+        );
+        engine.state.portfolio.cash = dec!(10000000);
+        engine.state.portfolio.adjust_position("IF", dec!(2));
+        engine
+            .last_prices
+            .write()
+            .unwrap()
+            .insert("IF".to_string(), dec!(4000));
+        engine.prices_revision.bump();
+
+        let held_margin = engine.current_account_metrics().used_margin;
+        assert_eq!(held_margin, dec!(240000)); // 2 手 * 4000 * 300 * 0.1
+
+        // 没有在途订单: 0
+        assert_eq!(engine.current_frozen_cash(&[], held_margin), dec!(0));
+
+        // 再买 3 手: 多占 3 * 4000 * 300 * 0.1
+        let mut buy = Order::test_new("o1", "IF", OrderSide::Buy, OrderType::Market, dec!(3));
+        buy.status = OrderStatus::New;
+        assert_eq!(
+            engine.current_frozen_cash(std::slice::from_ref(&buy), held_margin),
+            dec!(360000)
+        );
+
+        // 已成交 1 手的部分成交单: 只算剩下的 2 手
+        buy.status = OrderStatus::PartiallyFilled;
+        buy.filled_quantity = dec!(1);
+        assert_eq!(
+            engine.current_frozen_cash(std::slice::from_ref(&buy), held_margin),
+            dec!(240000)
+        );
+
+        // 已终结的订单不占用
+        buy.status = OrderStatus::Cancelled;
+        assert_eq!(
+            engine.current_frozen_cash(std::slice::from_ref(&buy), held_margin),
+            dec!(0)
+        );
     }
 
     #[test]

@@ -4,6 +4,7 @@
 
 快速跳转：
 
+*   [run_live 选择 broker 与连接参数](#live-broker-options)
 *   [run_live broker_live 执行语义](#live-broker-semantics)
 *   [run_live 实盘历史预热](#live-preload-history)
 *   [run_live 实盘时区、交易时段与收盘宽限](#live-timezone-sessions)
@@ -273,7 +274,7 @@ def run_from_checkpoint(
 *   T+1 范围说明：当前 `t_plus_one` 仍是运行级/市场级开关，不支持按 `strategy_id` 分层配置。
 *   `analyzer_plugins`: 可选 Analyzer 插件列表。插件接收 `on_start/on_bar/on_trade/on_finish` 生命周期回调，结果汇总到 `result.analyzer_outputs`。
 *   `on_event`: 可选事件回调。不传时内部使用 no-op 回调并保持阻塞返回语义；传入时可实时消费事件。
-*   `broker_profile`: 可选 broker 参数模板，用于快速注入费率/滑点/最小手数/T+1 等默认值，显式参数优先（滑点同理：要覆盖模板里的滑点须显式传 `slippage={"type": "zero"}` 或其他策略字典，不传或传 `None` 时模板滑点生效）。内置模板：`cn_stock_miniqmt`、`cn_stock_t1_low_fee`、`cn_stock_sim_high_slippage`。
+*   `broker_profile`: 可选 broker 参数模板，用于快速注入费率/滑点/最小手数/T+1 等默认值，显式参数优先（滑点同理：要覆盖模板里的滑点须显式传 `slippage={"type": "zero"}` 或其他策略字典，不传或传 `None` 时模板滑点生效）。内置模板：`cn_stock_standard`、`cn_stock_t1_low_fee`、`cn_stock_sim_high_slippage`。
 
 **fill_policy 推荐示例（主路径）：**
 
@@ -1032,7 +1033,8 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
     *   `liquidate_unmentioned=True` 时，会将未出现在目标字典中的现有持仓目标设为 `0`。
     *   执行顺序为先卖后买，减少现金约束导致的调仓失败。
     *   `rebalance_tolerance` 按组合市值比例跳过小偏差，降低无效换手。
-*   `cancel_order(order_id: str)`: 撤销指定订单。
+*   `cancel_order(order_id: str | OrderReceipt | Order)`: 撤销指定订单。可传订单号、下单返回的 `OrderReceipt`（取首腿）或订单对象（取其 `id`）；其他类型抛 `TypeError`。
+*   `cancel_group(group_id: str | OrderReceipt)`: 按 `group_id` 撤销一个逻辑委托拆出的全部腿。传订单对象会抛 `TypeError`，撤单笔订单请用 `cancel_order`。
 *   `cancel_all_orders(symbol)`: 取消指定标的的所有挂单。如果不指定 `symbol`，则取消所有挂单。
 *   `place_oco(first_order_id, second_order_id, group_id=None) -> str`: 创建 OCO 订单组。组内任一订单成交后，另一订单会被自动撤单。
 *   `place_bracket(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...) -> str`: 创建 Bracket 订单。先提交进场单，进场成交后自动提交止损/止盈；当止损与止盈同时存在时会自动绑定 OCO。
@@ -1191,6 +1193,42 @@ Tick 数据对象。
     *   与之相对，网关内部用于 `freq` 聚合（tick 合成 bar）的 `BarAggregator` 吃的是**原始累计量**（构造时声明 `volume_is_cumulative=True`，由聚合器自己差分求和）——这是刻意的分工，不要把它当成 bug "修" 成单笔量，否则聚合量会被腰斩。
     *   **已知代价**：进程盘中启动时，某 symbol 收到的第一帧行情因为没有上一次累计量可比对，换算不出真实单笔量，此时 `Tick.volume` 记为 `0`（表示"未知"，而非误用累计量冒充单笔量）。若策略里有「`volume == 0` 就跳过」之类的防御逻辑，会连带跳过每个 symbol 的第一笔行情。
 *   `symbol`: 标的代码。
+
+### `akquant.run_live`（选择 broker 与连接参数） {: #live-broker-options }
+
+`run_live` 的 `broker` **没有默认值**：要么传 `broker`（由它同时提供行情与交易），要么同时传 `market_broker` 与 `trader_broker`；都不传会抛 `ValueError` 并列出当前可用的名字。
+
+各 broker 自己的连接参数一律经 `gateway_options` 传入，`run_live` 顶层不再有任何 broker 专属参数。内置 `ctp` 的键：
+
+| 键 | 含义 | 是否必填 |
+| :--- | :--- | :--- |
+| `md_front` | 行情前置地址 | 必填 |
+| `td_front` | 交易前置地址 | 交易通道六项：要么都不给（只接行情），要么全给 |
+| `broker_id` | 期货公司代码（BrokerID） | 同上 |
+| `user_id` | 投资者账号 | 同上 |
+| `password` | 密码 | 同上 |
+| `app_id` | 终端认证的 AppID | 同上 |
+| `auth_code` | 终端认证码 | 同上 |
+
+```python
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=instruments,
+    broker="ctp",
+    trading_mode="broker_live",
+    gateway_options={
+        "md_front": "tcp://...",
+        "td_front": "tcp://...",
+        "broker_id": "9999",
+        "user_id": "YOUR_USER_ID",
+        "password": "YOUR_PASSWORD",
+        "app_id": "simnow_client_test",
+        "auth_code": "0000000000000000",
+    },
+)
+```
+
+交易通道六项只给了一部分时会抛 `ValueError` 并指出缺哪几项：不会替你补 SimNow 仿真环境的默认值，也不会因为缺一项就悄悄不建交易通道。
 
 ### `akquant.run_live`（broker_live 执行语义） {: #live-broker-semantics }
 

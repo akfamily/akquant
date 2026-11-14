@@ -94,11 +94,11 @@ class CTPTraderAdapter:
     def __init__(
         self,
         front_url: str,
-        broker_id: str = "9999",
-        user_id: str = "",
-        password: str = "",
-        auth_code: str = "0000000000000000",
-        app_id: str = "simnow_client_test",
+        broker_id: str,
+        user_id: str,
+        password: str,
+        auth_code: str,
+        app_id: str,
         execution_semantics_mode: str = "strict",
     ) -> None:
         """Initialize CTP trader adapter."""

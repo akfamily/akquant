@@ -1045,7 +1045,7 @@ AKQuant 当前的订单语义已经不再是单纯的 `side`，而是 `side + po
 对不支持显式开平或做空的 broker，AKQuant 会在下单前直接给出明确错误，而不是静默降级。
 
 *   **撤单 (Cancel Order)**:
-    *   `self.cancel_order(order_id)`: 撤销指定订单。
+    *   `self.cancel_order(order_id)`: 撤销指定订单。可传订单号、下单返回的 `OrderReceipt`，或 `get_open_orders()` 返回的订单对象；传其他类型会抛 `TypeError`。
     *   `self.cancel_group(group_id)`: 按 `group_id` 撤销一个逻辑委托拆出的全部腿。
     *   `self.cancel_all_orders()`: 撤销当前所有未成交订单。
 

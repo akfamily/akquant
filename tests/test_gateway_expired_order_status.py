@@ -13,8 +13,6 @@ from akquant.gateway.broker_event_adapter import map_order_snapshot
 from akquant.gateway.broker_models import UnifiedOrderSnapshot, UnifiedOrderStatus
 from akquant.gateway.ctp_adapter import CTPTraderAdapter
 from akquant.gateway.mapper import create_default_mapper
-from akquant.gateway.miniqmt import MiniQMTTraderGateway
-from akquant.gateway.ptrade import PTradeTraderGateway
 from akquant.live._payload_utils import is_terminal_status
 
 
@@ -56,7 +54,6 @@ def test_default_status_map_recognizes_expired_text() -> None:
 
 
 def test_builtin_brokers_treat_expired_as_terminal() -> None:
-    """三个内置 broker 的终态判定要与核心口径一致."""
-    for cls in (CTPTraderAdapter, MiniQMTTraderGateway, PTradeTraderGateway):
-        adapter: Any = cls.__new__(cls)
-        assert adapter._is_terminal_status(UnifiedOrderStatus.EXPIRED) is True
+    """内置 broker 的终态判定要与核心口径一致."""
+    adapter: Any = CTPTraderAdapter.__new__(CTPTraderAdapter)
+    assert adapter._is_terminal_status(UnifiedOrderStatus.EXPIRED) is True

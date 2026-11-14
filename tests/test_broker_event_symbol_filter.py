@@ -292,7 +292,7 @@ def test_is_known_order_exception_allows_through() -> None:
 def test_runner_subscribed_symbol_set_normalizes_and_caches() -> None:
     """``_subscribed_symbol_set``: 从 instruments 派生归一化集合并只建一次."""
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner.instruments = cast(
         Any,
         [
@@ -329,7 +329,7 @@ def test_dropped_counts_are_reported_together() -> None:
 def test_runner_dispatches_own_subscribed_symbol_order() -> None:
     """8/17 事故防回归: 小写登记 -> 归一化大写集合, 柜台推大写回报仍派发到策略."""
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner.instruments = cast(Any, [SimpleNamespace(symbol="000012.sz")])
     runner._init_broker_bridge_state()
     strategy = _Strat()

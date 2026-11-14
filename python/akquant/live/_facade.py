@@ -47,15 +47,8 @@ def run_live(
         Dict[str, Union[Type[Strategy], Strategy, Callable[[Any, Bar], None]]]
     ] = None,
     indicators: Optional[Sequence[Union[Type[Indicator], Indicator]]] = None,
-    md_front: str = "",
-    td_front: Optional[str] = None,
-    broker_id: str = "",
-    user_id: str = "",
-    password: str = "",
-    app_id: str = "",
-    auth_code: str = "",
     use_aggregator: bool = True,
-    broker: str = "ctp",
+    broker: Optional[str] = None,
     market_broker: Optional[str] = None,
     trader_broker: Optional[str] = None,
     trading_mode: str = "paper",
@@ -122,8 +115,10 @@ def run_live(
     :param cash: Initial cash (default 1,000,000).
     :param show_progress: Whether to show a progress bar.
     :param duration: Optional run duration (e.g. ``"1m"``, ``"30s"``).
-    :param broker: Broker supplying **both** market data and trading (default
-        ``"ctp"``). Leave ``market_broker`` / ``trader_broker`` unset to use it.
+    :param broker: Broker supplying **both** market data and trading, e.g.
+        ``"ctp"`` or ``"replay"``. There is no default: pass either ``broker``
+        or the ``market_broker`` / ``trader_broker`` pair. Connection settings
+        of the chosen broker go into ``gateway_options``.
     :param market_broker: Market-data source, overriding ``broker`` for that side.
         Must be given together with ``trader_broker``; passing only one raises
         ``ValueError``. When both are given, ``broker`` is not used at all.
@@ -347,13 +342,6 @@ def run_live(
         strategy_loader_options=strategy_loader_options,
         strategy_id=strategy_id,
         strategies_by_slot=strategies_by_slot,
-        md_front=md_front,
-        td_front=td_front,
-        broker_id=broker_id,
-        user_id=user_id,
-        password=password,
-        app_id=app_id,
-        auth_code=auth_code,
         use_aggregator=use_aggregator,
         broker=broker,
         market_broker=market_broker,

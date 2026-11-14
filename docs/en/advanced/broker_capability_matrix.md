@@ -9,8 +9,6 @@ This page is currently maintained in Chinese first.
   - [protocols.py](https://github.com/akfamily/akquant/blob/main/python/akquant/gateway/protocols.py)
   - [broker_runtime.py](https://github.com/akfamily/akquant/blob/main/python/akquant/gateway/broker_runtime.py)
   - [brokers/ctp/adapter.py](https://github.com/akfamily/akquant/blob/main/python/akquant/gateway/brokers/ctp/adapter.py)
-  - [brokers/miniqmt/stub.py](https://github.com/akfamily/akquant/blob/main/python/akquant/gateway/brokers/miniqmt/stub.py)
-  - [brokers/ptrade/stub.py](https://github.com/akfamily/akquant/blob/main/python/akquant/gateway/brokers/ptrade/stub.py)
 - Related docs:
   - [Custom Broker Registry](custom_broker_registry.md)
   - [Custom Broker Production Checklist](custom_broker_production_checklist.md)

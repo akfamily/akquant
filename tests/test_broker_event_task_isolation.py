@@ -427,6 +427,7 @@ def test_real_construction_wires_matching_prefix(
     runner = LiveRunner(
         strategy_cls=None,
         instruments=[],
+        broker="ctp",
         session_tag="task_42",
     )
 
@@ -458,6 +459,7 @@ def test_run_live_facade_forwards_session_tag(monkeypatch: pytest.MonkeyPatch) -
     run_live(
         strategy_cls=None,
         instruments=[],
+        broker="ctp",
         session_tag="task_facade",
     )
 
@@ -483,5 +485,6 @@ def test_live_runner_rejects_invalid_session_tag_via_real_init(
         LiveRunner(
             strategy_cls=None,
             instruments=[],
+            broker="ctp",
             session_tag="bad-tag",
         )

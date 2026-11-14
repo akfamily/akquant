@@ -21,7 +21,7 @@
 本示例与 ch04_comparison.py 的交易逻辑、参数、数据源完全一致，
 只把 AKQuant 策略入口从类风格换成函数式：
 
-1. 嵌套类 AKStrategy 的属性 -> ctx 属性（在 initialize 中赋值）
+1. 嵌套类 AKStrategy.on_start 里声明的指标 -> 在 initialize 中用 ctx.I() 声明
 2. AKStrategy.on_bar 方法 -> 模块级 on_bar(ctx, bar) 函数
 3. strategy=AKStrategy -> strategy=on_bar + initialize=initialize
 
@@ -42,7 +42,7 @@ from typing import Any
 import akquant as aq
 import numpy as np
 import pandas as pd
-from akquant import Bar
+from akquant import Bar, PrecomputedIndicator
 
 
 # 模拟数据生成 (为了方便演示，不依赖外部文件)
@@ -162,37 +162,29 @@ def run_backtrader_backtest(df: pd.DataFrame) -> None:
 # ==============================================================================
 def initialize(ctx: Any) -> None:
     """
-    初始化均线参数，等价于类风格 AKStrategy 的 __init__.
+    声明两条均线，等价于类风格 AKStrategy 的 on_start.
 
-    关键差异：函数式没有类体，warmup_period 必须在这里挂到 ctx 上。
-    引擎会取 ctx.warmup_period 与 run_backtest(warmup_period=...) 的较大值，
-    所以在此赋值即可生效。
-
-    注意：引擎还有一路“按指标调用自动推断 warmup”的机制，但它靠 AST 解析策略
-    类体实现；函数式下被解析的是引擎内部的 FunctionalStrategy 而非本文件的
-    on_bar，推断结果恒为 0。因此函数式必须像这样显式赋值，不能依赖自动推断。
+    ctx.I() 声明预计算指标：框架在数据加载后把整段均线一次算完，
+    on_bar 里用 [0] 读当前这根 Bar 的值。
     """
-    ctx.ma_short = 5
-    ctx.ma_long = 20
-    ctx.warmup_period = 20
+    ctx.ma5 = ctx.I(
+        PrecomputedIndicator("ma5", lambda df: df["close"].rolling(5).mean()),
+        name="ma5",
+    )
+    ctx.ma20 = ctx.I(
+        PrecomputedIndicator("ma20", lambda df: df["close"].rolling(20).mean()),
+        name="ma20",
+    )
 
 
 def on_bar(ctx: Any, bar: Bar) -> None:
     """核心交易逻辑，等价于类风格的 on_bar；self 全部换成 ctx."""
     symbol = bar.symbol
-    # 两条均线最长只用到最近 ma_long 根收盘价，取 ma_long 根即可，与 warmup_period 一致
-    closes = ctx.get_history(count=ctx.ma_long, symbol=symbol, field="close")
-    if len(closes) < ctx.ma_long:
+    # 这里直接用当前 Bar 收盘后的均线值产生信号，订单在下一根 Bar 开盘成交
+    ma5, ma20 = ctx.ma5[0], ctx.ma20[0]
+    # 前 19 根 Bar 的 20 日均线还算不出来（NaN）
+    if ma5 is None or ma20 is None or ma5 != ma5 or ma20 != ma20:
         return
-
-    # 为了避免未来函数，我们使用 [:-1] 切片，仅使用截止到昨天的数据
-    # 或者，如果我们在收盘后交易（日线级别通常假设次日开盘成交），可以使用当前值
-    # 这里为了演示方便，直接使用当前值计算信号，但在真实交易中要注意信号产生的
-    # 时机
-
-    # 计算均线
-    ma5 = closes[-ctx.ma_short :].mean()
-    ma20 = closes[-ctx.ma_long :].mean()
 
     pos = ctx.get_position(symbol)
 

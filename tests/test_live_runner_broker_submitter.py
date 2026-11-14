@@ -25,7 +25,7 @@ def test_live_runner_submitter_checks_idempotency_and_maps() -> None:
             self.errors.append((source, payload))
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()
@@ -59,7 +59,7 @@ def test_live_runner_submitter_forwards_duplicate_error(caplog: Any) -> None:
             self.errors.append((source, payload))
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "ptrade"
+    runner.broker = "fake_b"
     runner._init_broker_bridge_state()
     runner._sync_order_id_mapping("coid-dup", "b-coid-dup")
     runner._broker_order_states["b-coid-dup"] = {"status": "Submitted"}
@@ -115,7 +115,7 @@ def test_live_runner_submit_order_supports_buy_and_sell_side() -> None:
             self.errors.append((source, payload))
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()
@@ -162,7 +162,7 @@ def test_live_runner_submit_order_forwards_position_effect() -> None:
             self.errors.append((source, payload))
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()
@@ -368,7 +368,7 @@ def test_live_runner_submitter_respects_gateway_capabilities() -> None:
 
         def get_capabilities(self) -> BrokerCapability:
             return BrokerCapability(
-                broker_name="miniqmt",
+                broker_name="fake_a",
                 broker_live=True,
                 client_order_id=True,
                 order_type=True,
@@ -386,7 +386,7 @@ def test_live_runner_submitter_respects_gateway_capabilities() -> None:
             self.errors.append((source, payload))
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()
@@ -444,7 +444,7 @@ def test_live_runner_injects_execution_capabilities() -> None:
             return None
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "ptrade"
+    runner.broker = "fake_b"
     runner._init_broker_bridge_state()
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()
@@ -479,7 +479,7 @@ def test_live_runner_does_not_inject_removed_broker_aliases() -> None:
             return None
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "ptrade"
+    runner.broker = "fake_b"
     runner._init_broker_bridge_state()
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()
@@ -510,7 +510,7 @@ def test_live_runner_submitter_binds_owner_strategy_id_mapping() -> None:
             self.errors.append((source, payload))
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()

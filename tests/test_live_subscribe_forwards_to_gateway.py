@@ -1,7 +1,7 @@
 """实盘 subscribe() 必须真正下发到行情网关.
 
 ``MarketGateway`` 协议早已定义 ``subscribe(symbols)``, 各 broker 网关(ctp /
-replay / miniqmt / ptrade)也都实现了它, 但 ``LiveRunner`` 从不调用——订阅链路
+replay)也都实现了它, 但 ``LiveRunner`` 从不调用——订阅链路
 只接了一半: ``instruments`` 进得去, ``Strategy.subscribe()`` 出不来。于是用户在
 ``on_start`` 里 subscribe 一个标的时既订不到行情, 也只能收到一条告警。
 
@@ -53,7 +53,7 @@ class _RecordingMarketGateway:
         """no-op."""
 
     def subscribe(self, symbols: Sequence[str]) -> None:
-        """整集替换当前订阅集(与 ctp/replay/miniqmt/ptrade 一致)."""
+        """整集替换当前订阅集(与 ctp/replay 一致)."""
         self.symbols = [str(s) for s in symbols]
         self.calls.append(list(self.symbols))
 

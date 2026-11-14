@@ -66,7 +66,7 @@ def main() -> None:
         initialize=primary_initialize,
         broker="ctp",
         trading_mode="paper",
-        md_front="tcp://127.0.0.1:12345",
+        gateway_options={"md_front": "tcp://127.0.0.1:12345"},
         use_aggregator=True,
         cash=1_000_000,
         show_progress=False,

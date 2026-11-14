@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.89] - 2026-11-14
+
+> **规则版本 2.4.1**：把订单对象直接传给 `cancel_order` 的策略（如 `for o in self.get_open_orders(): self.cancel_order(o)`），回测结果会变——此前撤单不生效、订单照常挂着或成交，现在会被撤掉。其余策略的回测结果不变（本版的性能改动逐值不变）。
+> 本版含破坏性变更：移除 `miniqmt` / `ptrade` 占位接口、`run_live` 的 CTP 参数移入 `gateway_options` 且 `broker` 不再有默认值、费率模板 `cn_stock_miniqmt` 改名 `cn_stock_standard`，详见下文。
+
+### Removed
+- **移除内置的 `miniqmt` 与 `ptrade` 券商接口（破坏性变更）**。这两个接口一直是占位实现：不连接真实柜台，下单只在内存里记一笔，从未具备实盘能力；加之 2026 年下半年起多家券商已停止个人客户的 miniQMT 接入，继续保留只会让人误以为可用。
+    - `run_live(broker="miniqmt")`、`run_live(broker="ptrade")` 以及 `create_gateway_bundle` 的这两个名字不再可用，会报未知 broker。
+    - 删除 `MiniQMTMarketGateway`、`MiniQMTTraderGateway`、`PTradeMarketGateway`、`PTradeTraderGateway` 四个类，以及模块 `akquant.gateway.miniqmt`、`akquant.gateway.ptrade`、`akquant.gateway.brokers.miniqmt`、`akquant.gateway.brokers.ptrade`。
+    - 内置的实盘柜台接口现在只有 `ctp`（期货），另有 `replay` 用于回放；A 股等其他柜台请通过 `register_broker` 注册自定义 broker 接入。
+
+### Fixed
+- **`cancel_order` 传订单对象时悄悄不撤单**：`for o in self.get_open_orders(): self.cancel_order(o)` 这种写法此前不生效——订单对象被转成一串描述文字当作订单号，引擎找不到这个号也不提示，订单一直挂着。现在订单对象取其 `id` 正常撤单；回测与实盘同一入口，都已修正。此前这样写的策略，订单现在会真的被撤掉，回测结果会随之变化。
+- `cancel_order` / `cancel_group` 收到认不出的入参（`None`、数字、列表等）时抛 `TypeError` 并说明可接受的类型，不再转成字符串去撤一个不存在的订单。`cancel_group` 传订单对象同样报错，并提示改用 `cancel_order`。
+- **同一个 `Engine` 跑完一次后改配置再跑，策略仍按旧配置算**：策略上下文里的风控配置与合约表是首次回调时的快照，再次 `run()` 不刷新，第二次运行里 `ctx.risk_config`、可用买入力（`ctx.buying_power`）等仍按第一次运行时的配置。现在每次 `run()` 开始时刷新。只影响手工复用 `Engine` 的用法；`run_backtest` 每次新建引擎，不受影响。
+
+### Changed
+- **回测提速：用到指标、持仓较多或下单较多的策略明显变快，回测结果不变**。空策略本来就快，慢的是下面四处，现已分别处理：
+    - `self.I(PrecomputedIndicator(...))` 的逐 bar 取值不再每次构造 pandas 时间对象并调用 `Series.asof`，改为在整数时间戳数组上定位。两个指标的策略每根 bar 从约 48 微秒降到约 18 微秒。顺带修正：时间索引精度比纳秒粗（如秒级）而查询时刻带零头时，此前会取到 NaN，现在取到前一个值。
+    - 账户指标（权益、占用保证金等）在一根 bar 上原先要把全部持仓遍历五遍，现在输入没变就复用上一次的结果；没有在途订单时不再做撮合前的资金推演，有在途订单时也推迟到真有订单成交才做。`get_account()` 里的 `frozen_cash` 改为策略读到时才算（数值不变）。100 个持仓只持有不交易的回测每根 bar 从约 115 微秒降到约 30 微秒。
+    - 持仓均价表只在成交或拆股后重建，不再每根 bar 重算。分批建仓、持有很多批次的策略（7200 批）每根 bar 从约 85 微秒降到约 27 微秒。
+    - 已平仓交易表此前每平一笔仓就整表复制一次，成交回报按订单号查找时还要逐个比较全部历史订单，累计开销随笔数平方增长；现在两者的单笔开销都与累计笔数无关。单标的 3.6 万笔订单的回测从约 31 秒降到约 5 秒。
+- **同周期订单被延后撮合的告警改为每次运行汇总**：多标的策略里，同一时间片先减仓后加仓的订单会被延后撮合，此前每笔一条 WARNING（`Deferred same-cycle order until ...`），一次回测可达数千条。现在每次运行只有第一笔按 WARNING 输出（仍带完整订单上下文），其余降为 DEBUG，运行结束时再输出一条汇总（`Deferred N same-cycle orders in this run ...`）。撮合行为不变。按这条告警的条数做统计或告警规则的，需要改读汇总里的笔数。
+- 教材第 4 章对比示例（`ch04_comparison.py` 及其函数式孪生）的 AKQuant 一侧改用 `self.I()` 预计算指标，回测结果不变。
+- 英文策略指南补上 `OrderReceipt`、`cancel_group` 与撤单入参的说明；中英文 API 参考补上 `cancel_group`。
+- `scripts/bench_engine_perbar.py` 新增 `indicators` / `holdings` / `accumulate` / `churn` 四个档位，对应上面四类开销；会下单的档位每轮核对订单确实成交。同时修正合成数据的时间戳：原先日线落在闭市时段，`positions` 档的建仓单从未成交，测到的并不是持仓路径。
+- **`run_live` 的 CTP 连接参数移入 `gateway_options`（破坏性变更）**。`run_live` 与 `LiveRunner` 顶层的 `md_front`、`td_front`、`broker_id`、`user_id`、`password`、`app_id`、`auth_code` 七个参数已删除，继续传会报 `TypeError`。键名不变，改放进 `gateway_options`：`run_live(..., broker="ctp", gateway_options={"md_front": ..., "td_front": ..., "broker_id": ..., "user_id": ..., "password": ..., "app_id": ..., "auth_code": ...})`。这样所有 broker 的连接参数走同一个入口，`broker`（用哪个接口）与 `broker_id`（CTP 的期货公司代码）也不再并排出现。
+- **`run_live` 的 `broker` 不再默认 `"ctp"`（破坏性变更）**。必须显式传 `broker`，或同时传 `market_broker` 与 `trader_broker`；都不传会报错并列出可用的名字。此前只传 `market_broker`/`trader_broker` 而不传 `broker` 的会话，`client_order_id` 的前缀由 `ctp-` 变为交易侧 broker 的名字。
+- **`broker="ctp"` 的交易通道参数收紧（破坏性变更）**。`td_front`、`broker_id`、`user_id`、`password`、`app_id`、`auth_code` 六项要么都不给（只接行情），要么全给；只给一部分会报错并指出缺哪几项。此前缺 `broker_id`、`app_id`、`auth_code` 时会悄悄使用 SimNow 仿真环境的值，缺 `td_front` 或 `user_id` 时会悄悄不建交易通道。连接 SimNow 请显式传 `broker_id="9999"`、`app_id="simnow_client_test"`、`auth_code="0000000000000000"`。
+- **A 股费率模板 `cn_stock_miniqmt` 改名为 `cn_stock_standard`（破坏性变更，不保留别名）**。模板参数不变（佣金 0.0003、最低 5 元、印花税 0.0005、过户费 0.00001、滑点 0.0002、成交量上限 0.2、一手 100 股、T+1），回测结果不受影响。继续传旧名会报错并提示新名字，把 `broker_profile="cn_stock_miniqmt"` 改成 `broker_profile="cn_stock_standard"` 即可。
+- README 重写：补充实盘与品种范围的说明，快速开始不再传交易日历（0.3.86 起中国时区已内置交易所日历，传与不传结果相同），中英文文档的快速开始同步修改；删除失效的报表示例链接。
+
 ## [0.3.88] - 2026-11-13
 
 ### Changed

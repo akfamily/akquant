@@ -1,4 +1,4 @@
-use crate::analysis::{ClosedTrade, TradeTracker};
+use crate::analysis::{AppendLog, ClosedTrade, TradeTracker};
 use crate::event::Event;
 use crate::history::HistoryBuffer;
 use crate::market::MarketModel;
@@ -18,7 +18,7 @@ use pyo3_stub_gen::derive::*;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock, RwLock, Weak};
 use uuid::Uuid;
 
 /// 引擎上下文 (Engine Context)
@@ -108,6 +108,36 @@ impl<'a> SessionView<'a> {
     }
 }
 
+/// 交给策略上下文的冻结资金(在途订单预占的资金)。
+pub enum FrozenCash {
+    /// 数值已定。
+    Known(f64),
+    /// 策略读到时再算(多数回调不读它), 结果与当场算相同: 用到的持仓表、在途订单
+    /// 是上下文本次更新拿到的快照, 价格表在回调期间不变。
+    Deferred(FrozenCashInputs),
+}
+
+/// 延后计算冻结资金所需、上下文自己没有的输入。
+pub struct FrozenCashInputs {
+    /// 当前持仓的占用保证金(账户指标里的 `used_margin`)。
+    pub base_used_margin: Decimal,
+    /// 引擎本次 `run()` 的合约表快照。
+    pub instruments: Arc<HashMap<String, Instrument>>,
+    pub stock_margin_ratio_override: Option<Decimal>,
+    /// debug 构建: 引擎当场算出的值, 取值时核对。
+    #[cfg(debug_assertions)]
+    pub expected: f64,
+}
+
+impl FrozenCash {
+    fn into_state(self) -> (Option<FrozenCashInputs>, OnceLock<f64>) {
+        match self {
+            FrozenCash::Known(value) => (None, OnceLock::from(value)),
+            FrozenCash::Deferred(inputs) => (Some(inputs), OnceLock::new()),
+        }
+    }
+}
+
 pub struct ContextInit {
     pub cash: Decimal,
     pub previous_cash: Decimal,
@@ -117,7 +147,7 @@ pub struct ContextInit {
     pub session: TradingSession,
     pub current_time: i64,
     pub active_orders: Arc<Vec<Order>>,
-    pub closed_trades: Arc<Vec<ClosedTrade>>,
+    pub closed_trades: AppendLog<ClosedTrade>,
     pub recent_trades: Vec<Trade>,
     pub recent_rejected_orders: Vec<Order>,
     pub recent_expired_orders: Vec<Order>,
@@ -135,7 +165,7 @@ pub struct ContextInit {
     pub account_unrealized_pnl: f64,
     pub account_maintenance_ratio: f64,
     pub account_short_market_value: f64,
-    pub account_frozen_cash: f64,
+    pub account_frozen_cash: FrozenCash,
     pub previous_account_equity: f64,
     pub previous_account_market_value: f64,
     pub previous_account_notional_value: f64,
@@ -183,7 +213,7 @@ pub struct ContextUpdate {
     pub session: TradingSession,
     pub current_time: i64,
     pub active_orders: Arc<Vec<Order>>,
-    pub closed_trades: Arc<Vec<ClosedTrade>>,
+    pub closed_trades: AppendLog<ClosedTrade>,
     pub recent_trades: Vec<Trade>,
     pub recent_rejected_orders: Vec<Order>,
     pub recent_expired_orders: Vec<Order>,
@@ -196,7 +226,7 @@ pub struct ContextUpdate {
     pub account_unrealized_pnl: f64,
     pub account_maintenance_ratio: f64,
     pub account_short_market_value: f64,
-    pub account_frozen_cash: f64,
+    pub account_frozen_cash: FrozenCash,
     pub previous_account_equity: f64,
     pub previous_account_market_value: f64,
     pub previous_account_notional_value: f64,
@@ -425,7 +455,7 @@ impl StrategyContext {
         self.account_unrealized_pnl = update.account_unrealized_pnl;
         self.account_maintenance_ratio = update.account_maintenance_ratio;
         self.account_short_market_value = update.account_short_market_value;
-        self.account_frozen_cash = update.account_frozen_cash;
+        (self.frozen_cash_inputs, self.frozen_cash_value) = update.account_frozen_cash.into_state();
         self.previous_account_equity = update.previous_account_equity;
         self.previous_account_market_value = update.previous_account_market_value;
         self.previous_account_notional_value = update.previous_account_notional_value;
@@ -496,7 +526,7 @@ pub struct StrategyContext {
     #[pyo3(get)]
     pub current_time: i64,
     // Do NOT expose closed_trades as a direct getter to avoid expensive cloning on every access
-    pub closed_trades: Arc<Vec<ClosedTrade>>,
+    pub closed_trades: AppendLog<ClosedTrade>,
     // Recent trades generated in the last step
     #[pyo3(get)]
     pub recent_trades: Vec<Trade>,
@@ -537,8 +567,10 @@ pub struct StrategyContext {
     pub account_maintenance_ratio: f64,
     #[pyo3(get)]
     pub account_short_market_value: f64,
-    #[pyo3(get)]
-    pub account_frozen_cash: f64,
+    /// 冻结资金: 延后计算时的输入(`None` 表示数值已定)与算出的数值, 见
+    /// [`FrozenCash`] 与 `account_frozen_cash` 取值器。
+    frozen_cash_inputs: Option<FrozenCashInputs>,
+    frozen_cash_value: OnceLock<f64>,
     #[pyo3(get)]
     pub previous_account_equity: f64,
     #[pyo3(get)]
@@ -571,6 +603,7 @@ pub struct StrategyContext {
 
 impl StrategyContext {
     pub fn new(init: ContextInit) -> Self {
+        let (frozen_cash_inputs, frozen_cash_value) = init.account_frozen_cash.into_state();
         StrategyContext {
             orders: Vec::new(),
             canceled_order_ids: Vec::new(),
@@ -605,7 +638,8 @@ impl StrategyContext {
             account_unrealized_pnl: init.account_unrealized_pnl,
             account_maintenance_ratio: init.account_maintenance_ratio,
             account_short_market_value: init.account_short_market_value,
-            account_frozen_cash: init.account_frozen_cash,
+            frozen_cash_inputs,
+            frozen_cash_value,
             previous_account_equity: init.previous_account_equity,
             previous_account_market_value: init.previous_account_market_value,
             previous_account_notional_value: init.previous_account_notional_value,
@@ -834,7 +868,7 @@ impl StrategyContext {
             position_entry_prices: Arc::new(entry_price_dec),
             session: session.unwrap_or(TradingSession::Continuous),
             current_time: current_time.unwrap_or(0),
-            closed_trades: Arc::new(closed_trades.unwrap_or_default()),
+            closed_trades: closed_trades.unwrap_or_default().into(),
             recent_trades: recent_trades.unwrap_or_default(),
             recent_rejected_orders: Vec::new(),
             recent_expired_orders: Vec::new(),
@@ -852,7 +886,8 @@ impl StrategyContext {
             account_unrealized_pnl: account_unrealized_pnl.unwrap_or(0.0),
             account_maintenance_ratio: account_maintenance_ratio.unwrap_or(0.0),
             account_short_market_value: 0.0,
-            account_frozen_cash: 0.0,
+            frozen_cash_inputs: None,
+            frozen_cash_value: OnceLock::from(0.0),
             previous_account_equity: previous_account_equity.unwrap_or(0.0),
             previous_account_market_value: previous_account_market_value.unwrap_or(0.0),
             previous_account_notional_value: previous_account_notional_value.unwrap_or(0.0),
@@ -1173,6 +1208,33 @@ impl StrategyContext {
     #[getter]
     fn get_closed_trades(&self) -> Vec<ClosedTrade> {
         self.closed_trades.to_vec()
+    }
+
+    /// 在途订单预占的资金。延后计算的情形下第一次读取时算出并记住。
+    #[getter]
+    fn get_account_frozen_cash(&self) -> f64 {
+        *self.frozen_cash_value.get_or_init(|| {
+            let Some(inputs) = &self.frozen_cash_inputs else {
+                return 0.0;
+            };
+            let prices = self.last_prices.read().expect("last_prices 读锁被污染");
+            let value = crate::account::frozen_cash(
+                &self.positions,
+                &self.active_orders_arc,
+                &prices,
+                &inputs.instruments,
+                inputs.stock_margin_ratio_override,
+                inputs.base_used_margin,
+            )
+            .to_f64()
+            .unwrap_or_default();
+            #[cfg(debug_assertions)]
+            debug_assert_eq!(
+                value, inputs.expected,
+                "延后计算的冻结资金与引擎当场算出的不一致"
+            );
+            value
+        })
     }
 
     #[getter]
@@ -1673,7 +1735,7 @@ mod tests {
             session: TradingSession::Continuous,
             current_time,
             active_orders: Arc::default(),
-            closed_trades: Arc::default(),
+            closed_trades: AppendLog::default(),
             recent_trades: Vec::new(),
             recent_rejected_orders: Vec::new(),
             recent_expired_orders: Vec::new(),
@@ -1691,7 +1753,7 @@ mod tests {
             account_unrealized_pnl: 0.0,
             account_maintenance_ratio: 0.0,
             account_short_market_value: 0.0,
-            account_frozen_cash: 0.0,
+            account_frozen_cash: FrozenCash::Known(0.0),
             previous_account_equity: 0.0,
             previous_account_market_value: 0.0,
             previous_account_notional_value: 0.0,

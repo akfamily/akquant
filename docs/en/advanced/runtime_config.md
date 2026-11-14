@@ -103,7 +103,8 @@ The typical use is running one strategy under different error policies on each s
 ```python
 run_backtest(data=data, strategy=MyStrategy,
              strategy_runtime_config={"error_mode": "raise"})
-run_live(strategy_cls=MyStrategy, instruments=instruments,
+run_live(strategy_cls=MyStrategy, instruments=instruments, broker="ctp",
+         gateway_options=ctp_options,
          strategy_runtime_config={"error_mode": "continue"})
 ```
 
@@ -201,7 +202,7 @@ Priority rule:
 
 | Template | Recommended Scenario | Main Characteristics | Typical Risk |
 |---|---|---|---|
-| `cn_stock_miniqmt` | General A-share simulation, baseline MiniQMT alignment | Default commission + stamp duty + transfer fee + minimum commission + 100-share lot | Can be optimistic under extreme impact conditions |
+| `cn_stock_standard` | General A-share simulation with typical retail-account fees | Default commission + stamp duty + transfer fee + minimum commission + 100-share lot | Can be optimistic under extreme impact conditions |
 | `cn_stock_t1_low_fee` | Low-fee account sensitivity tests, net-return stress checks | Lower commission/transfer fee and lower minimum commission | Can overestimate high-turnover strategy performance |
 | `cn_stock_sim_high_slippage` | Intraday impact/liquidity stress scenarios, robustness replay | Higher slippage and more conservative turnover assumptions | Can underestimate low-impact strategy performance |
 
@@ -209,13 +210,13 @@ Template parameter details (current built-in values):
 
 | Template | commission_rate | stamp_tax_rate | transfer_fee_rate | min_commission | slippage | volume_limit_pct | lot_size | t_plus_one |
 |---|---:|---:|---:|---:|---:|---:|---:|---|
-| `cn_stock_miniqmt` | 0.0003 | 0.0005 | 0.00001 | 5.0 | 0.0002 | 0.2 | 100 | True |
+| `cn_stock_standard` | 0.0003 | 0.0005 | 0.00001 | 5.0 | 0.0002 | 0.2 | 100 | True |
 | `cn_stock_t1_low_fee` | 0.0002 | 0.0005 | 0.000005 | 3.0 | 0.0001 | 0.25 | 100 | True |
 | `cn_stock_sim_high_slippage` | 0.0003 | 0.0005 | 0.00001 | 5.0 | 0.001 | 0.1 | 100 | True |
 
 > Stamp tax uses the rate in force since 2023-08-28, 0.05% (it was 0.1% before; the templates previously used the old rate). For data before 2023-08-28 pass `stamp_tax_rate=0.001`. All three templates enable T+1 (previously they did not, so same-day round trips were allowed); pass `t_plus_one=False` to turn it off.
 >
-> Since 0.3.74, `volume_limit_pct=0.25` of `cn_stock_t1_low_fee` actually takes effect (it was previously skipped by a default-value check). For `cn_stock_miniqmt` (0.2) and `cn_stock_sim_high_slippage` (0.1), capped fills are now also floored to whole lots by `lot_size`.
+> Since 0.3.74, `volume_limit_pct=0.25` of `cn_stock_t1_low_fee` actually takes effect (it was previously skipped by a default-value check). For `cn_stock_standard` (0.2) and `cn_stock_sim_high_slippage` (0.1), capped fills are now also floored to whole lots by `lot_size`.
 
 Quick example:
 

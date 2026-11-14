@@ -15,10 +15,10 @@
 
 ## A 股：用券商模板
 
-`broker_profile="cn_stock_miniqmt"` 的设置是：佣金 0.0003、最低 5 元，印花税 0.0005（只在卖出时收），过户费 0.00001，滑点 0.02%，`lot_size` 100，开 T+1，单笔成交不超过当根 bar 成交量的 20%（超出部分转为部分成交）。另外两个模板是 `cn_stock_t1_low_fee` 和 `cn_stock_sim_high_slippage`。显式传入的参数优先于模板。
+`broker_profile="cn_stock_standard"` 的设置是：佣金 0.0003、最低 5 元，印花税 0.0005（只在卖出时收），过户费 0.00001，滑点 0.02%，`lot_size` 100，开 T+1，单笔成交不超过当根 bar 成交量的 20%（超出部分转为部分成交）。另外两个模板是 `cn_stock_t1_low_fee` 和 `cn_stock_sim_high_slippage`。显式传入的参数优先于模板。
 
 ```json
-{"broker_profile": "cn_stock_miniqmt", "initial_cash": 1000000}
+{"broker_profile": "cn_stock_standard", "initial_cash": 1000000}
 ```
 
 - **印花税**：模板用的是 2023-08-28 起的现行税率 0.0005。回测在此之前的行情，要显式传 `"stamp_tax_rate": 0.001`。

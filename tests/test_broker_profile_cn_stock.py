@@ -7,7 +7,7 @@ import pytest
 from akquant import Bar, CurrentClose, Strategy, run_backtest
 
 SYMBOL = "PROFILE_T1"
-PROFILES = ["cn_stock_miniqmt", "cn_stock_t1_low_fee", "cn_stock_sim_high_slippage"]
+PROFILES = ["cn_stock_standard", "cn_stock_t1_low_fee", "cn_stock_sim_high_slippage"]
 
 
 def _bars() -> list[Bar]:
@@ -132,3 +132,11 @@ def test_metrics_unknown_attribute_points_to_metrics_df() -> None:
     result = _run()
     with pytest.raises(AttributeError, match="metrics_df"):
         _ = result.metrics.no_such_metric
+
+
+def test_old_profile_name_reports_rename() -> None:
+    """旧模板名 cn_stock_miniqmt 已改名, 报错要指出新名字."""
+    from akquant.backtest.engine import _resolve_broker_profile
+
+    with pytest.raises(ValueError, match="cn_stock_standard"):
+        _resolve_broker_profile("cn_stock_miniqmt")

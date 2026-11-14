@@ -18,7 +18,7 @@ Import these APIs from `akquant.gateway`:
 - `list_registered_brokers()`
 - `create_gateway_bundle(...)`
 
-Registered brokers are resolved first by `create_gateway_bundle`; built-in `ctp/miniqmt/ptrade` is used as fallback.
+Registered brokers are resolved first by `create_gateway_bundle`; built-in `ctp` is used as fallback.
 
 ## 3. Builder Signature
 

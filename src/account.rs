@@ -1,11 +1,69 @@
 use crate::analysis::TradeTracker;
-use crate::model::{AssetType, Instrument, OrderSide};
+use crate::model::{AssetType, Instrument, Order, OrderSide, OrderStatus};
 use crate::portfolio::Portfolio;
 use crate::risk::RiskConfig;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
+use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy, Default)]
+/// 该订单是否还占用资金: 未终结且有未成交数量。
+pub fn order_reserves_cash(order: &Order) -> bool {
+    matches!(
+        order.status,
+        OrderStatus::New | OrderStatus::Submitted | OrderStatus::PartiallyFilled
+    ) && order.quantity - order.filled_quantity > Decimal::ZERO
+}
+
+/// 在途订单预占的资金: 把每笔在途订单的未成交部分投影进持仓后, 占用保证金比当前
+/// 多出来的部分(不为负)。
+///
+/// `base_used_margin` 是当前持仓的占用保证金(同一价格表、同一比例下算出), 由调用方
+/// 传入, 这里只算投影后的那一遍。
+pub fn frozen_cash(
+    positions: &Arc<HashMap<String, Decimal>>,
+    active_orders: &[Order],
+    prices: &HashMap<String, Decimal>,
+    instruments: &HashMap<String, Instrument>,
+    stock_margin_ratio_override: Option<Decimal>,
+    base_used_margin: Decimal,
+) -> Decimal {
+    // 没有占用资金的在途订单时投影后的持仓与当前相同, 差值恒为 0。
+    if !active_orders.iter().any(order_reserves_cash) {
+        return Decimal::ZERO;
+    }
+    // 保证金只看持仓, 现金与可用持仓不参与。
+    let mut projected = Portfolio {
+        cash: Decimal::ZERO,
+        positions: Arc::clone(positions),
+        available_positions: Arc::default(),
+    };
+    for order in active_orders {
+        if !order_reserves_cash(order) {
+            continue;
+        }
+        let remaining = order.quantity - order.filled_quantity;
+        let current_pos = projected
+            .positions
+            .get(&order.symbol)
+            .copied()
+            .unwrap_or(Decimal::ZERO);
+        let next_pos = crate::model::project_position_after(
+            order.side,
+            order.position_effect,
+            current_pos,
+            remaining,
+        );
+        projected.adjust_position(&order.symbol, next_pos - current_pos);
+    }
+    let projected_used = projected.calculate_used_margin_with_stock_ratio(
+        prices,
+        instruments,
+        stock_margin_ratio_override,
+    );
+    (projected_used - base_used_margin).max(Decimal::ZERO)
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct AccountMetrics {
     pub equity: Decimal,
     pub market_value: Decimal,

@@ -21,7 +21,7 @@ def test_on_error_handler_raising_does_not_propagate(caplog: Any) -> None:
             raise ValueError("on_error itself blew up")
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "ptrade"
+    runner.broker = "fake_b"
     runner._init_broker_bridge_state()
 
     with caplog.at_level("WARNING", logger="akquant.gateway.live"):

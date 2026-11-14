@@ -484,4 +484,4 @@ The `examples/` directory contains more scripts demonstrating AKShare integratio
 
 *   **[46_broker_profile_demo.py](https://github.com/akfamily/akquant/blob/main/examples/46_broker_profile_demo.py)**:
     *   Demonstrates template injection with `run_backtest(..., broker_profile=...)` and prints effective fee/lot parameters at strategy startup.
-    *   Useful for quick alignment with built-ins such as `cn_stock_miniqmt`, `cn_stock_t1_low_fee`, and `cn_stock_sim_high_slippage`.
+    *   Useful for quick alignment with built-ins such as `cn_stock_standard`, `cn_stock_t1_low_fee`, and `cn_stock_sim_high_slippage`.

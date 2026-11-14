@@ -65,21 +65,21 @@ python examples/61_signal_platform_webhook.py
 
 ### 15.1.2 交易接口 (Gateway)
 
-`AKQuant` 通过适配器模式支持多种柜台接口，以便用同一套上层逻辑对接不同市场。其中 CTP (China Trading Platform) 是期货市场的标准接口，支持行情与交易链路；MiniQMT 是面向本地 A 股交易生态的适配接口入口，但当前仓库内置实现更偏向占位骨架与联调层，不应直接理解为已完成生产级实盘适配；PTrade 则是可接入券商量化终端的适配接口入口，其当前仓库内置实现同样更偏向占位骨架与联调层，不应直接理解为已完成生产级实盘适配。在实盘模式下，`DataFeed` 会切换为实时行情源，交易执行则由对应 broker gateway 负责。
+`AKQuant` 通过适配器模式对接柜台接口，以便用同一套上层逻辑对接不同市场。内置的是 CTP (China Trading Platform)，它是期货市场的标准接口，支持行情与交易链路；A 股等其他柜台没有内置适配，需要通过自定义 broker 接入。
 
 需要特别区分两层含义：
 
 1. `AKQuant` 提供的是统一交易框架与 adapter 接口；
 2. 某个 broker 是否真正支持 A 股集合竞价专用委托、新股/新债打新、券商特定价格类型与业务代码，取决于该 broker adapter 是否已经补齐对应柜台语义。
 
-因此，当前内置 `MiniQMT/PTrade` 不应被视为“开箱即用支持 A 股集合竞价与打新”的官方承诺；这类场景通常仍需通过自定义 broker 或增强现有 adapter 来落地。
+因此，A 股集合竞价专用委托、打新这类场景不在内置接口的范围内，需要通过自定义 broker 落地。
 
 CTP 交易链路支持 `execution_semantics_mode`：
 
 *   `strict`（默认，推荐生产）：终态仅由柜台订单回报确认。
 *   `compatible`：兼容旧行为，允许部分场景在本地提前推进终态。
 
-当内置网关不满足需求时，可以通过注册机制扩展自定义 broker，且注册 broker 会被工厂优先解析，再回退到内置 `ctp/miniqmt/ptrade`。
+当内置网关不满足需求时，可以通过注册机制扩展自定义 broker，且注册 broker 会被工厂优先解析，再回退到内置 `ctp`。
 
 ```python
 from akquant import DataFeed
@@ -186,7 +186,7 @@ run_live(
 1. **先跑 paper（模拟盘）**：同一套 `Strategy` 代码先以 `paper` 模式运行，确认信号、下单与日志链路无误，再切 `broker_live`。切勿跳过这一步直接实盘。
 2. **查询执行能力再下单**：实盘前用 `self.get_execution_capabilities()` 读取 `account_mode`、`supports_short_sell`、`position_effect` 等字段，据此决定是否启用做空、`close_today` 等语义，避免回测能跑、实盘被拒。
 3. **数据源切换**：把历史重放的 `DataFeed` 换成实时行情源，由对应 broker gateway 驱动。若策略逻辑依赖数据周期，用只读属性 `self.freq` 读取（回测由 `run_backtest(freq=)` 注入，实盘由行情网关声明，两侧口径统一），不要把周期写死或另传一份参数；网关未声明时它是 `None`，需显式处理。实盘历史缓冲默认是空的，启动后 `get_history` 要等会话内攒够才有值；用 `run_live(preload_history=...)` 在启动前灌入历史，首根实盘 bar 就能取到，`self.I()` 指标也会先回放历史再接着算实时（见《自定义指标指南》「实盘历史预热」）。不要用“先跑回测再接实盘”来拼历史，接缝处指标会跳变。只画图、不交易的指标写成 `aq.Indicator` 指标脚本，用 `run_live(indicators=[...])` 叠加，与回测 `run_backtest(indicators=[...])` 同一写法；指标点带各脚本自己的 `owner_strategy_id`，前端可按脚本区分主图/附图（见第 5 章 5.5.6）。
-4. **网关选型要清醒**：内置 `MiniQMT/PTrade` 当前更偏占位骨架与联调层，**不应视为已完成生产级 A 股适配**；集合竞价专用委托、打新等场景通常需自定义 broker 或增强 adapter（见 15.1.2 与《自定义 Broker 注册/生产接入清单》）。
+4. **网关选型要清醒**：内置的实盘柜台接口只有 CTP（期货）；A 股实盘需要自定义 broker，集合竞价专用委托、打新等场景同样要在自定义 broker 里实现（见 15.1.2 与《自定义 Broker 注册/生产接入清单》）。
 5. **成交语义从严**：CTP 链路使用 `execution_semantics_mode="strict"`（默认、推荐生产）——撤单/拒单/成交等**终态一律以柜台 `OnRtnOrder` 回报为准**，不要凭本地请求成功就推进状态（详见 15.2.2）。
 6. **风控前置必须开**：实盘务必显式配置 RMS 前置风控（单笔最大委托量、资金使用率、日内撤单次数、策略级止损），它是防"乌龙指"的最后一道防线（见 15.3）。
 7. **状态可恢复**：用 `save_checkpoint` 定期落盘、`run_from_checkpoint` 重启后续跑，保证宕机后"断点续传"（见 15.5.4、15.6.2）。

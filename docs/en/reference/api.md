@@ -4,6 +4,7 @@ This API documentation covers the core classes and methods of AKQuant.
 
 Quick links:
 
+*   [run_live broker selection and connection settings](#live-broker-options)
 *   [run_live broker-live semantics](#live-broker-semantics)
 *   [run_live live history preload](#live-preload-history)
 *   [run_live live timezone, sessions and post-close grace](#live-timezone-sessions)
@@ -169,7 +170,7 @@ def run_backtest(
 *   `risk_budget_mode` / `risk_budget_reset_daily`: Risk budget accounting mode and reset policy.
 *   `analyzer_plugins`: Optional analyzer plugin list. Plugins receive `on_start/on_bar/on_trade/on_finish` callbacks and final outputs are stored in `result.analyzer_outputs`.
 *   `on_event`: Optional stream callback. When omitted, an internal no-op callback keeps legacy blocking return semantics; when provided, runtime events are emitted.
-*   `broker_profile`: Optional broker template preset for quick defaults (fees/slippage/lot size/T+1); explicit arguments take precedence (for slippage too: to override the template's slippage you must pass an explicit `slippage={"type": "zero"}` or another policy dict; omitting it or passing `None` leaves the template's slippage in effect). Built-ins: `cn_stock_miniqmt`, `cn_stock_t1_low_fee`, `cn_stock_sim_high_slippage`.
+*   `broker_profile`: Optional broker template preset for quick defaults (fees/slippage/lot size/T+1); explicit arguments take precedence (for slippage too: to override the template's slippage you must pass an explicit `slippage={"type": "zero"}` or another policy dict; omitting it or passing `None` leaves the template's slippage in effect). Built-ins: `cn_stock_standard`, `cn_stock_t1_low_fee`, `cn_stock_sim_high_slippage`.
 
 **Recommended fill_policy examples (primary path):**
 
@@ -972,7 +973,8 @@ Note: if you do not pass an explicit `fill_mode` here, the framework defaults to
     *   Orders are submitted in sell-first then buy-second order to reduce cash-lock conflicts.
     *   `rebalance_tolerance` skips tiny drifts by portfolio-value ratio to reduce churn.
 *   `close_position(symbol)`: Close position for a specific instrument.
-*   `cancel_order(order_id: str)`: Cancel a specific order.
+*   `cancel_order(order_id: str | OrderReceipt | Order)`: Cancel a specific order. Accepts an order id, the `OrderReceipt` returned when placing the order (first leg), or an order object (its `id`); any other type raises `TypeError`.
+*   `cancel_group(group_id: str | OrderReceipt)`: Cancel every leg of one logical order. Passing an order object raises `TypeError`; use `cancel_order` for a single order.
 *   `cancel_all_orders(symbol)`: Cancel all pending orders for a specific instrument. If `symbol` is omitted, cancels all orders.
 *   `place_oco(first_order_id, second_order_id, group_id=None) -> str`: Create an OCO order group. Once one order is filled, the peer order is canceled automatically.
 *   `place_bracket(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...) -> str`: Create a bracket order. The entry order is submitted first, then stop-loss/take-profit exits are submitted after entry fill; if both exits exist, they are linked as OCO automatically.
@@ -1124,6 +1126,42 @@ Tick data object.
     *   In contrast, the `BarAggregator` the gateway uses internally for `freq` aggregation (synthesizing bars from ticks) consumes the **raw cumulative volume** (constructed with `volume_is_cumulative=True`, and the aggregator does its own diff-and-sum). This split is intentional — don't "fix" it into per-trade volume, or the aggregated volume will be cut in half.
     *   **Known trade-off**: when a process starts mid-session, the first frame received for a symbol has no prior cumulative value to diff against, so the real per-trade volume can't be derived; `Tick.volume` is recorded as `0` in that case (meaning "unknown", not the cumulative value masquerading as per-trade). If a strategy has defensive logic like "skip if `volume == 0`", it will also skip each symbol's very first tick.
 *   `symbol`: Instrument symbol.
+
+### `akquant.run_live` (choosing a broker and its connection settings) {: #live-broker-options }
+
+`broker` has **no default**: pass either `broker` (one broker supplying both market data and trading) or the `market_broker` / `trader_broker` pair. Passing none raises `ValueError` listing the registered names.
+
+Broker-specific connection settings always go into `gateway_options`; `run_live` has no broker-specific top-level arguments. Keys of the built-in `ctp` broker:
+
+| Key | Meaning | Required |
+| :--- | :--- | :--- |
+| `md_front` | Market-data front address | Yes |
+| `td_front` | Trading front address | The six trading keys: give none (market data only) or all |
+| `broker_id` | Futures company code (BrokerID) | Same |
+| `user_id` | Investor account | Same |
+| `password` | Password | Same |
+| `app_id` | AppID for terminal authentication | Same |
+| `auth_code` | Terminal authentication code | Same |
+
+```python
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=instruments,
+    broker="ctp",
+    trading_mode="broker_live",
+    gateway_options={
+        "md_front": "tcp://...",
+        "td_front": "tcp://...",
+        "broker_id": "9999",
+        "user_id": "YOUR_USER_ID",
+        "password": "YOUR_PASSWORD",
+        "app_id": "simnow_client_test",
+        "auth_code": "0000000000000000",
+    },
+)
+```
+
+Giving only some of the six trading keys raises `ValueError` naming the missing ones: SimNow defaults are not filled in for you, and the trading channel is never silently skipped.
 
 ### `akquant.run_live` (broker live semantics) {: #live-broker-semantics }
 

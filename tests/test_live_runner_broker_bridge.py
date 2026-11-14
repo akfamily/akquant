@@ -62,7 +62,7 @@ def test_live_runner_broker_bridge_dispatches_events() -> None:
             self.errors.append((source, payload))
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()
@@ -142,7 +142,7 @@ def test_live_runner_broker_bridge_forwards_errors(caplog: Any) -> None:
             self.errors.append((source, payload))
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "ptrade"
+    runner.broker = "fake_b"
     runner._init_broker_bridge_state()
     gateway = _DummyTraderGateway()
     strategy = _DummyErrorStrategy()
@@ -178,7 +178,7 @@ def test_live_runner_broker_bridge_deduplicates_events() -> None:
             self.orders.append(order)
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     strategy = _DummyStrategy()
     payload = SimpleNamespace(
@@ -257,7 +257,7 @@ def test_live_runner_broker_bridge_recovers_from_sync() -> None:
             return None
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "ptrade"
+    runner.broker = "fake_b"
     runner._init_broker_bridge_state()
     runner._broker_recovery_interval_sec = 0.05
     gateway = _DummyTraderGateway()
@@ -447,88 +447,10 @@ def test_live_runner_compatible_recovery_keeps_sync_failure_silent() -> None:
     assert broker_events == []
 
 
-def test_live_runner_init_normalizes_legacy_gateway_options(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """LiveRunner should fold legacy broker args into gateway_options at init."""
-
-    class _DummyDataFeed:
-        @staticmethod
-        def create_live() -> object:
-            return object()
-
-    class _DummyEngine:
-        pass
-
-    monkeypatch.setattr(live_module, "DataFeed", _DummyDataFeed)
-    monkeypatch.setattr(live_module, "Engine", _DummyEngine)
-
-    runner = LiveRunner(
-        strategy_cls=None,
-        instruments=[],
-        md_front="tcp://md-front",
-        broker_id="9999",
-        user_id="trader-a",
-        password="secret",
-        gateway_options={"recovery_mode": "strict", "custom": "value"},
-    )
-
-    assert runner.gateway_options == {
-        "recovery_mode": "strict",
-        "custom": "value",
-        "md_front": "tcp://md-front",
-        "broker_id": "9999",
-        "user_id": "trader-a",
-        "password": "secret",
-    }
-    assert runner.md_front == "tcp://md-front"
-    assert runner.broker_id == "9999"
-    assert runner.user_id == "trader-a"
-    assert runner.password == "secret"
-    assert runner._build_gateway_kwargs() == runner.gateway_options
-
-
-def test_live_runner_init_prefers_gateway_options_over_legacy_args(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Explicit gateway_options values should win over legacy init args."""
-
-    class _DummyDataFeed:
-        @staticmethod
-        def create_live() -> object:
-            return object()
-
-    class _DummyEngine:
-        pass
-
-    monkeypatch.setattr(live_module, "DataFeed", _DummyDataFeed)
-    monkeypatch.setattr(live_module, "Engine", _DummyEngine)
-
-    runner = LiveRunner(
-        strategy_cls=None,
-        instruments=[],
-        md_front="tcp://legacy-md-front",
-        broker_id="legacy-broker",
-        user_id="legacy-user",
-        gateway_options={
-            "md_front": "tcp://explicit-md-front",
-            "broker_id": "explicit-broker",
-            "user_id": "explicit-user",
-        },
-    )
-
-    assert runner.gateway_options["md_front"] == "tcp://explicit-md-front"
-    assert runner.gateway_options["broker_id"] == "explicit-broker"
-    assert runner.gateway_options["user_id"] == "explicit-user"
-    assert runner.md_front == "tcp://explicit-md-front"
-    assert runner.broker_id == "explicit-broker"
-    assert runner.user_id == "explicit-user"
-
-
 def test_live_runner_syncs_client_broker_order_id_mapping() -> None:
     """Sync id mapping from order, report and trade events."""
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
 
     runner._update_broker_state(
@@ -563,7 +485,7 @@ def test_live_runner_syncs_client_broker_order_id_mapping() -> None:
 def test_live_runner_cleans_mapping_on_terminal_status() -> None:
     """Cleanup active mapping when order enters terminal status."""
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
 
     runner._update_broker_state(
@@ -594,7 +516,7 @@ def test_live_runner_cleans_mapping_on_terminal_status() -> None:
 def test_closed_broker_order_ids_bounded_by_fifo_limit() -> None:
     """`_closed_broker_order_ids` 有界: 超过上限后不再无界增长."""
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     limit = live_module._CLOSED_ORDER_ID_LIMIT
 
@@ -608,7 +530,7 @@ def test_closed_broker_order_ids_bounded_by_fifo_limit() -> None:
 def test_closed_broker_order_ids_evicts_oldest_keeps_newest() -> None:
     """淘汰按插入序: 最老的 id 被挤出, 最新的一批仍留在集合里."""
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     limit = live_module._CLOSED_ORDER_ID_LIMIT
 
@@ -626,7 +548,7 @@ def test_closed_broker_order_ids_evicts_oldest_keeps_newest() -> None:
 def test_is_known_broker_order_true_for_recent_ids_after_eviction() -> None:
     """有界化不破坏 I-1 修复: 淘汰发生后, 最新一批终态单仍被认作本会话已知."""
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     limit = live_module._CLOSED_ORDER_ID_LIMIT
 
@@ -640,7 +562,7 @@ def test_is_known_broker_order_true_for_recent_ids_after_eviction() -> None:
 def test_close_order_mapping_repeated_terminal_does_not_duplicate_fifo_entry() -> None:
     """同一 broker_order_id 重复进终态不应在 FIFO 里堆积多份, 否则会提前挤掉旁的 id."""
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
 
     runner._close_order_mapping("c-dup", "b-dup")
@@ -677,7 +599,7 @@ def test_live_runner_attributes_trade_after_terminal_mapping_cleared() -> None:
             self.reports.append(report)
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     # 挂载集合只含 600008.SH, 与本委托的标的(000651.SZ)不同——标的判据必须
     # 判"外来", 归属判据才是唯一能救下事件的一层。
@@ -755,7 +677,7 @@ def test_live_runner_submitter_checks_idempotency_and_maps() -> None:
             self.errors.append((source, payload))
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()
@@ -790,7 +712,7 @@ def test_live_runner_submitter_forwards_duplicate_error(caplog: Any) -> None:
             self.errors.append((source, payload))
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "ptrade"
+    runner.broker = "fake_b"
     runner._init_broker_bridge_state()
     runner._sync_order_id_mapping("coid-dup", "b-coid-dup")
     runner._broker_order_states["b-coid-dup"] = {"status": "Submitted"}
@@ -846,7 +768,7 @@ def test_live_runner_submit_order_supports_buy_and_sell_side() -> None:
             self.errors.append((source, payload))
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()
@@ -893,7 +815,7 @@ def test_live_runner_submit_order_forwards_position_effect() -> None:
             self.errors.append((source, payload))
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()
@@ -1099,7 +1021,7 @@ def test_live_runner_submitter_respects_gateway_capabilities() -> None:
 
         def get_capabilities(self) -> BrokerCapability:
             return BrokerCapability(
-                broker_name="miniqmt",
+                broker_name="fake_a",
                 broker_live=True,
                 client_order_id=True,
                 order_type=True,
@@ -1117,7 +1039,7 @@ def test_live_runner_submitter_respects_gateway_capabilities() -> None:
             self.errors.append((source, payload))
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()
@@ -1175,7 +1097,7 @@ def test_live_runner_injects_execution_capabilities() -> None:
             return None
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "ptrade"
+    runner.broker = "fake_b"
     runner._init_broker_bridge_state()
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()
@@ -1210,7 +1132,7 @@ def test_live_runner_does_not_inject_removed_broker_aliases() -> None:
             return None
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "ptrade"
+    runner.broker = "fake_b"
     runner._init_broker_bridge_state()
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()
@@ -1634,7 +1556,7 @@ def test_live_runner_submitter_binds_owner_strategy_id_mapping() -> None:
             self.errors.append((source, payload))
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()
@@ -1668,7 +1590,7 @@ def test_live_runner_submitter_syncs_group_mapping() -> None:
             self.errors.append((source, payload))
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     gateway = _DummyTraderGateway()
     strategy = _DummyStrategy()
@@ -1687,7 +1609,7 @@ def test_live_runner_submitter_syncs_group_mapping() -> None:
 def test_live_runner_lookup_group_id_falls_back_to_broker_order_id() -> None:
     """Payload 无 client_order_id 时, 经 broker_order_id 反查再取 group_id."""
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     runner._sync_group_mapping("c1-open-2", "c1")
     runner._broker_to_client_order_ids["b2"] = "c1-open-2"
@@ -1713,7 +1635,7 @@ def test_live_runner_emits_order_and_trade_with_group_id() -> None:
             self.trades.append(trade)
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     runner._sync_group_mapping("coid-leg-2", "coid-root-1")
     strategy = _DummyStrategy()
@@ -1755,7 +1677,7 @@ def test_group_id_survives_terminal_cleanup_for_open_leg() -> None:
     client_order_id (_lookup_group_id 的 get(cid, cid) 兜底)。
     """
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
 
     # 2 腿组: 根腿 "root" 与反手 open 腿 "root-open-2", 均归组到 "root"。
@@ -1794,7 +1716,7 @@ def test_live_runner_emits_observable_broker_events_with_owner_strategy_id() -> 
             self.orders.append(order)
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     runner.on_broker_event = observed.append
     runner._client_to_strategy_ids["coid-obs-1"] = "beta"
@@ -1825,7 +1747,7 @@ def test_live_runner_logs_broker_event_observer_failures(caplog: Any) -> None:
             return None
 
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
     runner.on_broker_event = _observer
     runner._client_to_strategy_ids["coid-obs-2"] = "gamma"

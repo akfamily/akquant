@@ -1094,6 +1094,7 @@ fn run_day_close_settlement(engine: &mut Engine, py: Python<'_>, day: NaiveDate,
         .filter(|(d, _)| *d == day)
         .map(|(_, prices)| prices.clone());
     let latest_prices = close_prices.map(|prices| {
+        engine.prices_revision.bump();
         std::mem::replace(
             &mut *engine.last_prices.write().expect("last_prices 写锁被污染"),
             prices,
@@ -1104,6 +1105,7 @@ fn run_day_close_settlement(engine: &mut Engine, py: Python<'_>, day: NaiveDate,
 
     if let Some(latest) = latest_prices {
         *engine.last_prices.write().expect("last_prices 写锁被污染") = latest;
+        engine.prices_revision.bump();
     }
 
     engine.flush_stream_events(py);

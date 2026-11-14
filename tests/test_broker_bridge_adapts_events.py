@@ -105,7 +105,7 @@ def test_terminal_order_dispatch_still_backfills_request_fields() -> None:
     若适配发生在状态清理之后,side/quantity/price 会全部退化成 None。
     """
     runner = LiveRunner.__new__(LiveRunner)
-    runner.broker = "miniqmt"
+    runner.broker = "fake_a"
     runner._init_broker_bridge_state()
 
     request = UnifiedOrderRequest(
