@@ -1,10 +1,10 @@
+use super::append_log::AppendLog;
 use super::types::{ClosedTrade, TradePnL};
 use crate::history::SymbolHistory;
 use crate::model::{OrderSide, Trade};
 use rust_decimal::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TradeEntry {
@@ -213,7 +213,9 @@ pub struct TradeTracker {
     // (qty, price, commission, bar_idx, timestamp, tag, entry_portfolio_value)
     pub long_inventory: HashMap<String, VecDeque<TradeEntry>>,
     pub short_inventory: HashMap<String, VecDeque<TradeEntry>>,
-    pub closed_trades: Arc<Vec<ClosedTrade>>,
+    /// 已平仓交易, 只追加。策略上下文每个回调都拿一份快照, 所以用 [`AppendLog`]
+    /// (快照与追加的代价都与总笔数无关); 存档编码与原先的 `Arc<Vec<_>>` 相同。
+    pub closed_trades: AppendLog<ClosedTrade>,
     pub closed_trades_stats: Vec<(Decimal, Decimal, Decimal, bool)>, // (pnl, return_pct, bars, is_win)
 
     // Aggregate stats
@@ -235,6 +237,12 @@ pub struct TradeTracker {
     pub largest_win: Decimal,
     #[serde(default)]
     pub largest_loss: Decimal,
+
+    /// 持仓批次(`long_inventory` / `short_inventory`)的修订号: 成交、拆股改动批次
+    /// 后换新值。按批次算出的结果(持仓均价、期货浮动盈亏)可凭它判断是否需要
+    /// 重算。逐 bar 累计的 MAE / MFE 极值不算改动。不入存档。
+    #[serde(skip)]
+    inventory_revision: crate::revision::Revision,
 }
 
 impl TradeTracker {
@@ -242,7 +250,7 @@ impl TradeTracker {
         Self {
             long_inventory: HashMap::new(),
             short_inventory: HashMap::new(),
-            closed_trades: Arc::new(Vec::new()),
+            closed_trades: AppendLog::new(),
             closed_trades_stats: Vec::new(),
             total_pnl: Decimal::ZERO,
             total_commission: Decimal::ZERO,
@@ -257,7 +265,13 @@ impl TradeTracker {
             sum_closed_pnl: Decimal::ZERO,
             largest_win: Decimal::ZERO,
             largest_loss: Decimal::ZERO,
+            inventory_revision: crate::revision::Revision::fresh(),
         }
+    }
+
+    /// 持仓批次的修订号, 见字段说明。
+    pub fn inventory_revision(&self) -> crate::revision::Revision {
+        self.inventory_revision
     }
 
     /// 从 `closed_trades_stats` 重建 sum_closed_pnl / largest_win / largest_loss。
@@ -334,6 +348,7 @@ impl TradeTracker {
         if safe_ratio <= Decimal::ZERO {
             return;
         }
+        self.inventory_revision.bump();
         let ratio_f64 = safe_ratio.to_f64().unwrap_or(0.0);
         for queue in [
             self.long_inventory.get_mut(symbol),
@@ -410,6 +425,7 @@ impl TradeTracker {
         let timestamp = trade.timestamp;
         let tag = order_tag.unwrap_or("").to_string();
 
+        self.inventory_revision.bump();
         self.total_commission += comm;
 
         let mut remaining_qty = qty;
@@ -465,7 +481,7 @@ impl TradeTracker {
                             to_f64(price),
                         );
 
-                        Arc::make_mut(&mut self.closed_trades).push(ClosedTrade {
+                        self.closed_trades.push(ClosedTrade {
                             symbol: symbol.clone(),
                             entry_time: match_entry.timestamp,
                             exit_time: timestamp,
@@ -579,7 +595,7 @@ impl TradeTracker {
                         let (mae, mfe, max_dd_pct) =
                             closing_excursion(match_entry, histories.as_ref(), true, to_f64(price));
 
-                        Arc::make_mut(&mut self.closed_trades).push(ClosedTrade {
+                        self.closed_trades.push(ClosedTrade {
                             symbol: symbol.clone(),
                             entry_time: match_entry.timestamp,
                             exit_time: timestamp,

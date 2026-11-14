@@ -207,6 +207,21 @@ pub struct Engine {
     /// `py.detach()`/`allow_threads`,这条防线就会失效并造成永久死锁
     /// (std 的 RwLock 写锁请求会排队等待,不可重入)。
     pub(crate) last_prices: Arc<RwLock<HashMap<String, Decimal>>>,
+    /// `last_prices` 的修订号: **每个写 `last_prices` 的地方都要 `bump`**, 账户指标
+    /// 缓存([`AccountMetricsMemo`])靠它判断价格表有没有变。漏掉一处, 缓存就会
+    /// 返回旧价格下的权益。
+    pub(crate) prices_revision: crate::revision::Revision,
+    /// 最近一次算出的账户指标及其输入, 见 [`AccountMetricsMemo`]。
+    pub(crate) account_metrics_memo: Option<AccountMetricsMemo>,
+    /// 只在 `run()` 驱动管线期间为 true: 期间合约表、风控配置不会变(改它们的
+    /// pymethod 都要 `&mut Engine`, 而 `run()` 占着这个借用), 账户指标缓存才成立。
+    pub(crate) account_metrics_memo_enabled: bool,
+    /// 上一次建好的持仓均价表及其输入, 见 [`EntryPriceTable`]。
+    pub(crate) entry_price_table: Option<EntryPriceTable>,
+    /// 合约表的共享快照, 只在 `run()` 驱动管线期间存在(与
+    /// `account_metrics_memo_enabled` 同进同出)。期间合约表不变, 上下文可以拿它在
+    /// 回调里按需计算(冻结资金), 不必每根 bar 复制合约表。
+    pub(crate) run_instruments: Option<Arc<HashMap<String, Instrument>>>,
     pub(crate) instruments: HashMap<String, Instrument>,
     /// 会话级时段解析器；`run()` 开始时按 `session_config` 与时区构造（见
     /// [`Engine::ensure_session_resolver`]），配置或时区变化时置 `None` 以便重建。
@@ -436,9 +451,64 @@ pub struct PendingEnginePlans {
     )>,
 }
 
+/// 账户指标缓存: 一根 bar 上账户指标要取好几次(回调前、回调时、记权益点), 而两次
+/// 之间多数时候什么都没变。输入全部相同就直接复用上次的结果, 不再把持仓遍历一遍。
+///
+/// 输入的判等办法:
+/// - 现金: 按值比较;
+/// - 持仓表: 缓存自己握着一份 `Arc`, 指针相同即内容相同(有别的持有者时
+///   `Arc::make_mut` 一定另起一份, 不会原地改);
+/// - 最新价、持仓批次(期货浮动盈亏): 各自的修订号;
+/// - 合约表、风控配置: 只在 `run()` 期间启用缓存, 期间它们不变。
+pub(crate) struct AccountMetricsMemo {
+    cash: Decimal,
+    positions: Arc<HashMap<String, Decimal>>,
+    prices_revision: crate::revision::Revision,
+    inventory_revision: crate::revision::Revision,
+    metrics: AccountMetrics,
+}
+
+/// 持仓均价表缓存: 均价只由持仓表(哪些标的有仓)和持仓批次决定, 两者都没变就复用
+/// 上次建好的表。判等办法同 [`AccountMetricsMemo`]。
+pub(crate) struct EntryPriceTable {
+    positions: Arc<HashMap<String, Decimal>>,
+    inventory_revision: crate::revision::Revision,
+    table: Arc<HashMap<String, Decimal>>,
+}
+
 // Internal implementation of Engine (not exposed to Python)
 impl Engine {
-    fn current_account_metrics(&self) -> AccountMetrics {
+    /// 按最新价算的账户指标。`run()` 期间输入没变时复用上次结果。
+    pub(crate) fn current_account_metrics(&mut self) -> AccountMetrics {
+        let inventory_revision = self.state.order_manager.trade_tracker.inventory_revision();
+        if self.account_metrics_memo_enabled
+            && let Some(memo) = &self.account_metrics_memo
+            && memo.cash == self.state.portfolio.cash
+            && Arc::ptr_eq(&memo.positions, &self.state.portfolio.positions)
+            && memo.prices_revision == self.prices_revision
+            && memo.inventory_revision == inventory_revision
+        {
+            debug_assert_eq!(
+                memo.metrics,
+                self.compute_account_metrics(),
+                "账户指标缓存与重算结果不一致: 有改动输入的地方没更新修订号"
+            );
+            return memo.metrics;
+        }
+        let metrics = self.compute_account_metrics();
+        if self.account_metrics_memo_enabled {
+            self.account_metrics_memo = Some(AccountMetricsMemo {
+                cash: self.state.portfolio.cash,
+                positions: Arc::clone(&self.state.portfolio.positions),
+                prices_revision: self.prices_revision,
+                inventory_revision,
+                metrics,
+            });
+        }
+        metrics
+    }
+
+    fn compute_account_metrics(&self) -> AccountMetrics {
         let prices = self.last_prices.read().expect("last_prices 读锁被污染");
         calculate_account_metrics(
             &self.state.portfolio,
@@ -453,56 +523,97 @@ impl Engine {
     /// margin they would consume beyond the current portfolio. Reported as the
     /// account's `frozen_cash`, computed in Rust so it cannot drift from the
     /// engine's own margin accounting (the Python re-implementation was removed).
-    fn current_frozen_cash(&self, active_orders: &[Order]) -> Decimal {
-        let stock_ratio_override = if self.risk_manager.config.is_margin_account() {
-            Some(self.risk_manager.config.stock_initial_margin_ratio())
-        } else {
-            None
-        };
+    ///
+    /// `base_used_margin`: 当前组合的占用保证金, 即同一时刻账户指标里的
+    /// `used_margin`(调用方刚算过, 不再重算一遍)。
+    pub(crate) fn current_frozen_cash(
+        &self,
+        active_orders: &[Order],
+        base_used_margin: Decimal,
+    ) -> Decimal {
+        let stock_ratio_override =
+            crate::account::stock_margin_ratio_override(&self.risk_manager.config);
         let prices = self.last_prices.read().expect("last_prices 读锁被污染");
-        let base_used = self.state.portfolio.calculate_used_margin_with_stock_ratio(
+        debug_assert_eq!(
+            base_used_margin,
+            self.state.portfolio.calculate_used_margin_with_stock_ratio(
+                &prices,
+                &self.instruments,
+                stock_ratio_override,
+            ),
+            "传入的占用保证金与按当前组合现算的不一致"
+        );
+        crate::account::frozen_cash(
+            &self.state.portfolio.positions,
+            active_orders,
             &prices,
             &self.instruments,
             stock_ratio_override,
-        );
-
-        // Project every open order's position onto a clone and diff used margin.
-        let mut projected = self.state.portfolio.clone();
-        for order in active_orders {
-            if !matches!(
-                order.status,
-                crate::model::OrderStatus::New
-                    | crate::model::OrderStatus::Submitted
-                    | crate::model::OrderStatus::PartiallyFilled
-            ) {
-                continue;
-            }
-            let remaining = order.quantity - order.filled_quantity;
-            if remaining <= Decimal::ZERO {
-                continue;
-            }
-            let current_pos = projected
-                .positions
-                .get(&order.symbol)
-                .copied()
-                .unwrap_or(Decimal::ZERO);
-            let next_pos = crate::model::project_position_after(
-                order.side,
-                order.position_effect,
-                current_pos,
-                remaining,
-            );
-            projected.adjust_position(&order.symbol, next_pos - current_pos);
-        }
-        let projected_used = projected.calculate_used_margin_with_stock_ratio(
-            &prices,
-            &self.instruments,
-            stock_ratio_override,
-        );
-        (projected_used - base_used).max(Decimal::ZERO)
+            base_used_margin,
+        )
     }
 
-    fn build_position_entry_prices(&self) -> Arc<HashMap<String, Decimal>> {
+    /// 交给策略上下文的冻结资金。
+    ///
+    /// 多数策略回调并不读它, 而有在途订单时算一次要把全部持仓的保证金过一遍。`run()`
+    /// 驱动管线期间(合约表、风控配置不变, 见 `run_instruments`)只把输入交给上下文,
+    /// 策略真读到时再算; 其余时候(以及没有占用资金的在途订单时)当场给出数值。
+    fn frozen_cash_for_context(
+        &self,
+        active_orders: &[Order],
+        base_used_margin: Decimal,
+    ) -> crate::context::FrozenCash {
+        use crate::context::{FrozenCash, FrozenCashInputs};
+        if !active_orders
+            .iter()
+            .any(crate::account::order_reserves_cash)
+        {
+            return FrozenCash::Known(0.0);
+        }
+        let Some(instruments) = self.run_instruments.as_ref() else {
+            return FrozenCash::Known(
+                self.current_frozen_cash(active_orders, base_used_margin)
+                    .to_f64()
+                    .unwrap_or_default(),
+            );
+        };
+        FrozenCash::Deferred(FrozenCashInputs {
+            base_used_margin,
+            instruments: Arc::clone(instruments),
+            stock_margin_ratio_override: crate::account::stock_margin_ratio_override(
+                &self.risk_manager.config,
+            ),
+            #[cfg(debug_assertions)]
+            expected: self
+                .current_frozen_cash(active_orders, base_used_margin)
+                .to_f64()
+                .unwrap_or_default(),
+        })
+    }
+
+    pub(crate) fn build_position_entry_prices(&mut self) -> Arc<HashMap<String, Decimal>> {
+        let inventory_revision = self.state.order_manager.trade_tracker.inventory_revision();
+        if let Some(cached) = &self.entry_price_table
+            && Arc::ptr_eq(&cached.positions, &self.state.portfolio.positions)
+            && cached.inventory_revision == inventory_revision
+        {
+            debug_assert_eq!(
+                *cached.table,
+                *self.compute_position_entry_prices(),
+                "持仓均价表缓存与重算结果不一致: 有改动持仓批次的地方没更新修订号"
+            );
+            return Arc::clone(&cached.table);
+        }
+        let table = self.compute_position_entry_prices();
+        self.entry_price_table = Some(EntryPriceTable {
+            positions: Arc::clone(&self.state.portfolio.positions),
+            inventory_revision,
+            table: Arc::clone(&table),
+        });
+        table
+    }
+
+    fn compute_position_entry_prices(&self) -> Arc<HashMap<String, Decimal>> {
         let mut entry_prices = HashMap::new();
         for (symbol, quantity) in self.state.portfolio.positions.iter() {
             if quantity.is_zero() {
@@ -1696,10 +1807,7 @@ impl Engine {
             initial_cash: self.initial_cash,
         };
         let position_entry_prices = self.build_position_entry_prices();
-        let frozen_cash = self
-            .current_frozen_cash(&active_orders)
-            .to_f64()
-            .unwrap_or_default();
+        let frozen_cash = self.frozen_cash_for_context(&active_orders, account_metrics.used_margin);
         if let Some(existing_ctx) = self
             .strategy_contexts
             .get(slot_index)
@@ -2121,10 +2229,7 @@ impl Engine {
             initial_cash: self.initial_cash,
         };
         let position_entry_prices = self.build_position_entry_prices();
-        let frozen_cash = self
-            .current_frozen_cash(&active_orders)
-            .to_f64()
-            .unwrap_or_default();
+        let frozen_cash = self.frozen_cash_for_context(&active_orders, account_metrics.used_margin);
         // Create a temporary context for the strategy to use
         StrategyContext::new(crate::context::ContextInit {
             cash: self.state.portfolio.cash,
@@ -2383,9 +2488,15 @@ impl Engine {
             // 在调用 get_or_create_strategy_context / 策略之前释放。
             let mut prices = self.last_prices.write().expect("last_prices 写锁被污染");
             match prices.get_mut(symbol) {
-                Some(slot) => *slot = price,
+                // 价格没变就不算改动, 账户指标缓存继续有效。
+                Some(slot) if *slot == price => {}
+                Some(slot) => {
+                    *slot = price;
+                    self.prices_revision.bump();
+                }
                 None => {
                     prices.insert(symbol.clone(), price);
+                    self.prices_revision.bump();
                 }
             }
         }

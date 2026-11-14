@@ -201,7 +201,7 @@ fn excursion_matches_full_history_scan_with_capacity_one() {
         }
     }
     assert!(tracker.closed_trades.len() > 1000);
-    assert_matches_reference(&tracker.closed_trades, &full);
+    assert_matches_reference(&tracker.closed_trades.to_vec(), &full);
 }
 
 /// 双流: 平仓时有 bar 序列就按 bar 算, 没有才按 tick(改造前的取法)。tick 先于 bar
@@ -239,7 +239,7 @@ fn excursion_prefers_bar_series_like_before() {
             );
         }
     }
-    assert_matches_reference(&tracker.closed_trades[..1], &ticks_full);
+    assert_matches_reference(&tracker.closed_trades.to_vec()[..1], &ticks_full);
     assert_eq!(tracker.closed_trades[0].mae, -10.0);
 
     // tick 上开仓, 之后才有 bar; 平仓时 bar 序列已存在 → 按 bar 算(只含开仓后的 bar)
@@ -273,7 +273,7 @@ fn excursion_prefers_bar_series_like_before() {
         }),
         Decimal::ZERO,
     );
-    assert_matches_reference(&tracker.closed_trades[1..], &bars_full);
+    assert_matches_reference(&tracker.closed_trades.to_vec()[1..], &bars_full);
     assert_eq!(tracker.closed_trades[1].mae, -5.0);
     assert_eq!(tracker.closed_trades[1].mfe, 4.0);
 }

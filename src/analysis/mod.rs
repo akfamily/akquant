@@ -1,3 +1,4 @@
+pub mod append_log;
 pub mod live_stats;
 pub mod python;
 pub mod result;
@@ -9,6 +10,7 @@ pub mod tests;
 pub mod tracker;
 pub mod types;
 
+pub use append_log::AppendLog;
 pub use live_stats::LiveTradeStats;
 pub use result::*;
 pub use strategy_stats::{

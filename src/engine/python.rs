@@ -617,6 +617,11 @@ impl Engine {
         Engine {
             state: SharedState::new(initial_cash),
             last_prices: Arc::new(RwLock::new(HashMap::new())),
+            prices_revision: crate::revision::Revision::fresh(),
+            account_metrics_memo: None,
+            account_metrics_memo_enabled: false,
+            entry_price_table: None,
+            run_instruments: None,
             instruments: HashMap::new(),
             session_resolver: None,
             current_trading_day: None,
@@ -871,6 +876,7 @@ impl Engine {
             .trade_tracker
             .rebuild_summary_fields();
         *self.last_prices.write().expect("last_prices 写锁被污染") = snapshot.last_prices;
+        self.prices_revision.bump();
         self.instruments = snapshot.instruments;
         self.invalidate_session_resolver();
         self.initial_cash = snapshot.initial_cash.unwrap_or(self.state.portfolio.cash);
@@ -1848,7 +1854,15 @@ impl Engine {
         let mut pipeline = self.build_pipeline();
 
         // Run Pipeline
-        if let Err(e) = pipeline.run(self, py, strategy) {
+        // 账户指标缓存只在管线运行期间启用(见字段说明); 进出都清掉, 不带旧值。
+        self.account_metrics_memo = None;
+        self.account_metrics_memo_enabled = true;
+        self.run_instruments = Some(Arc::new(self.instruments.clone()));
+        let pipeline_result = pipeline.run(self, py, strategy);
+        self.run_instruments = None;
+        self.account_metrics_memo_enabled = false;
+        self.account_metrics_memo = None;
+        if let Err(e) = pipeline_result {
             // `KeyboardInterrupt` 是 live 会话的正常优雅停止路径(见
             // `_runner.py::_apply_bounded_event_limit` 文档): Ctrl+C、SIGTERM
             // (`_termination_signal_guard`)、`duration` 到期、以及

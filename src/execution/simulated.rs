@@ -560,20 +560,25 @@ impl SimulatedExecutionClient {
     where
         F: FnMut(&Order, &Event) -> bool,
     {
+        // 没有在途订单: 下面的资金推演(复制可用持仓表、算一遍账户指标)只为撮合服务,
+        // 直接返回。绝大多数行情事件都走这里。
+        if self.order_queue.is_empty() {
+            return Vec::new();
+        }
         let mut reports = Vec::new();
         let mut projected_portfolio = ctx.portfolio.clone();
         // Fill-time mirror of `portfolio.available_positions`, advanced by each
         // fill in this slice so cumulative sells cannot oversell a position
         // whose submission-time check was deferred (issue #391).
-        let mut projected_available_positions = ctx.portfolio.available_positions.as_ref().clone();
+        //
+        // 这份镜像和下面的可用保证金只在有订单撮合出成交时才用得上, 而多数事件上
+        // 在途订单都不成交(别的品种的行情、未到价的限价单), 所以推迟到第一笔成交
+        // 出现时再建(见 `funds_projection_ready`)。在那之前 `projected_portfolio`
+        // 没被改过, 建出来的值与进函数时就建完全相同。
+        let mut projected_available_positions: HashMap<String, Decimal> = HashMap::new();
         let stock_margin_ratio_override = stock_margin_ratio_override(ctx.risk_config);
-        let mut current_free_margin = calculate_free_margin(
-            &projected_portfolio,
-            ctx.last_prices,
-            ctx.instruments,
-            ctx.trade_tracker,
-            ctx.risk_config,
-        );
+        let mut current_free_margin = Decimal::ZERO;
+        let mut funds_projection_ready = false;
 
         // 集合竞价统一撮合的合成事件排在真实事件之前, 与之共享同一份资金推演
         // (projected_portfolio / current_free_margin), 不会超额成交。
@@ -581,26 +586,29 @@ impl SimulatedExecutionClient {
             .iter()
             .map(|u| (&u.event, Some(u)))
             .chain(events.iter().map(|e| (e, None)));
+        // 撮合顺序(先卖后买)只取决于队列成员与买卖方向, 循环里两者都不变(入队在
+        // on_order, 出队在末尾的 cleanup_finished_orders), 各轮共用一份。
+        let queue = self.sorted_queue();
         for (event, uncross) in passes {
-            let queue = self.sorted_queue();
             for order_id in &queue {
                 let mut synced_report: Option<Event> = None;
-                let Some(order_snapshot) = self.orders.get(order_id).cloned() else {
+                // 先按引用做只读筛选, 过了筛选再克隆快照: 多数订单在这里就被跳过
+                // (别的品种的竞价撮合、未到可成交时点), 不必为它们复制整个订单。
+                let Some(order_ref) = self.orders.get(order_id) else {
                     continue;
                 };
                 let selected = match uncross {
-                    Some(u) => {
-                        order_snapshot.symbol == u.symbol && order_snapshot.created_at < u.cutoff
-                    }
-                    None => order_filter(&order_snapshot, event),
+                    Some(u) => order_ref.symbol == u.symbol && order_ref.created_at < u.cutoff,
+                    None => order_filter(order_ref, event),
                 };
-                if !Self::is_order_active(&order_snapshot) || !selected {
+                if !Self::is_order_active(order_ref) || !selected {
                     continue;
                 }
 
-                if uncross.is_none() && self.skips_same_time_interval_bar(&order_snapshot, event) {
+                if uncross.is_none() && self.skips_same_time_interval_bar(order_ref, event) {
                     continue;
                 }
+                let order_snapshot = order_ref.clone();
 
                 // A next-open (bar_offset>=1) order must not fill on any event at or
                 // before its submission timestamp — including a same-timestamp bar of a
@@ -685,6 +693,18 @@ impl SimulatedExecutionClient {
                                 Some(ref mut trade),
                             ) = report
                             {
+                                if !funds_projection_ready {
+                                    projected_available_positions =
+                                        ctx.portfolio.available_positions.as_ref().clone();
+                                    current_free_margin = calculate_free_margin(
+                                        &projected_portfolio,
+                                        ctx.last_prices,
+                                        ctx.instruments,
+                                        ctx.trade_tracker,
+                                        ctx.risk_config,
+                                    );
+                                    funds_projection_ready = true;
+                                }
                                 let mut prices_for_margin = ctx.last_prices.clone();
                                 prices_for_margin.insert(trade.symbol.clone(), trade.price);
 
@@ -937,6 +957,10 @@ impl SimulatedExecutionClient {
                             if let Event::ExecutionReport(_, Some(ref trade)) = report
                                 && trade.quantity > Decimal::ZERO
                             {
+                                debug_assert!(
+                                    funds_projection_ready,
+                                    "带成交的回报必先经过上面的资金检查分支"
+                                );
                                 if matches!(
                                     instrument.asset_type,
                                     AssetType::Stock | AssetType::Fund
@@ -2739,6 +2763,33 @@ mod tests {
                 .contains("Insufficient available position")
         );
         assert!(sim.orders.is_empty());
+    }
+
+    #[test]
+    fn test_sell_within_available_position_fills() {
+        // 可用持仓够卖: 成交。撮合里的可用持仓镜像是首笔成交出现时才从组合复制的,
+        // 没复制到的话这里会被当成可用为 0 而拒单。
+        let order = create_test_order(
+            "AAPL",
+            crate::model::OrderSide::Sell,
+            crate::model::OrderType::Market,
+            Decimal::from(100),
+            None,
+        );
+        let (_, events) = run_stock_order_at_100(
+            order,
+            Decimal::from(50000),
+            Decimal::from(100),
+            Decimal::from(100),
+        );
+        let (order, trade) = single_report(&events);
+        assert_eq!(order.status, OrderStatus::Filled);
+        assert_eq!(
+            trade.map(|t| t.quantity),
+            Some(Decimal::from(100)),
+            "reject_reason={}",
+            order.reject_reason
+        );
     }
 
     #[test]

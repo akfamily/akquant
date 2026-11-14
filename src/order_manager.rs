@@ -53,6 +53,20 @@ pub struct OrderManager {
     /// Bracket 激活计划: entry_order_id -> plan
     #[serde(default)]
     pub pending_bracket_plans: HashMap<String, PendingBracketPlan>,
+    /// 历史订单的 id 索引, 供 [`OrderManager::find_order`] 用。不入存档, 用到时按
+    /// `orders` 现状补建。
+    #[serde(skip)]
+    finished_index: FinishedOrderIndex,
+}
+
+/// `orders`(历史订单)里每个 id 第一次出现的位置。索引记下已覆盖的长度, 查找前把新
+/// 追加的部分补进来; 历史表变短则整个重建。
+///
+/// 前提: 历史表里已有订单的 id 不会被原地改写(现有代码只往表尾追加)。
+#[derive(Clone, Default)]
+struct FinishedOrderIndex {
+    first_position: HashMap<String, usize>,
+    covered: usize,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -78,6 +92,40 @@ impl OrderManager {
             oco_groups: HashMap::new(),
             oco_order_to_group: HashMap::new(),
             pending_bracket_plans: HashMap::new(),
+            finished_index: FinishedOrderIndex::default(),
+        }
+    }
+
+    /// 按 id 取订单, 优先级同 [`OrderManager::get_all_orders`]: 先历史订单(取入表最早
+    /// 的那个), 再在途订单。
+    ///
+    /// 每个成交回报都要查一次; 历史订单随回测进行越积越多, 逐个比较会让单笔成交的
+    /// 开销随累计订单数增长, 所以历史部分走索引。
+    pub fn find_order(&mut self, order_id: &str) -> Option<&Order> {
+        let index = &mut self.finished_index;
+        if self.orders.len() < index.covered {
+            // 历史表被截短(不是追加): 索引作废重建。
+            *index = FinishedOrderIndex::default();
+        }
+        for (position, order) in self.orders.iter().enumerate().skip(index.covered) {
+            index
+                .first_position
+                .entry(order.id.clone())
+                .or_insert(position);
+        }
+        index.covered = self.orders.len();
+        match index.first_position.get(order_id) {
+            Some(&position) if self.orders[position].id == order_id => self.orders.get(position),
+            Some(_) => {
+                // 索引指向的位置已不是这个 id(历史表被截短后又追加到原长度): 作废
+                // 索引, 这次逐个比较。
+                *index = FinishedOrderIndex::default();
+                self.orders
+                    .iter()
+                    .chain(self.active_orders.iter())
+                    .find(|o| o.id == order_id)
+            }
+            None => self.active_orders.iter().find(|o| o.id == order_id),
         }
     }
 
@@ -563,6 +611,65 @@ mod tests {
         order.order_role = OrderRole::Standalone;
         order.status = status;
         order
+    }
+
+    /// find_order 的参照: 改造前的逐个比较(历史订单在前, 在途订单在后)。
+    fn scan(manager: &OrderManager, id: &str) -> Option<(Decimal, OrderStatus)> {
+        manager
+            .orders
+            .iter()
+            .chain(manager.active_orders.iter())
+            .find(|o| o.id == id)
+            .map(|o| (o.quantity, o.status))
+    }
+
+    #[test]
+    fn find_order_matches_linear_scan() {
+        // 线性同余伪随机, 固定种子可复现
+        let mut seed: u64 = 20261113;
+        let mut next = move |n: u64| {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (seed >> 33) % n
+        };
+        let mut manager = OrderManager::new();
+        let mut serial = 0u32;
+        for step in 0..3000 {
+            // id 取自小集合: 历史表内、历史与在途之间都会重复
+            let id = format!("o{}", next(40));
+            serial += 1;
+            let mut order = make_order(&id, OrderStatus::New);
+            order.quantity = Decimal::from(serial); // 用数量区分同 id 的不同订单
+            match next(9) {
+                0..=3 => manager.active_orders.push(order),
+                4..=6 => {
+                    order.status = OrderStatus::Filled;
+                    manager.orders.push(order);
+                }
+                7 => {
+                    // 在途订单终结, 经 cleanup 移入历史表
+                    if let Some(o) = manager.active_orders.first_mut() {
+                        o.status = OrderStatus::Cancelled;
+                    }
+                    manager.cleanup_finished_orders();
+                }
+                8 if step % 97 == 0 => {
+                    // 历史表被截短
+                    let keep = manager.orders.len() / 2;
+                    manager.orders.truncate(keep);
+                }
+                _ => {}
+            }
+            for probe in 0..41 {
+                let probe_id = format!("o{probe}");
+                let want = scan(&manager, &probe_id);
+                let got = manager
+                    .find_order(&probe_id)
+                    .map(|o| (o.quantity, o.status));
+                assert_eq!(got, want, "step={step} id={probe_id}");
+            }
+        }
     }
 
     #[test]

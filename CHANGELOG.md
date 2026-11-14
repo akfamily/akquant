@@ -14,6 +14,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - 内置的实盘柜台接口现在只有 `ctp`（期货），另有 `replay` 用于回放；A 股等其他柜台请通过 `register_broker` 注册自定义 broker 接入。
 
 ### Changed
+- **回测提速：用到指标、持仓较多或下单较多的策略明显变快，回测结果不变**（规则版本不变）。空策略本来就快，慢的是下面四处，现已分别处理：
+    - `self.I(PrecomputedIndicator(...))` 的逐 bar 取值不再每次构造 pandas 时间对象并调用 `Series.asof`，改为在整数时间戳数组上定位。两个指标的策略每根 bar 从约 48 微秒降到约 18 微秒。顺带修正：时间索引精度比纳秒粗（如秒级）而查询时刻带零头时，此前会取到 NaN，现在取到前一个值。
+    - 账户指标（权益、占用保证金等）在一根 bar 上原先要把全部持仓遍历五遍，现在输入没变就复用上一次的结果；没有在途订单时不再做撮合前的资金推演，有在途订单时也推迟到真有订单成交才做。`get_account()` 里的 `frozen_cash` 改为策略读到时才算（数值不变）。100 个持仓只持有不交易的回测每根 bar 从约 115 微秒降到约 30 微秒。
+    - 持仓均价表只在成交或拆股后重建，不再每根 bar 重算。分批建仓、持有很多批次的策略（7200 批）每根 bar 从约 85 微秒降到约 27 微秒。
+    - 已平仓交易表此前每平一笔仓就整表复制一次，成交回报按订单号查找时还要逐个比较全部历史订单，累计开销随笔数平方增长；现在两者的单笔开销都与累计笔数无关。单标的 3.6 万笔订单的回测从约 31 秒降到约 5 秒。
+- `scripts/bench_engine_perbar.py` 新增 `indicators` / `holdings` / `accumulate` / `churn` 四个档位，对应上面四类开销；会下单的档位每轮核对订单确实成交。同时修正合成数据的时间戳：原先日线落在闭市时段，`positions` 档的建仓单从未成交，测到的并不是持仓路径。
 - **`run_live` 的 CTP 连接参数移入 `gateway_options`（破坏性变更）**。`run_live` 与 `LiveRunner` 顶层的 `md_front`、`td_front`、`broker_id`、`user_id`、`password`、`app_id`、`auth_code` 七个参数已删除，继续传会报 `TypeError`。键名不变，改放进 `gateway_options`：`run_live(..., broker="ctp", gateway_options={"md_front": ..., "td_front": ..., "broker_id": ..., "user_id": ..., "password": ..., "app_id": ..., "auth_code": ...})`。这样所有 broker 的连接参数走同一个入口，`broker`（用哪个接口）与 `broker_id`（CTP 的期货公司代码）也不再并排出现。
 - **`run_live` 的 `broker` 不再默认 `"ctp"`（破坏性变更）**。必须显式传 `broker`，或同时传 `market_broker` 与 `trader_broker`；都不传会报错并列出可用的名字。此前只传 `market_broker`/`trader_broker` 而不传 `broker` 的会话，`client_order_id` 的前缀由 `ctp-` 变为交易侧 broker 的名字。
 - **`broker="ctp"` 的交易通道参数收紧（破坏性变更）**。`td_front`、`broker_id`、`user_id`、`password`、`app_id`、`auth_code` 六项要么都不给（只接行情），要么全给；只给一部分会报错并指出缺哪几项。此前缺 `broker_id`、`app_id`、`auth_code` 时会悄悄使用 SimNow 仿真环境的值，缺 `td_front` 或 `user_id` 时会悄悄不建交易通道。连接 SimNow 请显式传 `broker_id="9999"`、`app_id="simnow_client_test"`、`auth_code="0000000000000000"`。

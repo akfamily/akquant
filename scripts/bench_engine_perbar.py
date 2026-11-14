@@ -37,7 +37,23 @@ PROFILES: Dict[str, Dict[str, int]] = {
     "narrow": {"symbols": 300, "days": 600},
     # 覆盖 O(P) 路径(账户指标/frozen_cash/entry prices)
     "positions": {"symbols": 4500, "days": 40},
+    # 以下四档走 on_bar(前三档走 on_cross_section), 对应 2026-11 与 backtrader
+    # 对比时拆出的四类开销; bars_per_day > 1 时生成日内分钟线。
+    # self.I() 预计算指标的逐 bar 取值
+    "indicators": {"symbols": 1, "days": 750, "bars_per_day": 240},
+    # 100 个持仓只持有不交易: 每个 bar 事件按持仓数重算的部分
+    "holdings": {"symbols": 100, "days": 1800},
+    # 单标的只买不卖: 每根 bar 遍历未平仓批次的部分(批次数随时间线性增长)
+    "accumulate": {"symbols": 1, "days": 750, "bars_per_day": 240},
+    # 单标的反复开平: 订单/成交路径, 看单笔成本是否随累计笔数上升
+    "churn": {"symbols": 1, "days": 750, "bars_per_day": 240},
 }
+
+#: 会下单的档位: 每轮跑完核对订单确实成交(见 `_require_fills`)。
+FILL_PROFILES = frozenset({"positions", "holdings", "accumulate", "churn"})
+
+#: accumulate / churn 档每隔多少根 bar 下一笔单。
+ORDER_EVERY = 25
 
 
 @dataclass
@@ -115,20 +131,36 @@ def verdict(base: RunStats, cand: RunStats) -> Tuple[str, float, float]:
     return ("IMPROVED" if effect > 0 else "REGRESSED"), effect, noise_band
 
 
-def _make_data(n_sym: int, n_day: int) -> Any:
-    """合成 OHLCV, 固定种子以保证跨运行可比."""
+def _make_data(n_sym: int, n_day: int, bars_per_day: int = 1) -> Any:
+    """合成 OHLCV, 固定种子以保证跨运行可比.
+
+    bars_per_day == 1 为日线; 否则每个交易日从 09:31 起连续 bars_per_day 根分钟线
+    (上午 120 根, 其余顺延到 13:01 之后), 时间戳落在 A 股交易时段内。
+    """
     import numpy as np
     import pandas as pd
 
     rng = np.random.default_rng(42)
-    days = pd.date_range("2020-01-02", periods=n_day, freq="B", tz=TZ)
+    # 先按本地墙上时间造, 最后再挂时区: `带时区索引.values` 会变成不带时区的 UTC 时刻
+    # (00:00 上海 → 前一天 16:00), 落在闭市时段, 订单永远不成交。
+    days = pd.date_range("2020-01-02", periods=n_day, freq="B")
+    if bars_per_day > 1:
+        offsets = np.arange(bars_per_day)
+        minutes = np.where(
+            offsets < 120, 9 * 60 + 31 + offsets, 13 * 60 + 1 + offsets - 120
+        )
+        days = pd.DatetimeIndex(
+            np.repeat(days.values, bars_per_day)
+            + np.tile(minutes, n_day).astype("timedelta64[m]")
+        )
+        n_day = len(days)
     n = n_sym * n_day
     close = (
         100.0 * np.exp(rng.normal(0, 0.01, n).cumsum().reshape(n_day, n_sym) * 0.1)
     ).ravel()
     return pd.DataFrame(
         {
-            "date": np.repeat(days.values, n_sym),
+            "date": pd.DatetimeIndex(np.repeat(days.values, n_sym)).tz_localize(TZ),
             "symbol": np.tile([f"S{i:05d}" for i in range(n_sym)], n_day),
             "open": close,
             "high": close * 1.001,
@@ -164,6 +196,65 @@ def _build_strategy_class(hold_positions: int) -> Any:
     return BenchStrategy
 
 
+def _build_on_bar_strategy_class(profile: str) -> Any:
+    """构造走 on_bar 的基准策略类(indicators / holdings / accumulate / churn)."""
+    import akquant as aq
+
+    if profile == "indicators":
+
+        class IndicatorStrategy(aq.Strategy):
+            def on_start(self) -> None:
+                self.fast = self.I(
+                    aq.PrecomputedIndicator(
+                        "fast", lambda df: df["close"].rolling(10).mean()
+                    ),
+                    name="fast",
+                )
+                self.slow = self.I(
+                    aq.PrecomputedIndicator(
+                        "slow", lambda df: df["close"].rolling(30).mean()
+                    ),
+                    name="slow",
+                )
+                self.above = 0
+
+            def on_bar(self, bar: Any) -> None:
+                fast, slow = self.fast[0], self.slow[0]
+                if fast is not None and slow is not None and fast > slow:
+                    self.above += 1
+
+        return IndicatorStrategy
+
+    if profile == "holdings":
+
+        class HoldingStrategy(aq.Strategy):
+            def on_start(self) -> None:
+                self.bought: set[str] = set()
+
+            def on_bar(self, bar: Any) -> None:
+                if bar.symbol not in self.bought:
+                    self.bought.add(bar.symbol)
+                    self.buy(symbol=bar.symbol, quantity=100)
+
+        return HoldingStrategy
+
+    sell_back = profile == "churn"
+
+    class OrderStrategy(aq.Strategy):
+        def on_start(self) -> None:
+            self.seen = 0
+
+        def on_bar(self, bar: Any) -> None:
+            self.seen += 1
+            phase = self.seen % (2 * ORDER_EVERY)
+            if phase == 0 or (phase == ORDER_EVERY and not sell_back):
+                self.buy(symbol=bar.symbol, quantity=100)
+            elif phase == ORDER_EVERY:
+                self.sell(symbol=bar.symbol, quantity=100)
+
+    return OrderStrategy
+
+
 def run_profile(profile: str, rounds: int, positions: int) -> RunStats:
     """运行指定 profile 若干轮并返回耗时统计."""
     import akquant as aq
@@ -171,14 +262,17 @@ def run_profile(profile: str, rounds: int, positions: int) -> RunStats:
     cfg = PROFILES[profile]
     n_sym, n_day = cfg["symbols"], cfg["days"]
     hold = positions if profile == "positions" else 0
-    data = _make_data(n_sym, n_day)
+    data = _make_data(n_sym, n_day, cfg.get("bars_per_day", 1))
     symbols = sorted(data["symbol"].unique().tolist())
-    strategy_cls = _build_strategy_class(hold)
+    if profile in ("indicators", "holdings", "accumulate", "churn"):
+        strategy_cls = _build_on_bar_strategy_class(profile)
+    else:
+        strategy_cls = _build_strategy_class(hold)
     stats = RunStats(profile=profile, bars=len(data))
     for _ in range(rounds):
         gc.collect()
         start = time.perf_counter()
-        aq.run_backtest(
+        result = aq.run_backtest(
             data=data,
             strategy=strategy_cls,
             symbols=symbols,
@@ -187,7 +281,21 @@ def run_profile(profile: str, rounds: int, positions: int) -> RunStats:
             show_progress=False,
         )
         stats.rounds.append(time.perf_counter() - start)
+        _require_fills(profile, result)
     return stats
+
+
+def _require_fills(profile: str, result: Any) -> None:
+    """下单档位必须真的成交, 否则测到的是挂单堆积而不是档位声称的路径."""
+    if profile not in FILL_PROFILES:
+        return
+    orders = result.orders_df
+    filled = int((orders["status"] == "filled").sum()) if len(orders) else 0
+    if filled * 2 < len(orders) or filled == 0:
+        raise RuntimeError(
+            f"profile={profile}: {len(orders)} 笔订单只成交 {filled} 笔, "
+            "基准数据或策略有问题(常见原因: 行情时间戳落在闭市时段)"
+        )
 
 
 def main(argv: List[str] | None = None) -> int:
