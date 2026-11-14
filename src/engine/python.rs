@@ -1857,7 +1857,16 @@ impl Engine {
         // 账户指标缓存只在管线运行期间启用(见字段说明); 进出都清掉, 不带旧值。
         self.account_metrics_memo = None;
         self.account_metrics_memo_enabled = true;
-        self.run_instruments = Some(Arc::new(self.instruments.clone()));
+        let run_instruments = Arc::new(self.instruments.clone());
+        // 策略上下文在首次回调时创建并跨 run() 复用, 其中的合约表与风控配置是创建时
+        // 的快照; 两次 run() 之间它们可能被改过(add_instrument / set_risk_config),
+        // 这里给已有的上下文换成当前的。
+        for ctx in self.strategy_contexts.iter().flatten() {
+            let mut ctx = ctx.borrow_mut(py);
+            ctx.instruments = Arc::clone(&run_instruments);
+            ctx.risk_config = self.risk_manager.config.clone();
+        }
+        self.run_instruments = Some(run_instruments);
         let pipeline_result = pipeline.run(self, py, strategy);
         self.run_instruments = None;
         self.account_metrics_memo_enabled = false;

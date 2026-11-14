@@ -16,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - **`cancel_order` 传订单对象时悄悄不撤单**：`for o in self.get_open_orders(): self.cancel_order(o)` 这种写法此前不生效——订单对象被转成一串描述文字当作订单号，引擎找不到这个号也不提示，订单一直挂着。现在订单对象取其 `id` 正常撤单；回测与实盘同一入口，都已修正。此前这样写的策略，订单现在会真的被撤掉，回测结果会随之变化。
 - `cancel_order` / `cancel_group` 收到认不出的入参（`None`、数字、列表等）时抛 `TypeError` 并说明可接受的类型，不再转成字符串去撤一个不存在的订单。`cancel_group` 传订单对象同样报错，并提示改用 `cancel_order`。
+- **同一个 `Engine` 跑完一次后改配置再跑，策略仍按旧配置算**：策略上下文里的风控配置与合约表是首次回调时的快照，再次 `run()` 不刷新，第二次运行里 `ctx.risk_config`、可用买入力（`ctx.buying_power`）等仍按第一次运行时的配置。现在每次 `run()` 开始时刷新。只影响手工复用 `Engine` 的用法；`run_backtest` 每次新建引擎，不受影响。
 
 ### Changed
 - **回测提速：用到指标、持仓较多或下单较多的策略明显变快，回测结果不变**（规则版本不变）。空策略本来就快，慢的是下面四处，现已分别处理：
