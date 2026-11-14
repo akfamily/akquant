@@ -142,33 +142,31 @@ def run_backtrader_backtest(df: pd.DataFrame) -> None:
 def run_akquant_backtest(df: pd.DataFrame) -> None:
     """运行 AKQuant 回测."""
     import akquant as aq
-    from akquant import Bar, Strategy
+    from akquant import Bar, PrecomputedIndicator, Strategy
 
     print("\n[AKQuant] 开始事件驱动回测 (Rust Engine)...")
 
     class AKStrategy(Strategy):
-        def __init__(self) -> None:
-            super().__init__()
-            self.ma_short = 5
-            self.ma_long = 20
-            self.warmup_period = 20
+        def on_start(self) -> None:
+            # 用 self.I() 声明预计算指标：框架在数据加载后把整段均线一次算完，
+            # on_bar 里用 [0] 读当前这根 Bar 的值。指标照样是向量化算的，
+            # 但信号判断和下单仍然逐 Bar 推进，读不到未来的值。
+            self.ma5 = self.I(
+                PrecomputedIndicator("ma5", lambda df: df["close"].rolling(5).mean()),
+                name="ma5",
+            )
+            self.ma20 = self.I(
+                PrecomputedIndicator("ma20", lambda df: df["close"].rolling(20).mean()),
+                name="ma20",
+            )
 
         def on_bar(self, bar: Bar) -> None:
             symbol = bar.symbol
-            # 两条均线最长只用到最近 ma_long 根收盘价，取 ma_long 根即可，
-            # 与 warmup_period 一致
-            closes = self.get_history(count=self.ma_long, symbol=symbol, field="close")
-            if len(closes) < self.ma_long:
+            # 这里直接用当前 Bar 收盘后的均线值产生信号，订单在下一根 Bar 开盘成交
+            ma5, ma20 = self.ma5[0], self.ma20[0]
+            # 前 19 根 Bar 的 20 日均线还算不出来（NaN）
+            if ma5 is None or ma20 is None or ma5 != ma5 or ma20 != ma20:
                 return
-
-            # 为了避免未来函数，我们使用 [:-1] 切片，仅使用截止到昨天的数据
-            # 或者，如果我们在收盘后交易（日线级别通常假设次日开盘成交），可以使用当前值
-            # 这里为了演示方便，直接使用当前值计算信号，但在真实交易中要注意信号产生的
-            # 时机
-
-            # 计算均线
-            ma5 = closes[-self.ma_short :].mean()
-            ma20 = closes[-self.ma_long :].mean()
 
             pos = self.get_position(symbol)
 

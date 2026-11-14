@@ -112,7 +112,8 @@ class AKQuantSmaStrategy(Strategy):
     def on_bar(self, bar: Bar):
         # 也是逐个 Bar 处理
         # 区别在于 AKQuant 底层循环由 Rust 实现，可减少部分 Python 解释器开销
-        ma5 = ...
+        # 均线已在 on_start 里用 self.I() 声明、由框架预先算好，这里只读当前值
+        ma5, ma20 = self.ma5[0], self.ma20[0]
         if ma5 > ma20 and pos == 0:
             self.order_target_percent(...)
 ```

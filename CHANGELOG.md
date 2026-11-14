@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - 持仓均价表只在成交或拆股后重建，不再每根 bar 重算。分批建仓、持有很多批次的策略（7200 批）每根 bar 从约 85 微秒降到约 27 微秒。
     - 已平仓交易表此前每平一笔仓就整表复制一次，成交回报按订单号查找时还要逐个比较全部历史订单，累计开销随笔数平方增长；现在两者的单笔开销都与累计笔数无关。单标的 3.6 万笔订单的回测从约 31 秒降到约 5 秒。
 - **同周期订单被延后撮合的告警改为每次运行汇总**：多标的策略里，同一时间片先减仓后加仓的订单会被延后撮合，此前每笔一条 WARNING（`Deferred same-cycle order until ...`），一次回测可达数千条。现在每次运行只有第一笔按 WARNING 输出（仍带完整订单上下文），其余降为 DEBUG，运行结束时再输出一条汇总（`Deferred N same-cycle orders in this run ...`）。撮合行为不变。按这条告警的条数做统计或告警规则的，需要改读汇总里的笔数。
+- 教材第 4 章对比示例（`ch04_comparison.py` 及其函数式孪生）的 AKQuant 一侧改用 `self.I()` 预计算指标，回测结果不变。
+- 英文策略指南补上 `OrderReceipt`、`cancel_group` 与撤单入参的说明；中英文 API 参考补上 `cancel_group`。
 - `scripts/bench_engine_perbar.py` 新增 `indicators` / `holdings` / `accumulate` / `churn` 四个档位，对应上面四类开销；会下单的档位每轮核对订单确实成交。同时修正合成数据的时间戳：原先日线落在闭市时段，`positions` 档的建仓单从未成交，测到的并不是持仓路径。
 - **`run_live` 的 CTP 连接参数移入 `gateway_options`（破坏性变更）**。`run_live` 与 `LiveRunner` 顶层的 `md_front`、`td_front`、`broker_id`、`user_id`、`password`、`app_id`、`auth_code` 七个参数已删除，继续传会报 `TypeError`。键名不变，改放进 `gateway_options`：`run_live(..., broker="ctp", gateway_options={"md_front": ..., "td_front": ..., "broker_id": ..., "user_id": ..., "password": ..., "app_id": ..., "auth_code": ...})`。这样所有 broker 的连接参数走同一个入口，`broker`（用哪个接口）与 `broker_id`（CTP 的期货公司代码）也不再并排出现。
 - **`run_live` 的 `broker` 不再默认 `"ctp"`（破坏性变更）**。必须显式传 `broker`，或同时传 `market_broker` 与 `trader_broker`；都不传会报错并列出可用的名字。此前只传 `market_broker`/`trader_broker` 而不传 `broker` 的会话，`client_order_id` 的前缀由 `ctp-` 变为交易侧 broker 的名字。

@@ -697,8 +697,51 @@ In AKQuant, order status transitions are as follows:
 *   **Cancel Order**:
     ```python
     self.cancel_order(order_id) # Cancel specific order
+    self.cancel_group(receipt)  # Cancel every leg of one logical order
     self.cancel_all_orders()    # Cancel all open orders
     ```
+    `cancel_order` accepts an order id, the `OrderReceipt` returned when the order was
+    placed, or an order object such as the ones returned by `get_open_orders()`; any
+    other type raises `TypeError`. `cancel_group` accepts a `group_id` or an
+    `OrderReceipt`.
+
+#### OrderReceipt: the return value of an order call
+
+`buy()` / `sell()` / `submit_order()` all return an `OrderReceipt` (the same type in
+backtest and in `broker_live` trading; it is no longer a bare `str` order id):
+
+*   `receipt.primary`: the order id of the first leg. In most cases this is "the order
+    id of this call", equivalent to the `str` older versions returned.
+*   `receipt.order_ids`: the order ids of all legs. A single
+    `side + position_effect="auto"` call made while holding the opposite position is
+    split into a `close` leg and an `open` leg (or `close_today` / `close_yesterday`
+    for futures), so `order_ids` can hold more than one id and `primary` is only one
+    of them.
+*   `str(receipt)`: the `group_id` of the logical order, which ties the split legs
+    together as one call. It lives in a different id space from `receipt.primary`; do
+    not mix the two.
+*   When matching fills, prefer `trade.group_id` over comparing individual order ids,
+    so that fills aggregate correctly whether or not the order was split.
+
+A reversal across `close + open` (both legs are sent by one `buy()` / `sell()` call):
+
+```python
+def on_bar(self, bar):
+    # Holding a short position; buying 300 splits into "cover 200" + "open long 100"
+    receipt = self.buy(bar.symbol, quantity=300)  # position_effect defaults to "auto"
+
+    print(receipt.primary)      # order id of the first (closing) leg
+    print(receipt.order_ids)    # (closing leg id, opening leg id)
+    print(str(receipt))         # group_id of this logical order
+
+    # Cancel the whole order (both legs):
+    self.cancel_group(receipt)  # same as self.cancel_group(str(receipt))
+
+def on_trade(self, trade):
+    # Aggregate the fills of one logical order by group_id, not by single order id
+    if trade.group_id == self._entry_group_id:
+        ...
+```
 
 #### Position effect (open vs close)
 
