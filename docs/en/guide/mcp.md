@@ -191,7 +191,7 @@ The two servers cannot call each other; data is handed over through a local file
 AKQuant reads the same `AKTOOLS_DATA_DIR` variable and falls back to `~/.aktools/data` as well, so no configuration is needed when both use the default. If you change the directory, set the same value in the `env` of both servers.
 
 - `symbol` is required when reading a file from the AKTools directory: the file name is the interface name plus a parameter hash, not a symbol, and omitting it is an error.
-- Prefer Sina or Tencent interfaces (such as `stock_zh_a_hist_sina`): their columns are in English and volume is in shares.
+- Prefer Sina or Tencent interfaces (such as `stock_zh_a_hist_sina`): volume is in shares. The Chinese column names of the Eastmoney quote interfaces (开盘, 最高, 最低, 收盘, 成交量, 股票代码) are recognized too, but their volume is in lots of 100 shares and AKQuant does not convert it.
 
 Backtest results and suggestions are AI-generated, for learning and research only, and are not investment advice.
 

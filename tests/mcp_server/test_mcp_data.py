@@ -322,3 +322,54 @@ def test_aktools_dir_only_accepts_data_files(
     other.write_text("x", encoding="utf-8")
     with pytest.raises(ServiceError, match="csv"):
         data.prepare_data(cfg, {"source": "file", "path": str(other), "symbol": "x"})
+
+
+CN_CSV = (
+    "日期,股票代码,开盘,收盘,最高,最低,成交量,成交额\n"
+    "2024-01-02,000001,9.39,9.21,9.42,9.20,1158366,1075742252.45\n"
+    "2024-01-03,000001,9.19,9.20,9.22,9.15,733610,673673613.54\n"
+)
+
+
+def _frame(cfg: ServiceConfig, out: Any) -> pd.DataFrame:
+    return pd.read_parquet(data.dataset_file(cfg, out["dataset_id"]))
+
+
+def test_chinese_column_names(cfg: ServiceConfig, write_file: WriteFile) -> None:
+    """东方财富等接口的中文列名按 akquant.schema 的别名表识别, 代码保留前导零."""
+    write_file("em.csv", CN_CSV)
+    out = data.prepare_data(cfg, {"source": "file", "path": "em.csv"})
+    assert out["symbols"] == ["000001"] and out["rows"] == 2
+    first = _frame(cfg, out).iloc[0]
+    got = [first[c] for c in ("open", "high", "low", "close", "volume")]
+    assert got == [9.39, 9.42, 9.20, 9.21, 1158366.0]
+
+
+def test_english_column_wins_over_chinese_alias(
+    cfg: ServiceConfig, write_file: WriteFile
+) -> None:
+    """同一字段中英文列都在时用英文列, 不被别名覆盖."""
+    text = "date,open,high,low,close,收盘,volume\n2024-01-02,1,3,0.5,2,99,10\n"
+    write_file("both.csv", text)
+    out = data.prepare_data(cfg, {"source": "file", "path": "both.csv"})
+    assert _frame(cfg, out).iloc[0]["close"] == 2.0
+
+
+@pytest.mark.parametrize("text", [CSV, CN_CSV], ids=["english", "chinese"])
+def test_csv_with_bom(cfg: ServiceConfig, tmp_path: Path, text: str) -> None:
+    """带 BOM 的 UTF-8 CSV(Excel 另存的常见格式)照常读, 首列列名不带 BOM."""
+    (tmp_path / "bom.csv").write_bytes(b"\xef\xbb\xbf" + text.encode("utf-8"))
+    out = data.prepare_data(
+        cfg, {"source": "file", "path": "bom.csv", "symbol": "000001"}
+    )
+    assert out["rows"] == 2 and out["symbols"] == ["000001"]
+
+
+def test_aktools_file_with_chinese_symbol_column_needs_no_symbol(
+    cfg: ServiceConfig, aktools_dir: Path
+) -> None:
+    """AKTools 存下的文件里有“股票代码”列时, 不必再传 symbol."""
+    saved = aktools_dir / "stock_zh_a_hist_em-0123456789.csv"
+    saved.write_text(CN_CSV, encoding="utf-8")
+    out = data.prepare_data(cfg, {"source": "file", "path": str(saved)})
+    assert out["symbols"] == ["000001"]

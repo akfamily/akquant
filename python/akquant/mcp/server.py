@@ -102,7 +102,8 @@ def build_server(cfg: ServiceConfig) -> MCPServer:
         file: {"source": "file", "path": "data/x.csv", "symbol"?, "timezone"?},
         path 须在项目根目录或 AKTools 数据目录内。读 AKTools save_data 存下的
         文件时, path 填它返回的路径并必须传 symbol(如 "600519"); 取数时优先
-        选新浪财经、腾讯的接口(列名为英文, 成交量单位是股);
+        选新浪财经、腾讯的接口(成交量单位是股; 东方财富行情接口的中文列名
+        也认, 但成交量单位是手, 不做换算);
         akshare: {"source": "akshare", "symbol": "600000", "start": "20230101",
         "end": "20241231", "adjust"?: "qfq"}(仅 A 股个股日线);
         synthetic: {"source": "synthetic", "symbols"?, "start"?, "end"?,

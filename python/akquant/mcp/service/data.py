@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 import numpy as np
 import pandas as pd
 
+from ...schema import COLUMN_ALIASES
 from . import ServiceError
 from .paths import ServiceConfig, resolve_data_file, write_json_atomic
 
@@ -26,8 +27,14 @@ STANDARD_COLUMNS = ["date", "open", "high", "low", "close", "volume", "symbol"]
 #: 与 akquant.normalize 的候选时间列一致
 DATE_CANDIDATES = ("date", "datetime", "time", "timestamp", "日期", "时间")
 _OHLC = ["open", "high", "low", "close"]
+#: 除时间列外, 各规范列认哪些列名(小写)。取自 akquant.schema 的别名表, 与
+#: run_backtest(data=df) 认的列名一致, 含 AKShare 东方财富接口的中文列名
+_FIELD_ALIASES = {
+    field: tuple(alias.lower() for alias in COLUMN_ALIASES[field])
+    for field in (*_OHLC, "volume", "symbol")
+}
 #: 文件里可以充当标的列的列名(小写); CSV 中这些列按文本读, 保住 000001 的前导零
-_SYMBOL_COLUMNS = ("symbol", "code")
+_SYMBOL_COLUMNS = _FIELD_ALIASES["symbol"]
 _ALLOWED_KEYS = {
     "file": {"source", "path", "symbol", "timezone"},
     "akshare": {"source", "symbol", "start", "end", "adjust"},
@@ -150,6 +157,12 @@ def normalize_frame(
     if date_col is None:
         need = ", ".join(DATE_CANDIDATES)
         raise ServiceError(f"找不到时间列, 需要以下列名之一: {need}")
+    for field, aliases in _FIELD_ALIASES.items():
+        if field in frame.columns:
+            continue  # 规范列名已在时不被别名列覆盖
+        alias = next((a for a in aliases if a in frame.columns), None)
+        if alias is not None:
+            frame = frame.rename(columns={alias: field})
     missing = [c for c in _OHLC if c not in frame.columns]
     if missing:
         raise ServiceError(f"缺少必需列: {missing}")
