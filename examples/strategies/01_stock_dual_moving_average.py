@@ -6,7 +6,7 @@ A股趋势跟踪策略示例 (Stock Trend Following Strategy).
 本示例展示如何使用 AKShare 获取 A 股历史数据，并运行一个简单的双均线策略。
 
 教学目标 (Learning Objectives):
-1.  使用 `ak.stock_zh_a_daily` 获取特定股票的历史数据。
+1.  使用 `ak.stock_zh_a_hist_sina` 获取特定股票的历史数据。
 2.  使用 AKQuant 内置的 `self.get_history` 接口获取历史数据。
 3.  实现双均线策略逻辑。
 
@@ -86,10 +86,10 @@ class DualMovingAverageStrategy(Strategy):
 if __name__ == "__main__":
     # 1. 准备数据
     # 以平安银行 (sz000001) 为例
-    # 注意：ak.stock_zh_a_daily 需要带前缀 sh 或 sz
+    # 注意：ak.stock_zh_a_hist_sina 需要带前缀 sh 或 sz
     symbol = "sz000001"
 
-    df = ak.stock_zh_a_daily(
+    df = ak.stock_zh_a_hist_sina(
         symbol=symbol, start_date="20220101", end_date="20231231", adjust="qfq"
     )
 

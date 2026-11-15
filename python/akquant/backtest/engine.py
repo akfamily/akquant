@@ -4595,7 +4595,7 @@ def run_backtest(
                         df.sort_index(inplace=True)
                         data_map_for_indicators[sym] = df
     else:
-        # Load from Catalog / Akshare
+        # 只从本地 Parquet 目录读取; 目录里没有的标的告警跳过, 不会联网取数
         if not symbols:
             logger.warning("No symbols specified and no data provided.")
 

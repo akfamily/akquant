@@ -113,7 +113,6 @@ from .trade_stream import (
     to_trade_messages,
 )
 from .utils import (
-    fetch_akshare_symbol,
     format_metric_value,
     load_bar_from_df,
     prepare_dataframe,
@@ -140,7 +139,6 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "prepare_dataframe",
         "normalize",
         "write_canonical_parquet",
-        "fetch_akshare_symbol",
         "format_metric_value",
         "Sizer",
         "FixedSize",
@@ -253,7 +251,6 @@ else:
         "prepare_dataframe",
         "normalize",
         "write_canonical_parquet",
-        "fetch_akshare_symbol",
         "format_metric_value",
         "Sizer",
         "FixedSize",

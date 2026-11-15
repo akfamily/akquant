@@ -28,7 +28,7 @@ import akshare as ak
 from akquant import Strategy, run_backtest
 
 # 1. Prepare Data (Using AKShare to get data; if needed, install it first via `uv pip install akshare`)
-df = ak.stock_zh_a_daily(symbol="sh600000", start_date="20250101", end_date="20260212")
+df = ak.stock_zh_a_hist_sina(symbol="sh600000", start_date="20250101", end_date="20260212")
 
 
 # 2. Define Strategy

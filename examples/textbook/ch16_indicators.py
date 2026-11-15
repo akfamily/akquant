@@ -56,9 +56,10 @@ def load_data(symbol: str | None, start_date: str, end_date: str) -> pd.DataFram
     """优先尝试 AKShare 真实数据，失败或未指定时回退到本地合成数据."""
     if symbol:
         try:
-            from akquant.utils import fetch_akshare_symbol
+            import akshare as ak
 
-            raw = fetch_akshare_symbol(
+            # 新浪接口要带市场前缀的代码，如 sh600000、sz000001
+            raw = ak.stock_zh_a_hist_sina(
                 symbol=symbol, start_date=start_date, end_date=end_date, adjust="qfq"
             )
             df = pd.DataFrame(raw)

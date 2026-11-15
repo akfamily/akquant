@@ -54,7 +54,7 @@ def get_data() -> pd.DataFrame:
     print("正在获取数据...")
     try:
         # 获取前复权数据（联网）
-        df = ak.stock_zh_a_daily(
+        df = ak.stock_zh_a_hist_sina(
             symbol="sh600000",
             start_date="20200101",
             end_date="20231231",

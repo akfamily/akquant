@@ -18,7 +18,6 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 import numpy as np
 import pandas as pd
 
-from ...utils import fetch_akshare_symbol
 from . import ServiceError
 from .paths import ServiceConfig, resolve_in_root, write_json_atomic
 
@@ -283,6 +282,59 @@ def _dataset_id(norm: Dict[str, Any], file: Optional[Path]) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
+#: 新浪 A 股日线接口在 AKShare 各版本中的名字, 新名在前:
+#: 1.20.64 起 stock_zh_a_hist_sina, 1.20.45~1.20.63 stock_zh_a_daily_sina,
+#: 更早 stock_zh_a_daily。三者的 symbol/start_date/end_date/adjust 与返回列一致。
+_AKSHARE_DAILY_NAMES = (
+    "stock_zh_a_hist_sina",
+    "stock_zh_a_daily_sina",
+    "stock_zh_a_daily",
+)
+
+
+def _fetch_akshare_daily(
+    symbol: str, start: str, end: str, adjust: str
+) -> pd.DataFrame:
+    """用 AKShare 的新浪接口取 A 股个股日线, 失败原因转成 ServiceError."""
+    try:
+        import akshare as ak
+    except ImportError as exc:
+        raise ServiceError("需要先安装 AKShare: pip install akshare") from exc
+
+    fetch = next(
+        (
+            getattr(ak, name)
+            for name in _AKSHARE_DAILY_NAMES
+            if callable(getattr(ak, name, None))
+        ),
+        None,
+    )
+    if fetch is None:
+        version = getattr(ak, "__version__", "未知")
+        raise ServiceError(
+            f"已安装的 AKShare({version}) 里找不到 A 股日线接口 "
+            f"{' / '.join(_AKSHARE_DAILY_NAMES)}, 可能是接口又改了名; "
+            "请升级 AKQuant, 或先自行取数存成文件后用 source=file"
+        )
+
+    if symbol.startswith("6"):
+        prefix = "sh"
+    elif symbol.startswith(("0", "3")):
+        prefix = "sz"
+    else:
+        prefix = "bj"
+    ak_symbol = f"{prefix}{symbol}"
+    try:
+        raw = fetch(symbol=ak_symbol, start_date=start, end_date=end, adjust=adjust)
+    except Exception as exc:
+        raise ServiceError(
+            f"AKShare 请求失败 ({ak_symbol}): {type(exc).__name__}: {exc}"
+        ) from exc
+    if raw is None or raw.empty:
+        raise ServiceError(f"AKShare 没有返回数据: {ak_symbol} {start}~{end}")
+    return cast(pd.DataFrame, raw)
+
+
 def _load(norm: Dict[str, Any], file: Optional[Path]) -> Tuple[pd.DataFrame, List[str]]:
     if norm["source"] == "file":
         assert file is not None
@@ -298,16 +350,9 @@ def _load(norm: Dict[str, Any], file: Optional[Path]) -> Tuple[pd.DataFrame, Lis
             raw = pd.read_parquet(file)
         return normalize_frame(raw, norm["symbol"], norm["timezone"])
     if norm["source"] == "akshare":
-        try:
-            raw = fetch_akshare_symbol(
-                norm["symbol"], norm["start"], norm["end"], adjust=norm["adjust"]
-            )
-        except ImportError as exc:
-            raise ServiceError("需要先安装 AKShare: pip install akshare") from exc
-        except RuntimeError as exc:
-            raise ServiceError(f"AKShare 请求失败: {exc}") from exc
-        except ValueError as exc:
-            raise ServiceError(f"AKShare 没有返回数据: {exc}") from exc
+        raw = _fetch_akshare_daily(
+            norm["symbol"], norm["start"], norm["end"], norm["adjust"]
+        )
         return normalize_frame(raw, norm["symbol"], DEFAULT_TZ)
     frame = synthetic_frame(
         symbols=norm["symbols"],

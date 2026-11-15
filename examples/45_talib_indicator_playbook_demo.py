@@ -4,11 +4,11 @@ import argparse
 from typing import cast
 
 import akquant as aq
+import akshare as ak
 import numpy as np
 import pandas as pd
 from akquant import Bar, Strategy
 from akquant import talib as ta
-from akquant.utils import fetch_akshare_symbol
 
 
 def a_share_minute_index(start: str, periods: int) -> pd.DatetimeIndex:
@@ -60,7 +60,7 @@ def build_akshare_data(
     adjust: str,
 ) -> pd.DataFrame:
     """Build AKShare daily OHLCV data for the playbook demo."""
-    df = fetch_akshare_symbol(
+    df = ak.stock_zh_a_hist_sina(
         symbol=symbol,
         start_date=start_date,
         end_date=end_date,

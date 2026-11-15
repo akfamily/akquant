@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> 本版含破坏性变更：移除 `fetch_akshare_symbol`，详见下文。
+
+### Removed
+- **移除 `aq.fetch_akshare_symbol` / `akquant.utils.fetch_akshare_symbol`（破坏性变更）**。它只是给 6 位代码补上市场前缀后转调 AKShare 的一个接口，而 AKShare 的接口名会变（见下条），内置这层转调只会让 AKQuant 跟着失效。AKQuant 不负责取数：用任何数据源拿到 DataFrame 后直接传给 `run_backtest(data=df)` 即可。原先的调用改成直接调 AKShare，代码要带市场前缀：
+    ```python
+    import akshare as ak
+
+    df = ak.stock_zh_a_hist_sina(symbol="sh600000", start_date="20240101", end_date="20241231", adjust="qfq")
+    ```
+
+### Fixed
+- **AKShare 1.20.45 起接口改名，MCP 的 `prepare_data(source="akshare")` 与多数联网示例失效**：`stock_zh_a_daily` 在 1.20.45 改名为 `stock_zh_a_daily_sina`、1.20.64 再改为 `stock_zh_a_hist_sina`，`tool_trade_date_hist_sina` 在 1.20.45 改名为 `calendar_trade_date_hist_sina`，旧名已被删除。
+    - MCP 的 AKShare 取数改在 MCP 模块内部实现，三代接口名都认，新旧版本的 AKShare 都能用；已装版本里一个都找不到时，报错会写明是接口名对不上，不再报成“请求失败”。
+    - 示例、文档与内置日历更新脚本统一改用新接口名，运行这些联网示例需要 AKShare 1.20.64 及以上（要求 Python 3.11.5 及以上）；带离线合成数据的示例不受影响。
+
 ## [0.3.89] - 2026-11-14
 
 > **规则版本 2.4.1**：把订单对象直接传给 `cancel_order` 的策略（如 `for o in self.get_open_orders(): self.cancel_order(o)`），回测结果会变——此前撤单不生效、订单照常挂着或成交，现在会被撤掉。其余策略的回测结果不变（本版的性能改动逐值不变）。

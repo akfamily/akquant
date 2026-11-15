@@ -69,7 +69,7 @@ if __name__ == "__main__":
     data_map: dict[str, pd.DataFrame] = {}
 
     for symbol in symbols:
-        df = ak.stock_zh_a_daily(
+        df = ak.stock_zh_a_hist_sina(
             symbol=symbol, start_date="20220101", end_date="20231231", adjust="qfq"
         )
         if df.empty:

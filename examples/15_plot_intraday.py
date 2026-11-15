@@ -82,7 +82,7 @@ if __name__ == "__main__":
     print("Generating synthetic minute data for demonstration...")
 
     # 1. Get Daily Data first
-    daily_df = ak.stock_zh_a_daily(
+    daily_df = ak.stock_zh_a_hist_sina(
         symbol=SYMBOL, start_date="20230101", end_date="20230131"
     )
 
