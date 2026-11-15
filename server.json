@@ -21,7 +21,7 @@
           "type": "named",
           "name": "--with",
           "value": "akquant[mcp]==0.3.90",
-          "description": "Install the optional MCP dependencies (MCP SDK and AKShare) together with AKQuant"
+          "description": "Install the optional MCP dependencies (MCP SDK) together with AKQuant"
         }
       ],
       "packageArguments": [

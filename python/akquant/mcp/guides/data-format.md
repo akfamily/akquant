@@ -2,7 +2,7 @@
 
 在 MCP 里用 `prepare_data` 准备数据，拿到 `dataset_id` 后交给 `run_backtest`；数据会被规范成 `date`（带时区）、`open`、`high`、`low`、`close`、`volume`、`symbol` 七列。
 
-## 三种来源
+## 两种来源
 
 本地文件（CSV 或 Parquet，路径必须在项目根目录或 AKTools 数据目录内）：
 
@@ -10,7 +10,7 @@
 {"source": "file", "path": "data/600000.csv", "symbol": "600000", "timezone": "Asia/Shanghai"}
 ```
 
-同时接入了 AKTools（AKShare 的 MCP 服务）时，真实行情分两步准备：
+AKQuant 的 MCP 不联网取数。真实行情用 AKTools（AKShare 的 MCP 服务）分两步准备；没有接入 AKTools 时，请用户先把数据存成 CSV 或 Parquet 放进项目目录：
 
 1. 调用 AKTools 的 `save_data`，例如接口 `stock_zh_a_hist_sina`、参数 `{"symbol": "sh600519", "start_date": "20240101", "end_date": "20241231", "adjust": "qfq"}`。它把完整数据存成 CSV，返回文件路径 `path` 和各列的单位说明。
 2. 把这个 `path` 原样传给 `prepare_data`，并且必须传 `symbol`（文件名是“接口名加参数哈希”，不能当标的名；不传会报错）：
@@ -20,12 +20,6 @@
 ```
 
 取数时优先选新浪财经、腾讯的接口：成交量单位是“股”。东方财富行情接口的中文列名也能识别，但成交量单位是“手”（100 股），`prepare_data` 不做换算；`save_data` 返回的列说明里写有单位。
-
-AKShare（一期只支持 A 股个股日线，代码为 6 位）：
-
-```json
-{"source": "akshare", "symbol": "600000", "start": "2023-01-01", "end": "2024-12-31", "adjust": "qfq"}
-```
 
 合成数据（几何随机游走；只用来验证策略能跑通，不要看收益）：
 

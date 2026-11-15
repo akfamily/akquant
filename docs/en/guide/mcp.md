@@ -117,11 +117,11 @@ Notes:
 - **Replace `--root` with your own directory**, e.g. `/Users/<you>/akquant-demo` on macOS. In JSON, write Windows paths with forward slashes or escape `\` as `\\`. Without `--root` the server uses the directory the client starts it in, which differs between clients, so always pass it.
 - **If AKQuant is already installed with pip** (`pip install "akquant[mcp]"`), you can replace `uvx --from "akquant[mcp]" akquant-mcp` with `akquant-mcp`; it must be on PATH, or use the absolute path of the executable inside your uv/venv environment.
 - **Desktop apps can't find `uvx`** (e.g. `spawn uvx ENOENT`): Claude Desktop, Cursor and similar apps may not see your shell's PATH; replace `"command": "uvx"` with the full path of `uvx` (`where uvx` on Windows, `which uvx` on macOS and Linux).
-- `akquant[mcp]` includes the MCP SDK and AKShare, so `prepare_data` can fetch data from AKShare directly.
+- `akquant[mcp]` includes only the MCP SDK, not AKShare: the AKQuant MCP server does not fetch data from the network. Real market data is fetched and saved to a file by AKTools, see [How data gets from AKTools to AKQuant](#aktools-handoff).
 
 ### Slow first start {: #first-start }
 
-On first start `uvx` downloads AKQuant, AKShare and other dependencies, which can exceed the client's timeout and show up as a connection timeout or startup failure. Run it once in a terminal to download everything, then restart the assistant:
+On first start `uvx` downloads AKQuant and its dependencies (AKTools also downloads AKShare), which can exceed the client's timeout and show up as a connection timeout or startup failure. Run it once in a terminal to download everything, then restart the assistant:
 
 ```bash
 uvx --from "akquant[mcp]" akquant-mcp --help
@@ -211,7 +211,7 @@ Backtest results and suggestions are AI-generated, for learning and research onl
 | `search_api` / `get_api` | Look up API signatures and docs (runtime introspection, matches the installed version), including class members such as `Bar.close` and `BarBatch.missing` |
 | `get_guide` | Strategy-writing notes: skeleton, orders, indicators, data format, market rules |
 | `check_strategy` | Static check of a strategy file, without executing it: misspelled method names, keyword names, argument counts, and attributes that do not exist on callback arguments such as `bar` and `batch` |
-| `prepare_data` | Prepare data: local CSV/Parquet, AKShare (A-share daily bars), synthetic |
+| `prepare_data` | Prepare data: local CSV/Parquet (including files saved by AKTools), synthetic |
 | `run_backtest` | Run a backtest in a subprocess; returns core metrics, the first trades and structured errors (the failing strategy line and a fix hint) |
 | `get_run_details` | Page through trades, orders, daily equity and logs |
 

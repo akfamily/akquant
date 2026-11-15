@@ -22,7 +22,7 @@ pip install akquant
 
 | 可选功能 | 内容 |
 |---|---|
-| `mcp` | MCP 服务（含 MCP SDK 与 AKShare），让 AI 助手查 API、写策略、跑回测，见 [MCP 服务](../guide/mcp.md) |
+| `mcp` | MCP 服务（含 MCP SDK），让 AI 助手查 API、写策略、跑回测，见 [MCP 服务](../guide/mcp.md) |
 | `ml` | 机器学习：scikit-learn、PyTorch |
 | `quantstats` | QuantStats 绩效报告 |
 | `signal-redis` | 外部信号接入的 Redis Stream 信号源 |

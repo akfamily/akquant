@@ -78,11 +78,10 @@ docs = [
 signal-redis = [
     "redis>=5.0.0",
 ]
-# MCP 服务。SDK 的大版本之间不兼容，限制在 2.x；带上 akshare，
-# 让 uvx 零安装启动时 prepare_data 也能用 AKShare 取数
+# MCP 服务。SDK 的大版本之间不兼容，限制在 2.x。不带 akshare：
+# 取数由 AKShare 的 MCP 服务 AKTools 负责，prepare_data 只读它存下的文件
 mcp = [
     "mcp>=2.3,<3",
-    "akshare>=1.0.0",
 ]
 full = [
     "plotly>=5.0.0",
