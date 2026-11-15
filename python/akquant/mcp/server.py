@@ -21,7 +21,10 @@ INSTRUCTIONS = (
     "get_api 查接口 -> 写策略文件 -> check_strategy -> prepare_data -> "
     "run_backtest -> 按 error.user_frames 与 hint 修改后重跑; 明细用 "
     "get_run_details 分页读取。只支持类式 Strategy 子类; 路径须在项目根"
-    "目录内。回测在子进程中执行, 不做沙箱。"
+    "目录内(数据文件另外允许 AKTools 的数据目录)。真实行情: 同时接入了 "
+    "AKTools(AKShare 的 MCP)时, 先用它的 save_data 把数据存成 CSV, 再把返回的 "
+    "path 连同 symbol 交给 prepare_data(source=file)。回测在子进程中执行, "
+    "不做沙箱。"
 )
 
 
@@ -96,7 +99,10 @@ def build_server(cfg: ServiceConfig) -> MCPServer:
         """准备回测数据并缓存, 返回 dataset_id 与摘要(含 issues).
 
         spec.source 三选一:
-        file: {"source": "file", "path": "data/x.csv", "symbol"?, "timezone"?};
+        file: {"source": "file", "path": "data/x.csv", "symbol"?, "timezone"?},
+        path 须在项目根目录或 AKTools 数据目录内。读 AKTools save_data 存下的
+        文件时, path 填它返回的路径并必须传 symbol(如 "600519"); 取数时优先
+        选新浪财经、腾讯的接口(列名为英文, 成交量单位是股);
         akshare: {"source": "akshare", "symbol": "600000", "start": "20230101",
         "end": "20241231", "adjust"?: "qfq"}(仅 A 股个股日线);
         synthetic: {"source": "synthetic", "symbols"?, "start"?, "end"?,

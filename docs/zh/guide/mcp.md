@@ -184,13 +184,25 @@ DeepSeek Harness 在 `cordis.patch.yml` 里写两条：
         args: ['--from', 'akquant[mcp]', 'akquant-mcp', '--root', '/path/to/akquant-demo']
 ```
 
+### 数据怎么从 AKTools 交给 AKQuant {: #aktools-handoff }
+
+两个服务不能直接互相调用，数据通过本机文件交接：
+
+1. 助手调用 AKTools 的 `save_data`（AKTools 0.1.12 起提供，只在 stdio 方式下可用），把接口的完整数据存成 CSV。文件写在 AKTools 的数据目录，默认是用户目录下的 `.aktools/data`，可以用环境变量 `AKTOOLS_DATA_DIR` 修改。
+2. 助手把 `save_data` 返回的文件路径和标的代码交给 AKQuant 的 `prepare_data`（`source="file"`），之后照常回测。
+
+AKQuant 读同一个环境变量 `AKTOOLS_DATA_DIR`，未设置时同样取 `~/.aktools/data`，所以两边都用默认值时不需要任何配置。修改了这个目录时，要在两个服务的 `env` 里都设置成同一个值。
+
+- 读取 AKTools 目录里的文件时必须传 `symbol`：文件名是“接口名加参数哈希”，不是标的代码，不传会报错。
+- 取数时优先用新浪财经、腾讯的接口（如 `stock_zh_a_hist_sina`）：列名是英文，成交量单位是“股”。
+
 回测结果与改进建议由 AI 生成，仅供学习和研究，不构成投资建议。
 
 ## 命令行参数 {: #options }
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `--root` | 客户端启动服务的目录 | 项目根目录。策略文件和数据文件都必须位于这个目录内 |
+| `--root` | 客户端启动服务的目录 | 项目根目录。策略文件和数据文件都必须位于这个目录内；数据文件另外允许 AKTools 的数据目录，见[数据怎么从 AKTools 交给 AKQuant](#aktools-handoff) |
 | `--max-runs` | 50 | 保留最近多少次回测结果 |
 
 `akquant mcp` 与 `akquant-mcp` 是同一个命令，参数相同。
@@ -224,4 +236,4 @@ DeepSeek Harness 在 `cordis.patch.yml` 里写两条：
 
 ## 安全说明 {: #security }
 
-这是本地开发工具，**不做沙箱**：`run_backtest` 在子进程中执行策略文件，信任程度与你自己运行 `python strategy.py` 相同。路径限制在项目根目录内，只是为了防止 AI 误读其他目录，不是安全隔离。请只运行自己或助手刚写好、看过内容的策略，不要运行来源不明的策略文件。
+这是本地开发工具，**不做沙箱**：`run_backtest` 在子进程中执行策略文件，信任程度与你自己运行 `python strategy.py` 相同。路径限制在项目根目录内（数据文件另外允许 AKTools 的数据目录，且只读 `.csv` 和 `.parquet`），只是为了防止 AI 误读其他目录，不是安全隔离。请只运行自己或助手刚写好、看过内容的策略，不要运行来源不明的策略文件。

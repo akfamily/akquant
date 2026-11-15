@@ -19,13 +19,15 @@ import numpy as np
 import pandas as pd
 
 from . import ServiceError
-from .paths import ServiceConfig, resolve_in_root, write_json_atomic
+from .paths import ServiceConfig, resolve_data_file, write_json_atomic
 
 DEFAULT_TZ = "Asia/Shanghai"
 STANDARD_COLUMNS = ["date", "open", "high", "low", "close", "volume", "symbol"]
 #: 与 akquant.normalize 的候选时间列一致
 DATE_CANDIDATES = ("date", "datetime", "time", "timestamp", "日期", "时间")
 _OHLC = ["open", "high", "low", "close"]
+#: 文件里可以充当标的列的列名(小写); CSV 中这些列按文本读, 保住 000001 的前导零
+_SYMBOL_COLUMNS = ("symbol", "code")
 _ALLOWED_KEYS = {
     "file": {"source", "path", "symbol", "timezone"},
     "akshare": {"source", "symbol", "start", "end", "adjust"},
@@ -231,14 +233,21 @@ def _normalize_spec(
     if source == "file":
         if "path" not in spec:
             raise ServiceError("source=file 需要 path")
-        file = resolve_in_root(cfg, spec["path"])
+        file, in_aktools = resolve_data_file(cfg, spec["path"])
         if not file.is_file():
             raise ServiceError(f"数据文件不存在: {spec['path']}")
         if file.suffix.lower() not in (".csv", ".parquet"):
             raise ServiceError("只支持 .csv / .parquet 文件")
+        symbol = str(spec.get("symbol") or "").strip()
+        if not symbol and in_aktools and not _has_symbol_column(file):
+            # AKTools 的文件名是"接口名-参数哈希", 当标的名没有意义
+            raise ServiceError(
+                "AKTools 保存的文件里没有标的列, 文件名也不是标的代码: "
+                '请在 spec 里传 symbol, 如 "symbol": "600519"'
+            )
         return {
             "source": "file",
-            "symbol": spec.get("symbol") or file.stem,
+            "symbol": symbol or file.stem,
             "timezone": spec.get("timezone") or DEFAULT_TZ,
         }, file
     if source == "akshare":
@@ -271,6 +280,19 @@ def _normalize_spec(
         "start_price": float(spec.get("start_price", 10.0)),
         "volatility": None if vol is None else float(vol),
     }, None
+
+
+def _file_columns(file: Path) -> List[str]:
+    """只读表头, 返回数据文件的列名."""
+    if file.suffix.lower() == ".csv":
+        return [str(c) for c in pd.read_csv(file, nrows=0).columns]
+    import pyarrow.parquet as pq
+
+    return [str(c) for c in pq.read_schema(file).names]
+
+
+def _has_symbol_column(file: Path) -> bool:
+    return any(c.strip().lower() in _SYMBOL_COLUMNS for c in _file_columns(file))
 
 
 def _dataset_id(norm: Dict[str, Any], file: Optional[Path]) -> str:
@@ -341,9 +363,7 @@ def _load(norm: Dict[str, Any], file: Optional[Path]) -> Tuple[pd.DataFrame, Lis
         if file.suffix.lower() == ".csv":
             header = pd.read_csv(file, nrows=0)
             text_cols = [
-                c
-                for c in header.columns
-                if str(c).strip().lower() in ("symbol", "code")
+                c for c in header.columns if str(c).strip().lower() in _SYMBOL_COLUMNS
             ]
             raw = pd.read_csv(file, dtype={c: str for c in text_cols})
         else:

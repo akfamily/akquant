@@ -273,3 +273,52 @@ def test_akshare_symbol_gets_market_prefix(
     _install_fake_akshare(monkeypatch, stock_zh_a_hist_sina=fetch)
     data._fetch_akshare_daily(symbol, "20240101", "20240131", "")
     assert seen == [ak_symbol]
+
+
+SAVED_NAME = "stock_zh_a_hist_sina-89238273f5.csv"
+
+
+def test_file_in_aktools_dir_is_readable(cfg: ServiceConfig, aktools_dir: Path) -> None:
+    """AKTools save_data 存下的文件在项目根目录之外, 也能用 source=file 读."""
+    saved = aktools_dir / SAVED_NAME
+    saved.write_text(CSV, encoding="utf-8")
+    out = data.prepare_data(
+        cfg, {"source": "file", "path": str(saved), "symbol": "600519"}
+    )
+    assert out["symbols"] == ["600519"] and out["rows"] == 2
+
+
+def test_file_in_aktools_dir_requires_symbol(
+    cfg: ServiceConfig, aktools_dir: Path
+) -> None:
+    """AKTools 的文件名是接口名加哈希, 不能当标的名: 没传 symbol 直接报错."""
+    saved = aktools_dir / SAVED_NAME
+    saved.write_text(CSV, encoding="utf-8")
+    with pytest.raises(ServiceError, match="symbol"):
+        data.prepare_data(cfg, {"source": "file", "path": str(saved)})
+    with_symbol = aktools_dir / "with-symbol.csv"
+    with_symbol.write_text(
+        "date,open,high,low,close,volume,symbol\n2024-01-02,10,11,9,10,1000,000001\n",
+        encoding="utf-8",
+    )
+    out = data.prepare_data(cfg, {"source": "file", "path": str(with_symbol)})
+    assert out["symbols"] == ["000001"]
+
+
+def test_file_in_root_without_symbol_still_uses_stem(
+    cfg: ServiceConfig, write_file: WriteFile
+) -> None:
+    """项目目录内的文件不传 symbol 时仍用文件名(原有行为不变)."""
+    write_file("600000.csv", CSV)
+    out = data.prepare_data(cfg, {"source": "file", "path": "600000.csv"})
+    assert out["symbols"] == ["600000"]
+
+
+def test_aktools_dir_only_accepts_data_files(
+    cfg: ServiceConfig, aktools_dir: Path
+) -> None:
+    """AKTools 目录里也只读 .csv / .parquet."""
+    other = aktools_dir / "notes.txt"
+    other.write_text("x", encoding="utf-8")
+    with pytest.raises(ServiceError, match="csv"):
+        data.prepare_data(cfg, {"source": "file", "path": str(other), "symbol": "x"})

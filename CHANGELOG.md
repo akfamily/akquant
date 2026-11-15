@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     df = ak.stock_zh_a_hist_sina(symbol="sh600000", start_date="20240101", end_date="20241231", adjust="qfq")
     ```
 
+### Added
+- **MCP 的 `prepare_data(source="file")` 可以直接读 AKTools 存下的数据文件**。AKTools（AKShare 的官方 MCP 服务）0.1.12 新增 `save_data` 工具，把接口的完整数据存成本机 CSV；AKQuant 的 MCP 现在除项目根目录外，还允许读 AKTools 的数据目录（环境变量 `AKTOOLS_DATA_DIR`，默认 `~/.aktools/data`，与 AKTools 的取法相同），助手可以“AKTools 取数存盘，再交给 AKQuant 回测”，不必把数据目录设在项目目录内。
+    - 放行只对数据文件生效，且仍只读 `.csv` 和 `.parquet`；策略文件等其余路径照旧只认项目根目录。
+    - 读 AKTools 目录里的文件时必须传 `symbol`（文件里已有标的列时除外）：文件名是“接口名加参数哈希”，此前不传会把文件名当成标的名，现在直接报错并提示。项目目录内的文件不传 `symbol` 时仍用文件名，行为不变。
+
 ### Fixed
 - **AKShare 1.20.45 起接口改名，MCP 的 `prepare_data(source="akshare")` 与多数联网示例失效**：`stock_zh_a_daily` 在 1.20.45 改名为 `stock_zh_a_daily_sina`、1.20.64 再改为 `stock_zh_a_hist_sina`，`tool_trade_date_hist_sina` 在 1.20.45 改名为 `calendar_trade_date_hist_sina`，旧名已被删除。
     - MCP 的 AKShare 取数改在 MCP 模块内部实现，三代接口名都认，新旧版本的 AKShare 都能用；已装版本里一个都找不到时，报错会写明是接口名对不上，不再报成“请求失败”。
