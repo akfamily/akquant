@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.90] - 2026-11-15
+
+> 规则版本仍为 2.4.1，回测结果不变。
+
 > 本版含破坏性变更：移除 `fetch_akshare_symbol`，详见下文。
 
 ### Removed
