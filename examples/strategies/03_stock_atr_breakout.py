@@ -6,7 +6,7 @@
 本示例展示如何使用 AKShare 获取股票数据，并实现经典的 ATR 通道突破策略。
 
 教学目标 (Learning Objectives):
-1.  使用 `ak.stock_zh_a_daily` 获取股票数据。
+1.  使用 `ak.stock_zh_a_hist_sina` 获取股票数据。
 2.  使用 `self.get_history` 高效计算 ATR (平均真实波幅)。
 3.  实现基于波动率的通道突破策略。
 
@@ -108,7 +108,7 @@ if __name__ == "__main__":
     # 这种高价股适合演示资金管理，但这里简单演示策略逻辑
     symbol = "sh600519"
 
-    df = ak.stock_zh_a_daily(
+    df = ak.stock_zh_a_hist_sina(
         symbol=symbol, start_date="20220101", end_date="20231231", adjust="qfq"
     )
 

@@ -94,7 +94,7 @@ import pandas as pd
 # 1. 下载数据 (以前复权为例)
 # 新浪数据源，代码需带市场前缀 (sh/sz/bj); adjust="qfq" 前复权
 # 返回英文列名 date/open/high/low/close/volume/...，成交量单位是“股”
-df = ak.stock_zh_a_daily(symbol="sz000001", start_date="20200101", end_date="20231231", adjust="qfq")
+df = ak.stock_zh_a_hist_sina(symbol="sz000001", start_date="20200101", end_date="20231231", adjust="qfq")
 
 # 2. 类型转换
 df['date'] = pd.to_datetime(df['date'])

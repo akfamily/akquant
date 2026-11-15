@@ -162,14 +162,14 @@ Content-Type: application/json
 *   **自定义指标 (Custom Indicators)**:
     *   展示如何同时使用 `PrecomputedIndicator(name, fn)` 的预计算模式与 `indicator_factory` 的增量模式。参考 [自定义指标指南](custom_indicator.md) 与 [60_custom_indicator_demo.py](https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py)。
 
-### 使用 AKShare 获取 A 股日线数据 (stock_zh_a_daily)
+### 使用 AKShare 获取 A 股日线数据 (stock_zh_a_hist_sina)
 
 ```python
 import akshare as ak
 import pandas as pd
 from akquant import run_backtest
 
-df = ak.stock_zh_a_daily(symbol="sz000001", adjust="qfq")
+df = ak.stock_zh_a_hist_sina(symbol="sz000001", adjust="qfq")
 if "date" not in df.columns:
     df = df.reset_index().rename(columns={"index": "date"})
 df.columns = [c.lower() for c in df.columns]

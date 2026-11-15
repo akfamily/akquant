@@ -8,9 +8,18 @@ from akquant.mcp.service.paths import ServiceConfig, make_config
 
 
 @pytest.fixture
-def cfg(tmp_path: Path) -> ServiceConfig:
-    """以 tmp_path 为项目根、tmp_path/.home 为工作目录的配置."""
-    return make_config(root=tmp_path, home=tmp_path / ".home")
+def aktools_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """项目根目录之外的 AKTools 数据目录."""
+    return tmp_path_factory.mktemp("aktools-data")
+
+
+@pytest.fixture
+def cfg(tmp_path: Path, aktools_dir: Path) -> ServiceConfig:
+    """以 tmp_path 为项目根、tmp_path/.home 为工作目录的配置.
+
+    AKTools 数据目录指向临时目录, 不读本机的 ~/.aktools/data。
+    """
+    return make_config(root=tmp_path, home=tmp_path / ".home", aktools_dir=aktools_dir)
 
 
 @pytest.fixture

@@ -380,7 +380,7 @@ import pandas as pd
 # 下载 A 股历史日线数据 (平安银行)，使用新浪数据源，代码需带市场前缀 sz/sh/bj
 # adjust="qfq" 表示使用前复权数据，这在回测中非常重要
 # 新浪接口已返回 AKQuant 需要的英文列名 (date/open/high/low/close/volume)
-df = ak.stock_zh_a_daily(symbol="sz000001", start_date="20230101", end_date="20231231", adjust="qfq")
+df = ak.stock_zh_a_hist_sina(symbol="sz000001", start_date="20230101", end_date="20231231", adjust="qfq")
 
 # 格式转换：确保 date 列是 datetime 类型
 df['date'] = pd.to_datetime(df['date'])

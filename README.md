@@ -56,7 +56,7 @@ from akquant import Strategy
 
 # 1. 准备数据
 # 使用 akshare 获取 A 股历史数据 (需安装: pip install akshare)
-df = ak.stock_zh_a_daily(symbol="sh600000", start_date="20250212", end_date="20260212")
+df = ak.stock_zh_a_hist_sina(symbol="sh600000", start_date="20250212", end_date="20260212")
 
 
 class MyStrategy(Strategy):

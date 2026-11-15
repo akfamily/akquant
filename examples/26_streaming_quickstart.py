@@ -9,15 +9,15 @@ from akquant.config import BacktestConfig, RiskConfig, StrategyConfig
 
 def load_data() -> dict[str, pd.DataFrame]:
     """Load multi-symbol daily bars from AKShare."""
-    df_1 = ak.stock_zh_a_daily(
+    df_1 = ak.stock_zh_a_hist_sina(
         symbol="sh600000", start_date="20000101", end_date="20261231"
     )
     df_1["symbol"] = "600000"
-    df_2 = ak.stock_zh_a_daily(
+    df_2 = ak.stock_zh_a_hist_sina(
         symbol="sh600004", start_date="20000101", end_date="20261231"
     )
     df_2["symbol"] = "600004"
-    df_3 = ak.stock_zh_a_daily(
+    df_3 = ak.stock_zh_a_hist_sina(
         symbol="sh600006", start_date="20000101", end_date="20261231"
     )
     df_3["symbol"] = "600006"

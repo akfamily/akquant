@@ -15,8 +15,9 @@ We will:
 """
 
 import akquant  # Import main package
+import akshare as ak
 from akquant import AssetType, Bar, Instrument, Strategy
-from akquant.utils import fetch_akshare_symbol, load_bar_from_df
+from akquant.utils import load_bar_from_df
 
 
 class AggressiveBuyerStrategy(Strategy):
@@ -74,10 +75,15 @@ def main() -> None:
         start_date = "20231001"
         end_date = "20231101"
 
-        # Use new helper function to fetch AKShare data
-        # Handles market prefixes and column renaming automatically
+        # The Sina interface needs a market prefix: sh for 6xxxxx, sz otherwise
+        ak_symbol = f"sh{symbol}" if symbol.startswith("6") else f"sz{symbol}"
         try:
-            df = fetch_akshare_symbol(symbol, start_date, end_date)
+            df = ak.stock_zh_a_hist_sina(
+                symbol=ak_symbol,
+                start_date=start_date,
+                end_date=end_date,
+                adjust="qfq",
+            )
 
             # Convert to Bars
             # load_bar_from_df now automatically fixes timestamp scaling issues

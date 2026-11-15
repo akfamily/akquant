@@ -11,6 +11,7 @@ from akquant.mcp.service.paths import (
     ServiceConfig,
     make_config,
     prune_runs,
+    resolve_data_file,
     resolve_in_root,
     write_json_atomic,
 )
@@ -122,3 +123,45 @@ def test_prune_tolerates_vanished_dir(
     prune_runs(cfg, 1)
     monkeypatch.undo()
     assert len([p for p in cfg.runs_dir.iterdir()]) <= 2
+
+
+def test_aktools_dir_from_env_and_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """AKTools 数据目录取环境变量 AKTOOLS_DATA_DIR, 否则 ~/.aktools/data."""
+    monkeypatch.delenv("AKTOOLS_DATA_DIR", raising=False)
+    default = (Path.home() / ".aktools" / "data").resolve()
+    assert make_config(root=tmp_path).aktools_dir == default
+    custom = tmp_path / "not-created-yet"
+    monkeypatch.setenv("AKTOOLS_DATA_DIR", str(custom))
+    assert make_config(root=tmp_path).aktools_dir == custom.resolve()
+    explicit = tmp_path / "explicit"
+    cfg = make_config(root=tmp_path, aktools_dir=explicit)
+    assert cfg.aktools_dir == explicit.resolve()
+
+
+def test_resolve_data_file_allows_root_and_aktools_dir(tmp_path: Path) -> None:
+    """数据文件可以在项目根目录内, 也可以在 AKTools 数据目录内."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    aktools = tmp_path / "aktools"
+    aktools.mkdir()
+    cfg = make_config(root=root, home=root / ".h", aktools_dir=aktools)
+    saved = aktools / "stock_zh_a_hist_sina-89238273f5.csv"
+    assert resolve_data_file(cfg, saved) == (saved.resolve(), True)
+    assert resolve_data_file(cfg, "d.csv") == ((root / "d.csv").resolve(), False)
+    with pytest.raises(ServiceError, match="AKTools"):
+        resolve_data_file(cfg, tmp_path / "elsewhere.csv")
+    with pytest.raises(ServiceError):
+        resolve_data_file(cfg, aktools / ".." / "elsewhere.csv")
+
+
+def test_aktools_dir_is_not_allowed_for_strategy_paths(tmp_path: Path) -> None:
+    """放行只对数据文件生效: 策略等其余路径仍只认项目根目录."""
+    root = tmp_path / "proj"
+    root.mkdir()
+    aktools = tmp_path / "aktools"
+    aktools.mkdir()
+    cfg = make_config(root=root, home=root / ".h", aktools_dir=aktools)
+    with pytest.raises(ServiceError, match="项目根目录"):
+        resolve_in_root(cfg, aktools / "strategy.py")

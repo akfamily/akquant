@@ -18,15 +18,23 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, cast
 import numpy as np
 import pandas as pd
 
-from ...utils import fetch_akshare_symbol
+from ...schema import COLUMN_ALIASES
 from . import ServiceError
-from .paths import ServiceConfig, resolve_in_root, write_json_atomic
+from .paths import ServiceConfig, resolve_data_file, write_json_atomic
 
 DEFAULT_TZ = "Asia/Shanghai"
 STANDARD_COLUMNS = ["date", "open", "high", "low", "close", "volume", "symbol"]
 #: 与 akquant.normalize 的候选时间列一致
 DATE_CANDIDATES = ("date", "datetime", "time", "timestamp", "日期", "时间")
 _OHLC = ["open", "high", "low", "close"]
+#: 除时间列外, 各规范列认哪些列名(小写)。取自 akquant.schema 的别名表, 与
+#: run_backtest(data=df) 认的列名一致, 含 AKShare 东方财富接口的中文列名
+_FIELD_ALIASES = {
+    field: tuple(alias.lower() for alias in COLUMN_ALIASES[field])
+    for field in (*_OHLC, "volume", "symbol")
+}
+#: 文件里可以充当标的列的列名(小写); CSV 中这些列按文本读, 保住 000001 的前导零
+_SYMBOL_COLUMNS = _FIELD_ALIASES["symbol"]
 _ALLOWED_KEYS = {
     "file": {"source", "path", "symbol", "timezone"},
     "akshare": {"source", "symbol", "start", "end", "adjust"},
@@ -149,6 +157,12 @@ def normalize_frame(
     if date_col is None:
         need = ", ".join(DATE_CANDIDATES)
         raise ServiceError(f"找不到时间列, 需要以下列名之一: {need}")
+    for field, aliases in _FIELD_ALIASES.items():
+        if field in frame.columns:
+            continue  # 规范列名已在时不被别名列覆盖
+        alias = next((a for a in aliases if a in frame.columns), None)
+        if alias is not None:
+            frame = frame.rename(columns={alias: field})
     missing = [c for c in _OHLC if c not in frame.columns]
     if missing:
         raise ServiceError(f"缺少必需列: {missing}")
@@ -232,14 +246,21 @@ def _normalize_spec(
     if source == "file":
         if "path" not in spec:
             raise ServiceError("source=file 需要 path")
-        file = resolve_in_root(cfg, spec["path"])
+        file, in_aktools = resolve_data_file(cfg, spec["path"])
         if not file.is_file():
             raise ServiceError(f"数据文件不存在: {spec['path']}")
         if file.suffix.lower() not in (".csv", ".parquet"):
             raise ServiceError("只支持 .csv / .parquet 文件")
+        symbol = str(spec.get("symbol") or "").strip()
+        if not symbol and in_aktools and not _has_symbol_column(file):
+            # AKTools 的文件名是"接口名-参数哈希", 当标的名没有意义
+            raise ServiceError(
+                "AKTools 保存的文件里没有标的列, 文件名也不是标的代码: "
+                '请在 spec 里传 symbol, 如 "symbol": "600519"'
+            )
         return {
             "source": "file",
-            "symbol": spec.get("symbol") or file.stem,
+            "symbol": symbol or file.stem,
             "timezone": spec.get("timezone") or DEFAULT_TZ,
         }, file
     if source == "akshare":
@@ -274,6 +295,19 @@ def _normalize_spec(
     }, None
 
 
+def _file_columns(file: Path) -> List[str]:
+    """只读表头, 返回数据文件的列名."""
+    if file.suffix.lower() == ".csv":
+        return [str(c) for c in pd.read_csv(file, nrows=0).columns]
+    import pyarrow.parquet as pq
+
+    return [str(c) for c in pq.read_schema(file).names]
+
+
+def _has_symbol_column(file: Path) -> bool:
+    return any(c.strip().lower() in _SYMBOL_COLUMNS for c in _file_columns(file))
+
+
 def _dataset_id(norm: Dict[str, Any], file: Optional[Path]) -> str:
     payload = dict(norm)
     if file is not None:
@@ -283,31 +317,75 @@ def _dataset_id(norm: Dict[str, Any], file: Optional[Path]) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
+#: 新浪 A 股日线接口在 AKShare 各版本中的名字, 新名在前:
+#: 1.20.64 起 stock_zh_a_hist_sina, 1.20.45~1.20.63 stock_zh_a_daily_sina,
+#: 更早 stock_zh_a_daily。三者的 symbol/start_date/end_date/adjust 与返回列一致。
+_AKSHARE_DAILY_NAMES = (
+    "stock_zh_a_hist_sina",
+    "stock_zh_a_daily_sina",
+    "stock_zh_a_daily",
+)
+
+
+def _fetch_akshare_daily(
+    symbol: str, start: str, end: str, adjust: str
+) -> pd.DataFrame:
+    """用 AKShare 的新浪接口取 A 股个股日线, 失败原因转成 ServiceError."""
+    try:
+        import akshare as ak
+    except ImportError as exc:
+        raise ServiceError("需要先安装 AKShare: pip install akshare") from exc
+
+    fetch = next(
+        (
+            getattr(ak, name)
+            for name in _AKSHARE_DAILY_NAMES
+            if callable(getattr(ak, name, None))
+        ),
+        None,
+    )
+    if fetch is None:
+        version = getattr(ak, "__version__", "未知")
+        raise ServiceError(
+            f"已安装的 AKShare({version}) 里找不到 A 股日线接口 "
+            f"{' / '.join(_AKSHARE_DAILY_NAMES)}, 可能是接口又改了名; "
+            "请升级 AKQuant, 或先自行取数存成文件后用 source=file"
+        )
+
+    if symbol.startswith("6"):
+        prefix = "sh"
+    elif symbol.startswith(("0", "3")):
+        prefix = "sz"
+    else:
+        prefix = "bj"
+    ak_symbol = f"{prefix}{symbol}"
+    try:
+        raw = fetch(symbol=ak_symbol, start_date=start, end_date=end, adjust=adjust)
+    except Exception as exc:
+        raise ServiceError(
+            f"AKShare 请求失败 ({ak_symbol}): {type(exc).__name__}: {exc}"
+        ) from exc
+    if raw is None or raw.empty:
+        raise ServiceError(f"AKShare 没有返回数据: {ak_symbol} {start}~{end}")
+    return cast(pd.DataFrame, raw)
+
+
 def _load(norm: Dict[str, Any], file: Optional[Path]) -> Tuple[pd.DataFrame, List[str]]:
     if norm["source"] == "file":
         assert file is not None
         if file.suffix.lower() == ".csv":
             header = pd.read_csv(file, nrows=0)
             text_cols = [
-                c
-                for c in header.columns
-                if str(c).strip().lower() in ("symbol", "code")
+                c for c in header.columns if str(c).strip().lower() in _SYMBOL_COLUMNS
             ]
             raw = pd.read_csv(file, dtype={c: str for c in text_cols})
         else:
             raw = pd.read_parquet(file)
         return normalize_frame(raw, norm["symbol"], norm["timezone"])
     if norm["source"] == "akshare":
-        try:
-            raw = fetch_akshare_symbol(
-                norm["symbol"], norm["start"], norm["end"], adjust=norm["adjust"]
-            )
-        except ImportError as exc:
-            raise ServiceError("需要先安装 AKShare: pip install akshare") from exc
-        except RuntimeError as exc:
-            raise ServiceError(f"AKShare 请求失败: {exc}") from exc
-        except ValueError as exc:
-            raise ServiceError(f"AKShare 没有返回数据: {exc}") from exc
+        raw = _fetch_akshare_daily(
+            norm["symbol"], norm["start"], norm["end"], norm["adjust"]
+        )
         return normalize_frame(raw, norm["symbol"], DEFAULT_TZ)
     frame = synthetic_frame(
         symbols=norm["symbols"],

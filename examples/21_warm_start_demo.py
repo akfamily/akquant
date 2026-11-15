@@ -145,7 +145,7 @@ def get_real_data(symbol: str, start_date: str, end_date: str) -> List[Bar]:
     s_date = start_date.replace("-", "")
     e_date = end_date.replace("-", "")
 
-    df = ak.stock_zh_a_daily(symbol=symbol, start_date=s_date, end_date=e_date)
+    df = ak.stock_zh_a_hist_sina(symbol=symbol, start_date=s_date, end_date=e_date)
     if df.empty:
         print(f"Warning: No data found for {symbol}")
         return []
@@ -161,7 +161,7 @@ def get_real_data(symbol: str, start_date: str, end_date: str) -> List[Bar]:
 
     for _, row in df.iterrows():
         # akshare date is already datetime.date or string
-        # stock_zh_a_daily returns 'date' column as object (string) or datetime
+        # stock_zh_a_hist_sina returns 'date' column as object (string) or datetime
         # Bar 的时间戳是 UTC 纳秒: 日期须先按交易所时区本地化, 否则本地 0 点
         # 会被当作 UTC 0 点(北京时间 08:00, 闭市)。只有日期的 bar 由
         # run_backtest 改写到该交易日收盘(15:00)。

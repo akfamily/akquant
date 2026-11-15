@@ -54,7 +54,9 @@ if __name__ == "__main__":
     END_DATE = "20261231"
     INITIAL_CASH = 100_000.0
 
-    df = ak.stock_zh_a_daily(symbol=SYMBOL, start_date=START_DATE, end_date=END_DATE)
+    df = ak.stock_zh_a_hist_sina(
+        symbol=SYMBOL, start_date=START_DATE, end_date=END_DATE
+    )
     df["symbol"] = SYMBOL
 
     # from akquant.config import BacktestConfig, StrategyConfig, RiskConfig

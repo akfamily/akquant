@@ -6,7 +6,7 @@
 本示例展示如何使用 AKShare 获取股票历史数据，并运行一个经典的网格交易策略。
 
 教学目标 (Learning Objectives):
-1.  使用 `ak.stock_zh_a_daily` 获取股票数据。
+1.  使用 `ak.stock_zh_a_hist_sina` 获取股票数据。
 2.  理解网格交易的基本逻辑：分批建仓、高抛低吸。
 3.  演示如何在 `on_bar` 中管理复杂的持仓状态。
 
@@ -96,7 +96,7 @@ if __name__ == "__main__":
     # 1. 准备数据: 使用波动较大的股票，例如 宁德时代 (sz300750)
     symbol = "sz300750"
 
-    df = ak.stock_zh_a_daily(
+    df = ak.stock_zh_a_hist_sina(
         symbol=symbol, start_date="20220101", end_date="20231231", adjust="qfq"
     )
 

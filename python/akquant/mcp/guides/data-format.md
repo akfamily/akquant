@@ -4,11 +4,22 @@
 
 ## 三种来源
 
-本地文件（CSV 或 Parquet，路径必须在项目根目录内）：
+本地文件（CSV 或 Parquet，路径必须在项目根目录或 AKTools 数据目录内）：
 
 ```json
 {"source": "file", "path": "data/600000.csv", "symbol": "600000", "timezone": "Asia/Shanghai"}
 ```
+
+同时接入了 AKTools（AKShare 的 MCP 服务）时，真实行情分两步准备：
+
+1. 调用 AKTools 的 `save_data`，例如接口 `stock_zh_a_hist_sina`、参数 `{"symbol": "sh600519", "start_date": "20240101", "end_date": "20241231", "adjust": "qfq"}`。它把完整数据存成 CSV，返回文件路径 `path` 和各列的单位说明。
+2. 把这个 `path` 原样传给 `prepare_data`，并且必须传 `symbol`（文件名是“接口名加参数哈希”，不能当标的名；不传会报错）：
+
+```json
+{"source": "file", "path": "<save_data 返回的 path>", "symbol": "600519"}
+```
+
+取数时优先选新浪财经、腾讯的接口：成交量单位是“股”。东方财富行情接口的中文列名也能识别，但成交量单位是“手”（100 股），`prepare_data` 不做换算；`save_data` 返回的列说明里写有单位。
 
 AKShare（一期只支持 A 股个股日线，代码为 6 位）：
 
@@ -26,11 +37,12 @@ AKShare（一期只支持 A 股个股日线，代码为 6 位）：
 
 - 时间列按 `date`、`datetime`、`time`、`timestamp`、`日期`、`时间` 的顺序查找；8 位整数（如 `20240102`）按 `YYYYMMDD` 解析。
 - 必须有 `open`、`high`、`low`、`close` 四列；没有 `volume` 时补 0；没有 `symbol` 时，取参数 `symbol`，再没有就用文件名。
+- 中文列名也认：`开盘`、`最高`、`最低`、`收盘`、`成交量`、`股票代码`；标的列还认 `code`、`ticker`，成交量还认 `vol`。同一字段的英文列和别名列都在时用英文列。
 - 时间不带时区时，按 `timezone`（默认 `Asia/Shanghai`）本地化，并在 `issues` 里注明。
 - 时间或 OHLC 有缺失的行会被丢弃；“标的＋时间”重复的行会在 `issues` 里报出，但不会去重。
 - 多个标的用长表：每行一个“标的＋时间”。
 
-部分 AKShare 接口的成交量单位是“手”，不是“股”。如果要按成交量做限制或计算，先自己换算。
+部分 AKShare 接口（如东方财富的行情接口）的成交量单位是“手”，不是“股”。如果要按成交量做限制或计算，先自己换算后再存成文件。
 
 ## 自己构造 DataFrame
 

@@ -63,7 +63,7 @@ catalog = ParquetDataCatalog("./data_catalog")
 
 symbols = ["sh600000", "sz300750"]
 for symbol in symbols:
-    df = ak.stock_zh_a_daily(
+    df = ak.stock_zh_a_hist_sina(
         symbol=symbol,
         start_date="20230101",
         end_date="20230601",
@@ -286,7 +286,7 @@ engine.run("Rank(Ts_Mean(Close, 5))")
 **官方文档与工具**
 
 - [Polars 官方文档](https://docs.pola.rs/) —— 表达式（Expression）与惰性执行（Lazy API）是本章 14.2「表达式模式」与 14.8「Parser/Planner/Executor」机制的工程参照，其谓词下推、投影下推等查询优化思想正对应本章 14.6 关于嵌套表达式性能取舍的讨论。
-- [AKShare 官方文档](https://akshare.akfamily.xyz/) —— 本章 14.3.1 准备最小数据所用行情接口（如 `stock_zh_a_daily`）的权威来源。
+- [AKShare 官方文档](https://akshare.akfamily.xyz/) —— 本章 14.3.1 准备最小数据所用行情接口（如 `stock_zh_a_hist_sina`）的权威来源。
 - [AKQuant 因子表达式引擎指南](../guide/factor.md) —— 算子清单、分区语义与排障速查的完整参考，配合本章 14.4「写作三板斧」与 14.6「调试与性能」使用。
 
 **本书相关**

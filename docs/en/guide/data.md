@@ -88,7 +88,7 @@ import pandas as pd
 # 1. Download Data (Example: Forward Adjusted)
 # Sina source, symbol needs a market prefix (sh/sz/bj); adjust="qfq" (forward adjusted)
 # Returns English columns date/open/high/low/close/volume/...; volume is in shares
-df = ak.stock_zh_a_daily(symbol="sz000001", start_date="20200101", end_date="20231231", adjust="qfq")
+df = ak.stock_zh_a_hist_sina(symbol="sz000001", start_date="20200101", end_date="20231231", adjust="qfq")
 
 # 2. Type Conversion
 df['date'] = pd.to_datetime(df['date'])

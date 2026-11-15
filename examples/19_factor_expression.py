@@ -33,7 +33,7 @@ def setup_data_with_akshare(catalog_path: Path) -> ParquetDataCatalog:
 
         try:
             # Fetch daily data (hfq = backward adjusted)
-            df = ak.stock_zh_a_daily(
+            df = ak.stock_zh_a_hist_sina(
                 symbol=symbol, start_date=start_date, end_date=end_date, adjust="hfq"
             )
 

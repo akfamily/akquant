@@ -1,6 +1,6 @@
 """重新生成内置的中国交易所休市日表 ``src/calendar/cn_exchange_closed.txt``.
 
-数据取自 AKShare ``tool_trade_date_hist_sina()``(上交所交易日历)。文件只存
+数据取自 AKShare ``calendar_trade_date_hist_sina()``(上交所交易日历)。文件只存
 "覆盖范围内休市的工作日": 周末从不开市, 其余工作日都是交易日。
 
 每年年底交易所公布下一年休市安排后运行一次, 然后 ``uvx maturin develop``
@@ -33,7 +33,7 @@ def main() -> int:
     import akshare as ak
 
     trade = pd.DatetimeIndex(
-        pd.to_datetime(ak.tool_trade_date_hist_sina()["trade_date"])
+        pd.to_datetime(ak.calendar_trade_date_hist_sina()["trade_date"])
     )
     trade = trade.sort_values().unique()
     if len(trade) < 8000:

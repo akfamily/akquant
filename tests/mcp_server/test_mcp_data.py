@@ -1,8 +1,10 @@
 """akquant.mcp.service.data: 三种数据源、规范化与缓存."""
 
 import os
+import sys
+import types
 from pathlib import Path
-from typing import Any, Callable, List
+from typing import Any, Callable, List, Tuple
 
 import pandas as pd
 import pytest
@@ -17,6 +19,15 @@ CSV = (
     "2024-01-03,10.2,10.6,10.0,10.4,1200\n"
     "2024-01-04,10.4,10.7,10.1,,900\n"
 )
+
+
+def _install_fake_akshare(monkeypatch: pytest.MonkeyPatch, **functions: Any) -> None:
+    """把只带指定接口的假 akshare 模块注入 sys.modules(不联网)."""
+    fake = types.ModuleType("akshare")
+    fake.__version__ = "9.9.9"  # type: ignore[attr-defined]
+    for name, function in functions.items():
+        setattr(fake, name, function)
+    monkeypatch.setitem(sys.modules, "akshare", fake)
 
 
 def test_synthetic_deterministic_and_cached(cfg: ServiceConfig) -> None:
@@ -88,8 +99,10 @@ def test_akshare_monkeypatched(
     """AKShare 来源: 日期转 YYYYMMDD, 补 symbol 列, 不联网."""
     calls: List[Any] = []
 
-    def fake(symbol: str, start: str, end: str, adjust: str = "qfq") -> pd.DataFrame:
-        calls.append((symbol, start, end, adjust))
+    def fake(
+        symbol: str, start_date: str, end_date: str, adjust: str = ""
+    ) -> pd.DataFrame:
+        calls.append((symbol, start_date, end_date, adjust))
         return pd.DataFrame(
             {
                 "date": pd.to_datetime(["2024-01-02", "2024-01-03"]),
@@ -102,7 +115,7 @@ def test_akshare_monkeypatched(
             }
         )
 
-    monkeypatch.setattr(data, "fetch_akshare_symbol", fake)
+    _install_fake_akshare(monkeypatch, stock_zh_a_hist_sina=fake)
     spec = {
         "source": "akshare",
         "symbol": "600000",
@@ -110,7 +123,7 @@ def test_akshare_monkeypatched(
         "end": "20240131",
     }
     out = data.prepare_data(cfg, spec)
-    assert calls == [("600000", "20240101", "20240131", "qfq")]
+    assert calls == [("sh600000", "20240101", "20240131", "qfq")]
     assert out["symbols"] == ["600000"] and out["synthetic"] is False
 
 
@@ -120,13 +133,13 @@ def test_akshare_empty_and_spec_validation(
     """AKShare 无数据、未知字段、未知 source、坏 id 都报 ServiceError."""
 
     def empty(*args: Any, **kwargs: Any) -> pd.DataFrame:
-        raise ValueError("No data found")
+        return pd.DataFrame()
 
-    monkeypatch.setattr(data, "fetch_akshare_symbol", empty)
+    _install_fake_akshare(monkeypatch, stock_zh_a_hist_sina=empty)
     spec = {"source": "akshare", "symbol": "600000", "start": "20240101"}
     with pytest.raises(ServiceError, match="end"):
         data.prepare_data(cfg, spec)
-    with pytest.raises(ServiceError, match="AKShare"):
+    with pytest.raises(ServiceError, match="AKShare 没有返回数据"):
         data.prepare_data(cfg, {**spec, "end": "20240131"})
     with pytest.raises(ServiceError, match="不支持字段"):
         data.prepare_data(cfg, {"source": "synthetic", "rows": 10})
@@ -179,17 +192,184 @@ def test_csv_symbol_keeps_leading_zeros(
 def test_akshare_request_failure_is_service_error(
     cfg: ServiceConfig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """AKShare 请求失败(RuntimeError)转成带原因的 ServiceError."""
+    """AKShare 请求抛异常时转成带原因的 ServiceError."""
 
     def boom(*args: Any, **kwargs: Any) -> pd.DataFrame:
-        raise RuntimeError("AKShare 请求失败 (sh600000): ConnectionError: down")
+        raise ConnectionError("down")
 
-    monkeypatch.setattr(data, "fetch_akshare_symbol", boom)
+    _install_fake_akshare(monkeypatch, stock_zh_a_hist_sina=boom)
     spec = {
         "source": "akshare",
         "symbol": "600000",
         "start": "20240101",
         "end": "20240131",
     }
-    with pytest.raises(ServiceError, match="AKShare 请求失败"):
+    with pytest.raises(ServiceError, match=r"AKShare 请求失败 \(sh600000\).*down"):
         data.prepare_data(cfg, spec)
+
+
+_DAILY = pd.DataFrame(
+    {
+        "date": pd.to_datetime(["2024-01-02", "2024-01-03"]),
+        "open": [1.0, 1.1],
+        "high": [1.2, 1.2],
+        "low": [0.9, 1.0],
+        "close": [1.1, 1.15],
+        "volume": [100.0, 120.0],
+    }
+)
+
+
+@pytest.mark.parametrize(
+    ("names", "expected"),
+    [
+        (("stock_zh_a_hist_sina", "stock_zh_a_daily"), "stock_zh_a_hist_sina"),
+        (("stock_zh_a_daily_sina", "stock_zh_a_daily"), "stock_zh_a_daily_sina"),
+        (("stock_zh_a_daily",), "stock_zh_a_daily"),
+    ],
+)
+def test_akshare_daily_interface_name_by_version(
+    monkeypatch: pytest.MonkeyPatch, names: Tuple[str, ...], expected: str
+) -> None:
+    """AKShare 各版本的日线接口名都能用, 同时存在时取新名."""
+    called: List[str] = []
+
+    def make(name: str) -> Any:
+        def fetch(**kwargs: Any) -> pd.DataFrame:
+            called.append(name)
+            return _DAILY
+
+        return fetch
+
+    _install_fake_akshare(monkeypatch, **{name: make(name) for name in names})
+    out = data._fetch_akshare_daily("000001", "20240101", "20240131", "qfq")
+    assert called == [expected] and len(out) == 2
+
+
+def test_akshare_without_daily_interface_names_the_cause(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """已装的 AKShare 里没有任何已知接口名时, 报错点明是接口名而不是网络."""
+    _install_fake_akshare(monkeypatch)
+    with pytest.raises(ServiceError, match=r"9.9.9.*找不到 A 股日线接口"):
+        data._fetch_akshare_daily("600000", "20240101", "20240131", "qfq")
+
+
+@pytest.mark.parametrize(
+    ("symbol", "ak_symbol"),
+    [("600000", "sh600000"), ("000001", "sz000001"), ("300750", "sz300750")]
+    + [("920000", "bj920000"), ("830799", "bj830799")],
+)
+def test_akshare_symbol_gets_market_prefix(
+    monkeypatch: pytest.MonkeyPatch, symbol: str, ak_symbol: str
+) -> None:
+    """6 位代码按首位补市场前缀."""
+    seen: List[str] = []
+
+    def fetch(symbol: str, **kwargs: Any) -> pd.DataFrame:
+        seen.append(symbol)
+        return _DAILY
+
+    _install_fake_akshare(monkeypatch, stock_zh_a_hist_sina=fetch)
+    data._fetch_akshare_daily(symbol, "20240101", "20240131", "")
+    assert seen == [ak_symbol]
+
+
+SAVED_NAME = "stock_zh_a_hist_sina-89238273f5.csv"
+
+
+def test_file_in_aktools_dir_is_readable(cfg: ServiceConfig, aktools_dir: Path) -> None:
+    """AKTools save_data 存下的文件在项目根目录之外, 也能用 source=file 读."""
+    saved = aktools_dir / SAVED_NAME
+    saved.write_text(CSV, encoding="utf-8")
+    out = data.prepare_data(
+        cfg, {"source": "file", "path": str(saved), "symbol": "600519"}
+    )
+    assert out["symbols"] == ["600519"] and out["rows"] == 2
+
+
+def test_file_in_aktools_dir_requires_symbol(
+    cfg: ServiceConfig, aktools_dir: Path
+) -> None:
+    """AKTools 的文件名是接口名加哈希, 不能当标的名: 没传 symbol 直接报错."""
+    saved = aktools_dir / SAVED_NAME
+    saved.write_text(CSV, encoding="utf-8")
+    with pytest.raises(ServiceError, match="symbol"):
+        data.prepare_data(cfg, {"source": "file", "path": str(saved)})
+    with_symbol = aktools_dir / "with-symbol.csv"
+    with_symbol.write_text(
+        "date,open,high,low,close,volume,symbol\n2024-01-02,10,11,9,10,1000,000001\n",
+        encoding="utf-8",
+    )
+    out = data.prepare_data(cfg, {"source": "file", "path": str(with_symbol)})
+    assert out["symbols"] == ["000001"]
+
+
+def test_file_in_root_without_symbol_still_uses_stem(
+    cfg: ServiceConfig, write_file: WriteFile
+) -> None:
+    """项目目录内的文件不传 symbol 时仍用文件名(原有行为不变)."""
+    write_file("600000.csv", CSV)
+    out = data.prepare_data(cfg, {"source": "file", "path": "600000.csv"})
+    assert out["symbols"] == ["600000"]
+
+
+def test_aktools_dir_only_accepts_data_files(
+    cfg: ServiceConfig, aktools_dir: Path
+) -> None:
+    """AKTools 目录里也只读 .csv / .parquet."""
+    other = aktools_dir / "notes.txt"
+    other.write_text("x", encoding="utf-8")
+    with pytest.raises(ServiceError, match="csv"):
+        data.prepare_data(cfg, {"source": "file", "path": str(other), "symbol": "x"})
+
+
+CN_CSV = (
+    "日期,股票代码,开盘,收盘,最高,最低,成交量,成交额\n"
+    "2024-01-02,000001,9.39,9.21,9.42,9.20,1158366,1075742252.45\n"
+    "2024-01-03,000001,9.19,9.20,9.22,9.15,733610,673673613.54\n"
+)
+
+
+def _frame(cfg: ServiceConfig, out: Any) -> pd.DataFrame:
+    return pd.read_parquet(data.dataset_file(cfg, out["dataset_id"]))
+
+
+def test_chinese_column_names(cfg: ServiceConfig, write_file: WriteFile) -> None:
+    """东方财富等接口的中文列名按 akquant.schema 的别名表识别, 代码保留前导零."""
+    write_file("em.csv", CN_CSV)
+    out = data.prepare_data(cfg, {"source": "file", "path": "em.csv"})
+    assert out["symbols"] == ["000001"] and out["rows"] == 2
+    first = _frame(cfg, out).iloc[0]
+    got = [first[c] for c in ("open", "high", "low", "close", "volume")]
+    assert got == [9.39, 9.42, 9.20, 9.21, 1158366.0]
+
+
+def test_english_column_wins_over_chinese_alias(
+    cfg: ServiceConfig, write_file: WriteFile
+) -> None:
+    """同一字段中英文列都在时用英文列, 不被别名覆盖."""
+    text = "date,open,high,low,close,收盘,volume\n2024-01-02,1,3,0.5,2,99,10\n"
+    write_file("both.csv", text)
+    out = data.prepare_data(cfg, {"source": "file", "path": "both.csv"})
+    assert _frame(cfg, out).iloc[0]["close"] == 2.0
+
+
+@pytest.mark.parametrize("text", [CSV, CN_CSV], ids=["english", "chinese"])
+def test_csv_with_bom(cfg: ServiceConfig, tmp_path: Path, text: str) -> None:
+    """带 BOM 的 UTF-8 CSV(Excel 另存的常见格式)照常读, 首列列名不带 BOM."""
+    (tmp_path / "bom.csv").write_bytes(b"\xef\xbb\xbf" + text.encode("utf-8"))
+    out = data.prepare_data(
+        cfg, {"source": "file", "path": "bom.csv", "symbol": "000001"}
+    )
+    assert out["rows"] == 2 and out["symbols"] == ["000001"]
+
+
+def test_aktools_file_with_chinese_symbol_column_needs_no_symbol(
+    cfg: ServiceConfig, aktools_dir: Path
+) -> None:
+    """AKTools 存下的文件里有“股票代码”列时, 不必再传 symbol."""
+    saved = aktools_dir / "stock_zh_a_hist_em-0123456789.csv"
+    saved.write_text(CN_CSV, encoding="utf-8")
+    out = data.prepare_data(cfg, {"source": "file", "path": str(saved)})
+    assert out["symbols"] == ["000001"]

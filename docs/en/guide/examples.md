@@ -156,14 +156,14 @@ Example response (showing parameter routing result):
 *   **Custom Indicators**:
     *   Demonstrates both the precompute style with `PrecomputedIndicator(name, fn)` and the incremental style with `indicator_factory`. Refer to the [Custom Indicator Guide](custom_indicator.md) and [60_custom_indicator_demo.py](https://github.com/akfamily/akquant/blob/main/examples/60_custom_indicator_demo.py).
 
-### Fetching A-Share Daily Data with AKShare (stock_zh_a_daily)
+### Fetching A-Share Daily Data with AKShare (stock_zh_a_hist_sina)
 
 ```python
 import akshare as ak
 import pandas as pd
 from akquant import run_backtest
 
-df = ak.stock_zh_a_daily(symbol="sz000001", adjust="qfq")
+df = ak.stock_zh_a_hist_sina(symbol="sz000001", adjust="qfq")
 if "date" not in df.columns:
     df = df.reset_index().rename(columns={"index": "date"})
 df.columns = [c.lower() for c in df.columns]

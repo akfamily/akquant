@@ -111,7 +111,7 @@ if __name__ == "__main__":
 
     print("Fetching data...")
     for s in symbols:
-        df = ak.stock_zh_a_daily(
+        df = ak.stock_zh_a_hist_sina(
             symbol=s, start_date="20220101", end_date="20231231", adjust="qfq"
         )
         if not df.empty:

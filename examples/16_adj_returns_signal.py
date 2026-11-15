@@ -48,7 +48,7 @@ class AdjSignal(Strategy):
 # ----------------------- 数据准备：AKShare -----------------------
 
 # 1) 未复权日线（真实 close），用于撮合和估值
-df_raw = ak.stock_zh_a_daily(symbol="sz000001", start_date="20200101")
+df_raw = ak.stock_zh_a_hist_sina(symbol="sz000001", start_date="20200101")
 if "date" not in df_raw.columns:
     # 部分接口会把日期放在索引上，这里统一还原为列
     df_raw = df_raw.reset_index().rename(columns={"index": "date"})
@@ -65,7 +65,7 @@ df_raw["symbol"] = "000001"
 df_raw = df_raw[["date", "open", "high", "low", "close", "volume", "symbol"]]
 
 # 2) 前复权日线（用于信号），重命名为 adj_close
-df_adj = ak.stock_zh_a_daily(symbol="sz000001", adjust="qfq", start_date="20200101")
+df_adj = ak.stock_zh_a_hist_sina(symbol="sz000001", adjust="qfq", start_date="20200101")
 if "date" not in df_adj.columns:
     df_adj = df_adj.reset_index().rename(columns={"index": "date"})
 df_adj.columns = [c.lower() for c in df_adj.columns]

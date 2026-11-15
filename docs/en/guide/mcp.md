@@ -181,13 +181,25 @@ For DeepSeek Harness, add two rows to `cordis.patch.yml`:
         args: ['--from', 'akquant[mcp]', 'akquant-mcp', '--root', '/path/to/akquant-demo']
 ```
 
+### How data gets from AKTools to AKQuant {: #aktools-handoff }
+
+The two servers cannot call each other; data is handed over through a local file:
+
+1. The assistant calls AKTools' `save_data` (available since AKTools 0.1.12, stdio only), which writes an interface's full data to a CSV file. Files go to the AKTools data directory, `.aktools/data` under the user's home directory by default; set `AKTOOLS_DATA_DIR` to change it.
+2. The assistant passes the file path returned by `save_data`, together with the symbol, to AKQuant's `prepare_data` (`source="file"`) and backtests as usual.
+
+AKQuant reads the same `AKTOOLS_DATA_DIR` variable and falls back to `~/.aktools/data` as well, so no configuration is needed when both use the default. If you change the directory, set the same value in the `env` of both servers.
+
+- `symbol` is required when reading a file from the AKTools directory: the file name is the interface name plus a parameter hash, not a symbol, and omitting it is an error.
+- Prefer Sina or Tencent interfaces (such as `stock_zh_a_hist_sina`): volume is in shares. The Chinese column names of the Eastmoney quote interfaces (开盘, 最高, 最低, 收盘, 成交量, 股票代码) are recognized too, but their volume is in lots of 100 shares and AKQuant does not convert it.
+
 Backtest results and suggestions are AI-generated, for learning and research only, and are not investment advice.
 
 ## Command-line options {: #options }
 
 | Option | Default | Description |
 |---|---|---|
-| `--root` | The directory the client starts the server in | Project root. Strategy and data files must be inside it |
+| `--root` | The directory the client starts the server in | Project root. Strategy and data files must be inside it; data files may also be in the AKTools data directory, see [How data gets from AKTools to AKQuant](#aktools-handoff) |
 | `--max-runs` | 50 | How many recent backtest results to keep |
 
 `akquant mcp` and `akquant-mcp` are the same command with the same options.
@@ -221,4 +233,4 @@ Data cache and backtest results are stored in `<project root>/.akquant-mcp/` by 
 
 ## Security {: #security }
 
-This is a local development tool with **no sandbox**: `run_backtest` executes the strategy file in a subprocess, with the same trust as running `python strategy.py` yourself. Restricting paths to the project root only keeps the AI from reading other directories by mistake; it is not isolation. Only run strategies you or the assistant just wrote and reviewed; never run strategy files of unknown origin.
+This is a local development tool with **no sandbox**: `run_backtest` executes the strategy file in a subprocess, with the same trust as running `python strategy.py` yourself. Restricting paths to the project root (data files may also be in the AKTools data directory, `.csv` and `.parquet` only) only keeps the AI from reading other directories by mistake; it is not isolation. Only run strategies you or the assistant just wrote and reviewed; never run strategy files of unknown origin.
