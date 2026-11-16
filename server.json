@@ -3,7 +3,7 @@
   "name": "io.github.akfamily/akquant",
   "title": "AKQuant",
   "description": "Write and backtest trading strategies with AKQuant: API lookup, strategy checks, backtest runs",
-  "version": "0.3.90",
+  "version": "0.3.91",
   "websiteUrl": "https://akquant.akfamily.xyz/guide/mcp/",
   "repository": {
     "url": "https://github.com/akfamily/akquant",
@@ -14,14 +14,14 @@
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "akquant",
-      "version": "0.3.90",
+      "version": "0.3.91",
       "runtimeHint": "uvx",
       "runtimeArguments": [
         {
           "type": "named",
           "name": "--with",
-          "value": "akquant[mcp]==0.3.90",
-          "description": "Install the optional MCP dependencies (MCP SDK and AKShare) together with AKQuant"
+          "value": "akquant[mcp]==0.3.91",
+          "description": "Install the optional MCP dependencies (MCP SDK) together with AKQuant"
         }
       ],
       "packageArguments": [

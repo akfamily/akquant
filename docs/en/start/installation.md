@@ -22,7 +22,7 @@ Install optional features as needed; they can be combined, e.g. `pip install "ak
 
 | Extra | Contents |
 |---|---|
-| `mcp` | MCP server (MCP SDK and AKShare), so AI assistants can look up APIs, write strategies and run backtests; see [MCP Server](../guide/mcp.md) |
+| `mcp` | MCP server (MCP SDK), so AI assistants can look up APIs, write strategies and run backtests; see [MCP Server](../guide/mcp.md) |
 | `ml` | Machine learning: scikit-learn, PyTorch |
 | `quantstats` | QuantStats performance reports |
 | `signal-redis` | Redis Stream source for external signal ingestion |

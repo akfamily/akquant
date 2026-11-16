@@ -1,4 +1,4 @@
-"""prepare_data: 本地文件 / AKShare / 合成数据 -> 规范化 DataFrame -> Parquet 缓存.
+"""prepare_data: 本地文件 / 合成数据 -> 规范化 DataFrame -> Parquet 缓存.
 
 规范列: date(带时区) open high low close volume symbol, 可直接传给
 ``run_backtest(data=df)``。dataset_id 是规范化 spec 的 sha1 前 12 位,
@@ -37,7 +37,6 @@ _FIELD_ALIASES = {
 _SYMBOL_COLUMNS = _FIELD_ALIASES["symbol"]
 _ALLOWED_KEYS = {
     "file": {"source", "path", "symbol", "timezone"},
-    "akshare": {"source", "symbol", "start", "end", "adjust"},
     "synthetic": {
         "source",
         "symbols",
@@ -53,6 +52,14 @@ _SYNTHETIC_RANGE = {
     "1d": ("2023-01-02", "2024-12-31"),
     "1m": ("2024-01-02", "2024-01-08"),
 }
+#: source=akshare 已移除: 取数交给 AKShare 自己的 MCP 服务 AKTools
+_AKSHARE_REMOVED = (
+    'source="akshare" 已移除, AKQuant 的 MCP 不再联网取数。真实行情请用 AKTools'
+    "(AKShare 的 MCP 服务)的 save_data 存成 CSV, 再把它返回的 path 连同 symbol "
+    '传给 prepare_data: {"source": "file", "path": "<save_data 返回的 path>", '
+    '"symbol": "600519"}; 没有接入 AKTools 时, 请先自行把数据存成 CSV 或 '
+    "Parquet 放进项目目录"
+)
 _DATASET_ID_RE = re.compile(r"^[0-9a-f]{12}$")
 
 
@@ -223,21 +230,16 @@ def _summary(frame: pd.DataFrame) -> Dict[str, Any]:
     }
 
 
-def _yyyymmdd(value: Any, field: str) -> str:
-    text = str(value).strip().replace("-", "")
-    if len(text) != 8 or not text.isdigit():
-        raise ServiceError(f"{field} 须为 YYYYMMDD 或 YYYY-MM-DD, 收到 {value!r}")
-    return text
-
-
 def _normalize_spec(
     cfg: ServiceConfig, spec: Any
 ) -> Tuple[Dict[str, Any], Optional[Path]]:
     if not isinstance(spec, dict):
         raise ServiceError("spec 必须是对象")
     source = spec.get("source")
+    if source == "akshare":
+        raise ServiceError(_AKSHARE_REMOVED)
     if source not in _ALLOWED_KEYS:
-        msg = f"spec.source 必须是 file / akshare / synthetic 之一, 收到 {source!r}"
+        msg = f"spec.source 必须是 file / synthetic 之一, 收到 {source!r}"
         raise ServiceError(msg)
     extra = sorted(set(spec) - _ALLOWED_KEYS[source])
     if extra:
@@ -263,23 +265,6 @@ def _normalize_spec(
             "symbol": symbol or file.stem,
             "timezone": spec.get("timezone") or DEFAULT_TZ,
         }, file
-    if source == "akshare":
-        for key in ("symbol", "start", "end"):
-            if key not in spec:
-                raise ServiceError(f"source=akshare 需要 {key}")
-        symbol = str(spec["symbol"]).strip()
-        if len(symbol) != 6 or not symbol.isdigit():
-            raise ServiceError("akshare 一期只支持 6 位 A 股代码, 如 600000")
-        adjust = spec.get("adjust", "qfq")
-        if adjust not in ("qfq", "hfq", ""):
-            raise ServiceError('adjust 只能是 "qfq" / "hfq" / ""')
-        return {
-            "source": "akshare",
-            "symbol": symbol,
-            "start": _yyyymmdd(spec["start"], "start"),
-            "end": _yyyymmdd(spec["end"], "end"),
-            "adjust": adjust,
-        }, None
     freq = spec.get("freq", "1d")
     default_start, default_end = _SYNTHETIC_RANGE.get(freq, (None, None))
     vol = spec.get("volatility")
@@ -317,59 +302,6 @@ def _dataset_id(norm: Dict[str, Any], file: Optional[Path]) -> str:
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 
-#: 新浪 A 股日线接口在 AKShare 各版本中的名字, 新名在前:
-#: 1.20.64 起 stock_zh_a_hist_sina, 1.20.45~1.20.63 stock_zh_a_daily_sina,
-#: 更早 stock_zh_a_daily。三者的 symbol/start_date/end_date/adjust 与返回列一致。
-_AKSHARE_DAILY_NAMES = (
-    "stock_zh_a_hist_sina",
-    "stock_zh_a_daily_sina",
-    "stock_zh_a_daily",
-)
-
-
-def _fetch_akshare_daily(
-    symbol: str, start: str, end: str, adjust: str
-) -> pd.DataFrame:
-    """用 AKShare 的新浪接口取 A 股个股日线, 失败原因转成 ServiceError."""
-    try:
-        import akshare as ak
-    except ImportError as exc:
-        raise ServiceError("需要先安装 AKShare: pip install akshare") from exc
-
-    fetch = next(
-        (
-            getattr(ak, name)
-            for name in _AKSHARE_DAILY_NAMES
-            if callable(getattr(ak, name, None))
-        ),
-        None,
-    )
-    if fetch is None:
-        version = getattr(ak, "__version__", "未知")
-        raise ServiceError(
-            f"已安装的 AKShare({version}) 里找不到 A 股日线接口 "
-            f"{' / '.join(_AKSHARE_DAILY_NAMES)}, 可能是接口又改了名; "
-            "请升级 AKQuant, 或先自行取数存成文件后用 source=file"
-        )
-
-    if symbol.startswith("6"):
-        prefix = "sh"
-    elif symbol.startswith(("0", "3")):
-        prefix = "sz"
-    else:
-        prefix = "bj"
-    ak_symbol = f"{prefix}{symbol}"
-    try:
-        raw = fetch(symbol=ak_symbol, start_date=start, end_date=end, adjust=adjust)
-    except Exception as exc:
-        raise ServiceError(
-            f"AKShare 请求失败 ({ak_symbol}): {type(exc).__name__}: {exc}"
-        ) from exc
-    if raw is None or raw.empty:
-        raise ServiceError(f"AKShare 没有返回数据: {ak_symbol} {start}~{end}")
-    return cast(pd.DataFrame, raw)
-
-
 def _load(norm: Dict[str, Any], file: Optional[Path]) -> Tuple[pd.DataFrame, List[str]]:
     if norm["source"] == "file":
         assert file is not None
@@ -382,11 +314,6 @@ def _load(norm: Dict[str, Any], file: Optional[Path]) -> Tuple[pd.DataFrame, Lis
         else:
             raw = pd.read_parquet(file)
         return normalize_frame(raw, norm["symbol"], norm["timezone"])
-    if norm["source"] == "akshare":
-        raw = _fetch_akshare_daily(
-            norm["symbol"], norm["start"], norm["end"], norm["adjust"]
-        )
-        return normalize_frame(raw, norm["symbol"], DEFAULT_TZ)
     frame = synthetic_frame(
         symbols=norm["symbols"],
         start=norm["start"],

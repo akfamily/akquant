@@ -120,11 +120,11 @@ WorkBuddy、DeepSeek Harness、Codex、Claude Code 等能自己改配置的 AI �
 - **`--root` 换成你自己的目录**，例如 macOS 上的 `/Users/<用户名>/akquant-demo`。Windows 路径写进 JSON 时用正斜杠（如 `D:/akquant-demo`），或把 `\` 写成 `\\`。不传 `--root` 时取客户端启动服务的目录，各客户端不一样，建议总是显式传入。
 - **已经用 pip 安装了 AKQuant**（`pip install "akquant[mcp]"`）时，可以把 `uvx --from "akquant[mcp]" akquant-mcp` 换成 `akquant-mcp`；它必须在 PATH 上，装在 uv/venv 环境里时请写可执行文件的绝对路径。
 - **桌面应用报找不到 `uvx`**（如 `spawn uvx ENOENT`）：Claude Desktop、Cursor 等不一定能读到命令行的 PATH，请把 `"command": "uvx"` 改为 `uvx` 的完整路径（Windows 上用 `where uvx` 查看，macOS 和 Linux 上用 `which uvx`）。
-- `akquant[mcp]` 已包含 MCP SDK 与 AKShare，`prepare_data` 可以直接用 AKShare 取数。
+- `akquant[mcp]` 只包含 MCP SDK，不带 AKShare：AKQuant 的 MCP 不联网取数。真实行情由 AKTools 取回并存成文件，见[数据怎么从 AKTools 交给 AKQuant](#aktools-handoff)。
 
 ### 第一次启动很慢 {: #first-start }
 
-第一次启动时 `uvx` 要下载 AKQuant、AKShare 等依赖，可能超过客户端的等待时间，表现为连接超时或启动失败。可以先在命令行中运行一次，下载完成后再重启 AI 助手：
+第一次启动时 `uvx` 要下载 AKQuant 等依赖（AKTools 还要下载 AKShare），可能超过客户端的等待时间，表现为连接超时或启动失败。可以先在命令行中运行一次，下载完成后再重启 AI 助手：
 
 ```bash
 uvx --from "akquant[mcp]" akquant-mcp --help
@@ -214,7 +214,7 @@ AKQuant 读同一个环境变量 `AKTOOLS_DATA_DIR`，未设置时同样取 `~/.
 | `search_api` / `get_api` | 查 API 签名与文档（运行时内省，与本机版本一致），包括 `Bar.close`、`BarBatch.missing` 这类类成员 |
 | `get_guide` | 写策略要点：骨架、下单、指标、数据格式、市场规则 |
 | `check_strategy` | 静态检查策略文件，不执行代码：拼错的方法名、参数名、实参个数，以及 `bar`、`batch` 等回调入参上不存在的属性 |
-| `prepare_data` | 准备数据：本地 CSV/Parquet、AKShare（A 股个股日线）、合成数据 |
+| `prepare_data` | 准备数据：本地 CSV/Parquet（含 AKTools 存下的文件）、合成数据 |
 | `run_backtest` | 在子进程中回测，返回核心指标、前几笔成交和结构化报错（出错的策略行号与修改提示） |
 | `get_run_details` | 分页读取成交、委托、日频权益和日志 |
 
