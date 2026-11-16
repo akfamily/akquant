@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.91] - 2026-11-16
+
+> 规则版本仍为 2.4.1，回测结果不变。
+
 > 本版含破坏性变更：MCP 的 `prepare_data` 移除 `source="akshare"`，`akquant[mcp]` 不再附带 AKShare，详见下文。
 
 ### Removed
