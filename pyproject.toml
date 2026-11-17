@@ -101,6 +101,7 @@ dev = [
     "ta-lib==0.8.2; python_version >= '3.11'",  # 仅测试: 指标与 TA-Lib 逐值对拍的基准(tests/test_talib_alignment.py), 升级即口径变更; 无 cp310 wheel
     "types-pytz>=2025.2.0.20251108",
     "mcp>=2.3,<3",
+    "httpx>=0.27",  # 仅测试: tests/test_signal_sources_p3.py 向 HTTP 信号源发真实请求
 ]
 
 [tool.maturin]
