@@ -962,6 +962,19 @@ class LiveRunner:
                 exc_info=True,
                 extra=self._runner_log_extra(phase="live"),
             )
+        except BaseException as exc:
+            # Rust 侧 panic 经 pyo3 抛出的 PanicException 继承 BaseException, 上面
+            # 的 except Exception 接不住: 不在这里标记的话, 摘要标题仍是
+            # "Manual Stop"、也没有 CRITICAL, 崩溃的会话看起来像正常手动停止。
+            # 只补标记与日志, 异常照旧向外抛(SystemExit 等不该被吞)。
+            stop_reason = "ABORTED ON ERROR"
+            logger.critical(
+                "Stopping live runner due to fatal error: %r",
+                exc,
+                exc_info=True,
+                extra=self._runner_log_extra(phase="live"),
+            )
+            raise
         finally:
             # 策略收尾排最前: on_stop 里的撤单/平仓需要 broker 通道仍然活着,
             # 而摘要排最后才能反映 on_stop 落盘后的最终状态。
