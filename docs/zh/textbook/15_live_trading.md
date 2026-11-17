@@ -189,7 +189,7 @@ run_live(
 4. **网关选型要清醒**：内置的实盘柜台接口只有 CTP（期货）；A 股实盘需要自定义 broker，集合竞价专用委托、打新等场景同样要在自定义 broker 里实现（见 15.1.2 与《自定义 Broker 注册/生产接入清单》）。
 5. **成交语义从严**：CTP 链路使用 `execution_semantics_mode="strict"`（默认、推荐生产）——撤单/拒单/成交等**终态一律以柜台 `OnRtnOrder` 回报为准**，不要凭本地请求成功就推进状态（详见 15.2.2）。
 6. **风控前置必须开**：实盘务必显式配置 RMS 前置风控（单笔最大委托量、资金使用率、日内撤单次数、策略级止损），它是防"乌龙指"的最后一道防线（见 15.3）。
-7. **状态可恢复**：用 `save_checkpoint` 定期落盘、`run_from_checkpoint` 重启后续跑，保证宕机后"断点续传"（见 15.5.4、15.6.2）。
+7. **重启后的状态要自己管**：`run_live` 没有断点恢复——重启后持仓、资金、柜台挂单从柜台重新同步，指标历史用 `preload_history` 回灌，但本地止损单、OCO/括号单关系和策略实例里的变量都会丢，需要策略在启动后按当前持仓重建，或自行落盘。`save_checkpoint` / `run_from_checkpoint` 只用于回测与历史回放的续跑，不能恢复实盘会话（见 15.5.4、15.6.2）。
 8. **可观测性到位**：启动前用 `akquant.configure_logging(LogConfig(profile="live", file_json=True, ...))` 打开结构化日志，并接入监控告警（见 15.5.2、15.8）。
 
 一句话原则：**先 paper 后实盘、先查能力后下单、终态以柜台回报为准、风控与可观测性先于收益。**
@@ -379,6 +379,15 @@ strategy = engine_result.strategy
 ```
 
 `run_from_checkpoint` 会恢复 checkpoint 中的策略实例，不会通过 `strategy_source/strategy_loader` 重新加载策略实现。
+
+!!! warning "checkpoint 不能恢复 `run_live` 会话"
+    `save_checkpoint` / `run_from_checkpoint` 是回测入口，只适用于回测与历史回放的续跑；`run_live` 不读也不写 checkpoint。实盘进程重启后：
+
+    - **会从柜台重新同步**：持仓、资金、当日成交去重基线，以及柜台上仍然有效的挂单；
+    - **可以回灌**：`self.I()` 指标与历史缓冲，用 `run_live(preload_history=...)`；
+    - **会丢失**：本地止损单（`broker_live` 下止损不下发柜台，只存在进程内存里）、OCO/括号单的组关系、挂单归属的策略槽位，以及策略实例里的自定义变量。
+
+    因此重启后**持仓还在而止损可能已经没了**，框架不会为此告警。依赖本地止损的策略要在启动后按当前持仓重新挂出保护单，或把必要状态自行落盘。
 
 ### 15.5.5 动态策略加载 (Strategy Loader)
 

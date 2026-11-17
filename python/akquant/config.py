@@ -732,7 +732,7 @@ class StrategyConfig:
     # Fees & Commission (Default / Fallback)
     commission_rate: float = 0.0  # Commission rate (e.g. 0.0003 for 0.03%)
     commission_policy: Optional[Dict[str, Any]] = None
-    stamp_tax_rate: float = 0.0  # Stamp tax rate (e.g. 0.001, sell only)
+    stamp_tax_rate: float = 0.0  # Stamp tax rate (e.g. 0.0005, sell only)
     transfer_fee_rate: float = 0.0  # Transfer fee rate
     min_commission: float = 0.0  # Minimum commission per order (e.g. 5.0)
 
