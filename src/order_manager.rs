@@ -328,6 +328,9 @@ impl OrderManager {
         let mut terminal_without_fill_id: Option<String> = None;
         // Find existing order
         if let Some(existing) = self.active_orders.iter_mut().find(|o| o.id == report.id) {
+            // 这份回报带来了新成交(IOC 成交一部分后撤掉剩余): 不算“无成交终结”, OCO
+            // 对手单的撤销与括号单的激活由调用方按成交处理。
+            let carries_fill = report.filled_quantity > existing.filled_quantity;
             existing.status = report.status;
             // 成交时缩量会改写订单数量(见 execution::simulated)
             existing.quantity = report.quantity;
@@ -336,6 +339,7 @@ impl OrderManager {
             existing.updated_at = report.updated_at;
             existing.reject_reason = report.reject_reason;
             if existing.status != OrderStatus::Filled
+                && !carries_fill
                 && (existing.status == OrderStatus::Cancelled
                     || existing.status == OrderStatus::Expired
                     || existing.status == OrderStatus::Rejected)

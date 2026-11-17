@@ -352,7 +352,14 @@ impl OrderLedger {
                 continue;
             }
             if traded.contains(oid.as_str()) {
-                if let Some(mut order) = self.known.remove(&oid) {
+                // 本步有成交又以非成交终态离开(IOC 成交一部分后撤掉剩余, 或部分成交的
+                // 当步被撤): 以终态快照为准, 不能标成已成交。
+                if let Some(terminal) = finalized.get(oid.as_str()) {
+                    let order = (*terminal).clone();
+                    self.known.remove(&oid);
+                    self.emit(&order, &mut events);
+                    self.remember_finalized(order, limits.finalized);
+                } else if let Some(mut order) = self.known.remove(&oid) {
                     order.status = OrderStatus::Filled;
                     self.emit(&order, &mut events);
                     self.remember_finalized(order, limits.finalized);
@@ -570,6 +577,35 @@ mod tests {
         );
         let (ev, _) = l.stage_b(b(&[], &new, &[], &[]), None, LIMITS);
         assert!(ev.is_empty());
+    }
+
+    #[test]
+    fn traded_then_cancelled_order_reports_terminal_snapshot() {
+        // 本步有成交又被撤销(IOC 成交一部分后撤掉剩余): 终态以快照为准(已撤销、带
+        // 成交量), 不能标成已成交; 没有终态快照的照旧按已成交通知。
+        let mut l = OrderLedger::default();
+        let new_orders = [
+            order("ioc", OrderStatus::New, 0),
+            order("full", OrderStatus::New, 0),
+        ];
+        l.stage_b(b(&new_orders, &new_orders, &[], &[]), None, LIMITS);
+        let trades = [trade("t1", "ioc"), trade("t2", "full")];
+        let finalized = [order("ioc", OrderStatus::Cancelled, 60)];
+        let (ev, out) = l.stage_b(b(&[], &[], &trades, &finalized), None, LIMITS);
+        assert_eq!(out.len(), 2);
+        assert_eq!(
+            sig(&ev),
+            vec![
+                st("ioc", OrderStatus::Cancelled, false),
+                st("full", OrderStatus::Filled, false),
+            ]
+        );
+        assert_eq!(ev[0].order.filled_quantity, dec!(60));
+        // 留档里也是终态快照
+        assert_eq!(
+            l.find("ioc", &[]).map(|o| o.status),
+            Some(OrderStatus::Cancelled)
+        );
     }
 
     /// ⑨ 同一笔成交在同一周期的两次检查里只回调一次(原 test_trade_callback_not_duplicated_on_bar /

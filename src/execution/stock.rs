@@ -98,6 +98,7 @@ mod tests {
             execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            volume_used: Decimal::ZERO,
             ignore_volume: false,
             bar_index: 0,
             last_price: None,
@@ -165,6 +166,7 @@ mod tests {
             execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            volume_used: Decimal::ZERO,
             ignore_volume: false,
             bar_index: 0,
             last_price: None,
@@ -207,6 +209,7 @@ mod tests {
             execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            volume_used: Decimal::ZERO,
             ignore_volume: false,
             bar_index: 0,
             last_price: None,
@@ -242,6 +245,7 @@ mod tests {
             execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            volume_used: Decimal::ZERO,
             ignore_volume: false,
             bar_index: 0,
             last_price: None,
@@ -286,6 +290,7 @@ mod tests {
             },
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            volume_used: Decimal::ZERO,
             ignore_volume: false,
             bar_index: 0,
             last_price: None,
@@ -326,6 +331,7 @@ mod tests {
             execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            volume_used: Decimal::ZERO,
             ignore_volume: false,
             bar_index: 0,
             last_price: None,
@@ -354,6 +360,7 @@ mod tests {
             execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            volume_used: Decimal::ZERO,
             ignore_volume: false,
             bar_index: 1,
             last_price: None,
@@ -387,6 +394,7 @@ mod tests {
             execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            volume_used: Decimal::ZERO,
             ignore_volume: false,
             bar_index: 0,
             last_price: None,
@@ -403,6 +411,7 @@ mod tests {
             execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            volume_used: Decimal::ZERO,
             ignore_volume: false,
             bar_index: 1,
             last_price: None,
@@ -419,6 +428,7 @@ mod tests {
             execution_policy_core: default_policy_core(),
             slippage: &crate::execution::slippage::ZeroSlippage,
             volume_limit_pct: Decimal::ZERO,
+            volume_used: Decimal::ZERO,
             ignore_volume: false,
             bar_index: 2,
             last_price: None,
@@ -496,6 +506,70 @@ mod tests {
         let report = matcher.match_order(&mut order, &ctx);
         assert!(report.is_some());
         assert_eq!(order.filled_quantity, dec!(50));
+        assert_eq!(order.status, OrderStatus::Filled);
+    }
+
+    /// 限价买 `quantity` 股、成交量 10000、比例 0.25(整根上限 2500)下撮合一次。
+    fn match_with_limit(
+        quantity: Decimal,
+        time_in_force: TimeInForce,
+        volume_used: Decimal,
+    ) -> (Order, Option<Event>) {
+        let matcher = StockMatcher::default();
+        let mut order = create_order(OrderSide::Buy, OrderType::Limit, Some(dec!(10.5)), None);
+        order.quantity = quantity;
+        order.time_in_force = time_in_force;
+        let instr = create_instrument();
+        let event = bar_event(dec!(10000));
+        let mut ctx = tick_ctx(&event, &instr);
+        ctx.volume_limit_pct = dec!(0.25);
+        ctx.volume_used = volume_used;
+        let report = matcher.match_order(&mut order, &ctx);
+        (order, report)
+    }
+
+    #[test]
+    fn test_volume_limit_subtracts_volume_used_by_earlier_orders() {
+        // 整根上限 2500, 先撮合的委托已用 1500: 本笔最多成交 1000
+        let (order, report) = match_with_limit(dec!(2000), TimeInForce::GTC, dec!(1500));
+        assert!(report.is_some());
+        assert_eq!(order.filled_quantity, dec!(1000));
+        assert_eq!(order.status, OrderStatus::PartiallyFilled);
+        // 上限已用完: 本根不成交, 继续挂着
+        let (order, report) = match_with_limit(dec!(2000), TimeInForce::GTC, dec!(2500));
+        assert!(report.is_none());
+        assert_eq!(order.status, OrderStatus::New);
+        // 已用量超过上限(成交时缩量前记多了也不会出负数)
+        let (order, report) = match_with_limit(dec!(2000), TimeInForce::GTC, dec!(9999));
+        assert!(report.is_none());
+        assert_eq!(order.filled_quantity, Decimal::ZERO);
+    }
+
+    #[test]
+    fn test_fok_does_not_fill_partially() {
+        // FOK 3000 股、上限 2500: 一股不成交, 整笔撤销
+        let (order, report) = match_with_limit(dec!(3000), TimeInForce::FOK, Decimal::ZERO);
+        assert!(matches!(report, Some(Event::ExecutionReport(_, None))));
+        assert_eq!(order.status, OrderStatus::Cancelled);
+        assert_eq!(order.filled_quantity, Decimal::ZERO);
+        // 成交得完则正常成交
+        let (order, report) = match_with_limit(dec!(2500), TimeInForce::FOK, Decimal::ZERO);
+        assert!(matches!(report, Some(Event::ExecutionReport(_, Some(_)))));
+        assert_eq!(order.status, OrderStatus::Filled);
+    }
+
+    #[test]
+    fn test_ioc_fills_available_volume_and_cancels_remainder() {
+        // IOC 3000 股、上限 2500: 成交 2500, 剩余随这笔成交一起撤销
+        let (order, report) = match_with_limit(dec!(3000), TimeInForce::IOC, Decimal::ZERO);
+        let Some(Event::ExecutionReport(_, Some(trade))) = report else {
+            panic!("应带成交回报");
+        };
+        assert_eq!(trade.quantity, dec!(2500));
+        assert_eq!(order.filled_quantity, dec!(2500));
+        assert_eq!(order.status, OrderStatus::Cancelled);
+        // 成交得完则状态为已成交
+        let (order, _) = match_with_limit(dec!(2000), TimeInForce::IOC, Decimal::ZERO);
         assert_eq!(order.status, OrderStatus::Filled);
     }
 
