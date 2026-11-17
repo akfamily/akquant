@@ -106,7 +106,8 @@ impl RiskRule for MaxOrderValueRule {
             };
 
             if let Some(p) = price {
-                let value = p * order.quantity;
+                // 期货/期权的委托金额要乘合约乘数(股票为 1)
+                let value = p * order.quantity * ctx.instrument.multiplier();
                 if value > max_value {
                     return Err(AkQuantError::OrderError(format!(
                         "Risk: Order value {value} exceeds limit {max_value}",

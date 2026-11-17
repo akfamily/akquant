@@ -3624,6 +3624,7 @@ def check_strategy_limits(
     max_order_value: typing.Optional[float] = ...,
     max_order_size: typing.Optional[float] = ...,
     max_position_size: typing.Optional[float] = ...,
+    multiplier: typing.Optional[float] = ...,
 ) -> typing.Optional[str]:
     r"""
     校验一笔委托是否触碰策略级限额 (broker_live 报单前的前置风控).
@@ -3644,6 +3645,7 @@ def check_strategy_limits(
     :param max_order_value: 单笔名义上限 (None 表示不限)
     :param max_order_size: 单笔数量上限 (None 表示不限)
     :param max_position_size: 持仓上限 (None 表示不限)
+    :param multiplier: 合约乘数, 名义额按 价格 × 数量 × 乘数 计; None 或非正数按 1
     :return: 拒单原因; None 表示通过
     """
     ...
