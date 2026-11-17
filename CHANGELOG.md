@@ -7,15 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> 规则版本 2.4.1 → 2.4.2：最低佣金改为按委托收，按金额设的风控限额计入合约乘数（见下文两条）。只有“量限把小额委托拆成多笔成交”或“期货/期权上设了按金额的限额”的回测结果会变，其余不变。
+
 ### Fixed
+- **最低佣金按委托收，不再按成交收**：开了量限（`volume_limit_pct`，A 股标准模板默认开）后，一笔委托会被拆成多笔成交，此前每笔成交各收一次最低佣金——买 300 股拆成 3 笔，佣金从 5 元变成 15 元。现在整笔委托的佣金是“各笔成交佣金之和”与最低佣金中的较大者：首笔成交先按最低佣金收齐，之后的成交只补差额。一次成交完的委托不受影响；印花税、过户费仍按每笔成交额计。适用于股票、基金与 `SimpleMarket`。
+- **按金额设的风控限额在期货、期权上漏乘合约乘数**：`strategy_max_order_value`、`strategy_max_daily_loss`、`strategy_max_drawdown`、`strategy_risk_budget`、`portfolio_risk_budget` 与账户级 `max_order_value` 此前一律按“价格 × 数量”计，螺纹钢（乘数 10）一手 4000 元的委托被当成 4000 元而不是 40000 元，浮亏 1000 元被当成 100 元，限额等于被放宽了“乘数”倍。现在都按“价格 × 数量 × 合约乘数”计。股票乘数为 1，不受影响。实盘 `broker_live` 的报单前校验同步修正；`akquant.check_strategy_limits` 新增可选参数 `multiplier`（不传按 1）。
+- **回测里 `cancel_group` 撤不掉 OCO 组**：把 `place_oco` 返回的组号传给 `cancel_group` 时，回测会把组号当成订单号去撤，引擎找不到这个号，只留一条日志，两笔订单都还挂着，也不报错。现在按组号撤掉组内全部订单；传拆腿的下单回执时每条腿都撤。实盘不受影响。
+- **Rust 侧崩溃时实盘收尾摘要写成“Manual Stop”**：引擎内部 panic 抛出的异常不属于 `Exception`，此前绕过了错误处理，摘要标题仍是 `Manual Stop`，也没有 CRITICAL 日志，崩溃的会话看起来像正常手动停止。现在摘要标为 `ABORTED ON ERROR` 并记 CRITICAL，异常照旧向外抛；`on_stop` 与此前一样会执行。
+- **教材第 15 章把回测存档写成了实盘恢复手段**：“回测→实盘最小切换清单”曾建议用 `save_checkpoint` / `run_from_checkpoint` 实现宕机后续跑，但这两个接口只用于回测与历史回放，`run_live` 不读也不写存档。已改为实际情况，并在 15.5.4 补充说明：实盘重启后持仓、资金、柜台挂单从柜台重新同步，本地止损单、OCO/括号单关系和策略变量会丢失，需要策略自行重建。
 - **回测入口的类型存根漏了 tick 输入**：`run_backtest(data=...)` 一直接受 `list[Tick]` 与 `Bar`、`Tick` 混合的列表，但类型存根里的 `BacktestDataInput` 没有列出，传 tick 列表时类型检查器会误报。现已补上，运行行为不变。
 - `docs/llms.txt`（给 AI 助手看的说明）仍写着 `prepare_data` 支持 `source="akshare"`、`akquant[mcp]` 自带 AKShare，已改为 0.3.91 的实际情况，并补上“AKTools `save_data` 存盘，再用 `source="file"` 读入”的两步用法。
+
+### Performance
+- **只有日期的日线回测提速约 2.5 倍**：单标的日线、空策略由每根 bar 约 60 微秒降到 22～30 微秒（1,456 根由 100 毫秒降到约 43 毫秒，20,000 根由 1.1 秒降到约 0.44 秒）。此前每个交易日各做一次带时区的 `pd.Timestamp` 换算（约 18 微秒一次），占这类回测耗时的六成；现改为整批换算，结果逐值不变。分钟线和 tick 回测本来不走这条路径，耗时基本不变。
 
 ### Changed
 - **联网示例在取数失败时改用合成数据，不再直接报错退出**：`examples/` 下 11 个示例（`01_quickstart`、`11`、`17`、`21`、`26`、`59` 与 `strategies/01`～`04`、`06`）此前在未安装 AKShare、断网或 AKShare 接口改名时直接报错。现在会打印一行警告并改用固定种子的合成日线跑完；合成数据的回测结果没有参考意义。能取到数据时行为不变。
 - `docs` 可选依赖里的 AKShare 下限由 1.0.0 提高到 1.20.64（示例与内置日历更新脚本用的是该版本起的接口名），并限定 Python 3.11 及以上才安装。
 
 ### Internal
+- `scripts/bench_engine_perbar.py` 新增 `daily` 档位（单标的只有日期的日线、空策略），用来盯住每个交易日一次的 Python 侧日期换算开销；原有档位都是多标的或分钟线，这部分开销被摊薄后看不出来。
 - CI 新增 `Tests` 工作流：在 PR 与 `main` 上跑全部 Python 测试（此前测试只在本地跑）。
 
 ## [0.3.91] - 2026-11-16
