@@ -1247,6 +1247,16 @@ def run_walk_forward(
         if valid_equity.empty:
             logger.warning("No equity data in valid OOS period.")
             continue
+        # 本段样本外收益的基准: 样本外起点前最后一个权益点。预热期内不调 on_bar, 但
+        # on_after_trading 等回调照常触发, 策略在那里下单时预热段就有盈亏; 以
+        # initial_cash 为基准会把这部分算进样本外。预热段没有成交时该点就等于
+        # initial_cash, 结果不变; 没有预热段(warmup 为 0)时退回 initial_cash。
+        pre_oos_equity = equity_curve[equity_curve.index < oos_start_time]
+        segment_base = (
+            float(pre_oos_equity.iloc[-1]) if not pre_oos_equity.empty else initial_cash
+        )
+        if segment_base <= 0:
+            segment_base = initial_cash
 
         # 拼接逻辑
         if compounding:
@@ -1255,10 +1265,8 @@ def run_walk_forward(
             # 但这里我们是基于一段独立的 equity curve
             # 计算该段的收益率序列
             returns = valid_equity.pct_change().fillna(0)
-            # 第一个点的收益率需要相对于"入场资金"计算
-            # 入场资金 = initial_cash (因为回测是重置的)
-            # valid_equity.iloc[0] 相对于 initial_cash 的收益
-            first_ret = (valid_equity.iloc[0] - initial_cash) / initial_cash
+            # 第一个点的收益率相对本段基准(样本外起点前的权益)计算
+            first_ret = (valid_equity.iloc[0] - segment_base) / segment_base
             returns.iloc[0] = first_ret
 
             # 将收益率记录下来，最后统一计算？
@@ -1276,8 +1284,8 @@ def run_walk_forward(
 
         else:
             # 累加模式 (默认)：计算 PnL 并累加
-            # PnL = 当前净值 - 初始资金
-            pnl = valid_equity - initial_cash
+            # PnL = 当前净值 - 本段基准(样本外起点前的权益)
+            pnl = valid_equity - segment_base
 
             # 调整后的净值 = 上一段结束资金 + 当前段PnL
             adjusted_equity = current_capital + pnl

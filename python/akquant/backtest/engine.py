@@ -3396,7 +3396,9 @@ def run_backtest(
     :param on_timer: 定时器回调函数 (仅当 strategy 为函数时使用)
     :param context: 初始上下文数据 (仅当 strategy 为函数时使用)
     :param history_depth: 自动维护历史数据的长度 (0 表示禁用)
-    :param warmup_period: 策略预热期 (等同于 history_depth，取最大值)
+    :param warmup_period: 策略预热期 (Bar 数量)。历史缓冲深度取它与 history_depth 的
+                          较大值; 每个标的攒够这么多根之前不调 on_bar / on_bars,
+                          其它回调 (on_after_trading、on_timer 等) 不受此限制
     :param lot_size: 最小交易单位。如果是 int，则应用于所有标的；
                      如果是 Dict[str, int]，则按代码匹配；如果不传(None)，默认为 1。
     :param show_progress: 是否显示进度条 (默认 True)

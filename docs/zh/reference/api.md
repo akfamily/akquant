@@ -241,7 +241,7 @@ def run_from_checkpoint(
 *   `t_plus_one`: 是否启用 T+1 交易规则。不传时取 `broker_profile` 模板的设置（三个内置 A 股模板都开），没有模板时为 False。如果启用，将强制使用中国市场模型。
 *   `slippage`: 全局滑点 (默认 `None`，即不加滑点)。必须写成策略字典，例如 `{"type": "percent", "value": 0.0001}` 代表 1bp (0.01%) 的百分比滑点，或 `{"type": "fixed", "value": 0.2}` 代表固定价差。不再接受裸数字（含 `0`），传入会抛 `TypeError`。要关掉滑点（包括覆盖 `broker_profile` 模板里的滑点）传 `{"type": "zero"}`；不传或传 `None` 表示不覆盖，设了 `broker_profile` 时沿用模板的滑点，否则不加滑点。
 *   `volume_limit_pct`: 成交量限制比例，默认 `None`（不限制，等同 0）。设为 0.25 时单根 bar 最多成交该 bar 成交量的 25%，**这个上限由同一根 bar 上该品种的全部委托共用**（不分买卖方向、不分策略槽位）：按撮合顺序（先卖后买，同方向按提交先后）依次扣减，先撮合的委托用掉多少，后面的委托只能用剩下的，用完后其余委托留到后续 bar。截断量按手数向下取整，不足一手则本根不成交、订单继续挂着。订单剩余量不超过当根剩余上限时仍一次成交（可能是零股，比如卖出最后剩下的 50 股）。`FOK` 委托当根成交不完就一股不成交、整笔撤销；`IOC` 委托成交当根能成交的部分，剩余量随即撤销（订单终态为 `Cancelled`，`filled_quantity` 为已成交量）。**bar 的成交量必须与下单数量同单位**：AKShare 的东方财富接口 `stock_zh_a_hist_em` 成交量单位是“手”，需先乘以 100 再开启量限；新浪接口 `stock_zh_a_hist_sina` 的单位已是“股”，无需换算。量限只作用于 bar 撮合，tick 驱动的撮合不受量限约束。数量可为小数的品种（加密货币、外汇）需设置 `lot_size`（默认 1），否则截断后的数量会向下取整为整数。
-*   `warmup_period`: 策略预热期。指定需要预加载的历史数据长度（Bar 数量），用于计算指标。
+*   `warmup_period`: 策略预热期（Bar 数量）。历史缓冲深度取它与 `history_depth` 的较大值；每个标的攒够这么多根 Bar 之前不调 `on_bar` / `on_bars`，只更新指标。预热门槛只挡这两个回调：`on_after_trading`、`on_before_trading`、`on_timer`、`on_tick` 等照常触发，在这些回调里下单的策略需自己判断指标是否就绪。
 *   `start_time` / `end_time`: 回测开始/结束时间。若传入 naive 时间字符串或 `Timestamp`，会按当前 `timezone` 解释，再转换为 UTC 参与过滤。
 *   `catalog_path`: 当 `data` 未显式传入时，可从该目录按 `ParquetDataCatalog` 规则加载数据。
 *   `config`: `BacktestConfig` 配置对象，用于集中管理配置。
