@@ -47,6 +47,9 @@ PROFILES: Dict[str, Dict[str, int]] = {
     "accumulate": {"symbols": 1, "days": 750, "bars_per_day": 240},
     # 单标的反复开平: 订单/成交路径, 看单笔成本是否随累计笔数上升
     "churn": {"symbols": 1, "days": 750, "bars_per_day": 240},
+    # 单标的只有日期的日线、空 on_bar: 每个交易日一次的 Python 侧日期/会话记账
+    # (2026-11 逐日 tz_localize 曾占这一档的六成; 分钟线档位摊薄后看不出来)
+    "daily": {"symbols": 1, "days": 1500},
 }
 
 #: 会下单的档位: 每轮跑完核对订单确实成交(见 `_require_fills`)。
@@ -197,8 +200,16 @@ def _build_strategy_class(hold_positions: int) -> Any:
 
 
 def _build_on_bar_strategy_class(profile: str) -> Any:
-    """构造走 on_bar 的基准策略类(indicators / holdings / accumulate / churn)."""
+    """构造走 on_bar 的基准策略类(indicators/holdings/accumulate/churn/daily)."""
     import akquant as aq
+
+    if profile == "daily":
+
+        class EmptyStrategy(aq.Strategy):
+            def on_bar(self, bar: Any) -> None:
+                pass
+
+        return EmptyStrategy
 
     if profile == "indicators":
 
@@ -264,7 +275,7 @@ def run_profile(profile: str, rounds: int, positions: int) -> RunStats:
     hold = positions if profile == "positions" else 0
     data = _make_data(n_sym, n_day, cfg.get("bars_per_day", 1))
     symbols = sorted(data["symbol"].unique().tolist())
-    if profile in ("indicators", "holdings", "accumulate", "churn"):
+    if profile in ("indicators", "holdings", "accumulate", "churn", "daily"):
         strategy_cls = _build_on_bar_strategy_class(profile)
     else:
         strategy_cls = _build_strategy_class(hold)

@@ -739,16 +739,35 @@ def _saved_session_underlyings(strategy_instance: Any) -> Dict[str, Optional[str
     return out
 
 
-def _date_only_close_ns(resolver: Any, day: dt_module.date, timezone: str) -> int:
+def _next_local_midnights_ns(day_numbers: Sequence[int], timezone: str) -> np.ndarray:
+    """各日序号（距 1970-01-01 的天数）的次日本地 0 点（UTC 纳秒），整批换算.
+
+    逐日 ``pd.Timestamp(...).tz_localize`` 单次约 18 微秒，长区间日线回测里占到总
+    耗时的三成；整批换算每日约 0.1 微秒。次日 0 点因夏令时不存在时与逐日写法一样
+    抛 ``ValueError``。
+    """
+    naive = (np.asarray(day_numbers, dtype=np.int64) + 1).astype("datetime64[D]")
+    localized = pd.DatetimeIndex(naive).tz_localize(timezone)
+    return localized.as_unit("ns").astype(np.int64).to_numpy()
+
+
+def _date_only_close_ns(
+    resolver: Any,
+    day: dt_module.date,
+    timezone: str,
+    next_midnight: Optional[int] = None,
+) -> int:
     """会话级收盘时刻（UTC 纳秒，同日所有标的相同）；落在次日 0 点时减 1ns.
 
     同日所有标的改写到同一时刻，日线才在同一个切片里：按标的各自收盘改写时，
     混合时段表（如股票 15:00 与国债期货 15:15）会把一天拆成两个切片。
+    ``next_midnight`` 为已算好的次日本地 0 点（UTC 纳秒），不传时现算。
     """
     end = int(resolver.session_day_end(day))
-    next_midnight = int(
-        pd.Timestamp(day + dt_module.timedelta(days=1)).tz_localize(timezone).value
-    )
+    if next_midnight is None:
+        next_midnight = int(
+            pd.Timestamp(day + dt_module.timedelta(days=1)).tz_localize(timezone).value
+        )
     return end - 1 if end == next_midnight else end
 
 
@@ -809,12 +828,34 @@ class _DateOnlyRewriter:
 
     def close_ns_for_day_numbers(self, day_numbers: Sequence[int]) -> np.ndarray:
         """按日序号（距 1970-01-01 的天数）批量求会话级收盘，顺序即求值顺序."""
+        numbers = [int(n) for n in day_numbers]
+        cache = self._close_cache.setdefault(self._active_id, {})
+        missing = [n for n in dict.fromkeys(numbers) if n not in cache]
+        midnights: Dict[int, int] = {}
+        if len(missing) > 1:
+            try:
+                midnights = dict(
+                    zip(
+                        missing,
+                        _next_local_midnights_ns(missing, self.timezone).tolist(),
+                    )
+                )
+            except ValueError:
+                # 某日的次日 0 点因夏令时不存在：退回逐日求值，在该日照常报错
+                midnights = {}
         return np.array(
-            [self._close_by_day_number(int(n)) for n in day_numbers], dtype=np.int64
+            [
+                self._close_by_day_number(n, next_midnight=midnights.get(n))
+                for n in numbers
+            ],
+            dtype=np.int64,
         )
 
     def _close_by_day_number(
-        self, number: int, day: Optional[dt_module.date] = None
+        self,
+        number: int,
+        day: Optional[dt_module.date] = None,
+        next_midnight: Optional[int] = None,
     ) -> int:
         cache = self._close_cache.setdefault(self._active_id, {})
         cached = cache.get(number)
@@ -830,7 +871,7 @@ class _DateOnlyRewriter:
                 "（同类情况不再提示）",
                 day.isoformat(),
             )
-        value = _date_only_close_ns(self.resolver, day, self.timezone)
+        value = _date_only_close_ns(self.resolver, day, self.timezone, next_midnight)
         cache[number] = value
         return value
 
@@ -1438,7 +1479,8 @@ def _build_session_trading_days(
     if bool(getattr(resolver, "uses_all_days_fallback", False)):
         with_data = np.unique(day_idx[keep])
         days = [days[int(i)] for i in with_data]
-    trading_days = [pd.Timestamp(day).tz_localize(timezone) for day in days]
+    # 整批本地化：逐日 pd.Timestamp(day).tz_localize 单次约 18 微秒
+    trading_days = list(pd.DatetimeIndex(days).tz_localize(timezone))
     return trading_days, cross_section
 
 

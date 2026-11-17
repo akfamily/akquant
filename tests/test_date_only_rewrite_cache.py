@@ -298,3 +298,46 @@ def test_dst_midnight_gap_day_does_not_raise(aware: bool) -> None:
         times = _year(tz if aware else None, hours)
         _, rewritten = bt_engine._rewrite_date_only_frame(_frame(times), rewriter)
         assert rewritten is False
+
+
+@pytest.mark.parametrize("timezone", [SH, "America/New_York", "Europe/London"])
+def test_batch_next_midnights_match_per_day_localize(timezone: str) -> None:
+    """整批换算的次日本地 0 点与逐日 ``pd.Timestamp.tz_localize`` 逐值相同."""
+    first = (dt.date(2019, 1, 1) - dt.date(1970, 1, 1)).days
+    numbers = list(range(first, first + 3 * 366))
+    expected = [
+        pd.Timestamp(dt.date(1970, 1, 1) + dt.timedelta(days=n + 1))
+        .tz_localize(timezone)
+        .value
+        for n in numbers
+    ]
+    got = bt_engine._next_local_midnights_ns(numbers, timezone)
+    assert got.dtype == np.int64
+    assert got.tolist() == expected
+
+
+def test_batch_close_matches_per_day_close_and_fills_cache() -> None:
+    """批量求收盘与逐日求值逐值相同（含落在次日 0 点减 1ns 的口径）."""
+    rewriter, _ = _rewriter([("600000", aq.AssetType.Stock)])
+    first = (dt.date(2024, 1, 1) - dt.date(1970, 1, 1)).days
+    numbers = list(range(first, first + 400))
+    expected = [
+        bt_engine._date_only_close_ns(
+            rewriter.resolver, dt.date(1970, 1, 1) + dt.timedelta(days=n), SH
+        )
+        for n in numbers
+    ]
+    assert rewriter.close_ns_for_day_numbers(numbers).tolist() == expected
+    # 第二次全部命中缓存，结果不变
+    assert rewriter.close_ns_for_day_numbers(numbers[::-1]).tolist() == expected[::-1]
+
+
+def test_batch_close_raises_like_per_day_when_next_midnight_missing() -> None:
+    """次日 0 点因夏令时不存在（圣地亚哥 2024-09-08）：批量与逐日一样抛 ValueError."""
+    tz = "America/Santiago"
+    rewriter, _ = _rewriter([("SPY", aq.AssetType.Stock)], timezone=tz)
+    first = (dt.date(2024, 9, 5) - dt.date(1970, 1, 1)).days
+    with pytest.raises(ValueError, match="nonexistent"):
+        rewriter.close_ns_for_day_numbers([first, first + 1, first + 2])
+    # 出错日之前的日子已按逐日路径求出并入缓存
+    assert rewriter.close_ns_for_day_numbers([first, first + 1]).shape == (2,)
