@@ -94,6 +94,41 @@ pub(crate) fn resolve_option_config<'a>(
 }
 
 impl MarketModel for ChinaMarket {
+    fn brokerage_floor(
+        &self,
+        instrument: &Instrument,
+        price: Decimal,
+        quantity: Decimal,
+    ) -> Option<(Decimal, Decimal)> {
+        let ov = self.config.fee_overrides.get(instrument.symbol());
+        let multiplier = instrument.multiplier();
+        match instrument.asset_type {
+            AssetType::Stock => {
+                let config = self.config.stock.as_ref()?;
+                let cfg: Cow<'_, stock::StockConfig> = match ov {
+                    Some(o) => Cow::Owned(o.apply_stock(config)),
+                    None => Cow::Borrowed(config),
+                };
+                Some((
+                    stock::raw_brokerage(&cfg, price, quantity, multiplier),
+                    cfg.min_commission,
+                ))
+            }
+            AssetType::Fund => {
+                let config = self.config.fund.as_ref()?;
+                let cfg: Cow<'_, fund::FundConfig> = match ov {
+                    Some(o) => Cow::Owned(o.apply_fund(config)),
+                    None => Cow::Borrowed(config),
+                };
+                Some((
+                    fund::raw_brokerage(&cfg, price, quantity, multiplier),
+                    cfg.min_commission,
+                ))
+            }
+            _ => None,
+        }
+    }
+
     fn calculate_commission(
         &self,
         instrument: &Instrument,

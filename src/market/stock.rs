@@ -33,6 +33,20 @@ impl Default for StockConfig {
     }
 }
 
+/// 未套最低佣金的佣金部分(不含印花税、过户费)。
+pub fn raw_brokerage(
+    config: &StockConfig,
+    price: Decimal,
+    quantity: Decimal,
+    multiplier: Decimal,
+) -> Decimal {
+    match config.commission_mode {
+        CommissionMode::Percent => price * quantity * multiplier * config.commission_rate,
+        CommissionMode::Fixed => config.commission_rate,
+        CommissionMode::PerUnit => quantity * config.commission_rate,
+    }
+}
+
 /// 计算股票交易费用 (佣金 + 印花税 + 过户费)
 pub fn calculate_commission(
     config: &StockConfig,
@@ -46,11 +60,7 @@ pub fn calculate_commission(
     let mut commission = Decimal::ZERO;
 
     // 1. 佣金
-    let mut brokerage = match config.commission_mode {
-        CommissionMode::Percent => transaction_value * config.commission_rate,
-        CommissionMode::Fixed => config.commission_rate,
-        CommissionMode::PerUnit => quantity * config.commission_rate,
-    };
+    let mut brokerage = raw_brokerage(config, price, quantity, multiplier);
     if brokerage < config.min_commission {
         brokerage = config.min_commission;
     }
