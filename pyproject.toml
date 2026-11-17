@@ -73,7 +73,9 @@ docs = [
     "mkdocs>=1.5.0",
     "mkdocs-material>=9.5.0",
     "mkdocs-static-i18n>=1.2.0",
-    "akshare>=1.0.0",
+    # 示例与 scripts/update_cn_exchange_calendar.py 用的是 1.20.64 起的接口名
+    # （stock_zh_a_hist_sina 等）；该版本要求 Python >= 3.11.5，更低版本不装
+    "akshare>=1.20.64; python_full_version >= '3.11.5'",
 ]
 signal-redis = [
     "redis>=5.0.0",

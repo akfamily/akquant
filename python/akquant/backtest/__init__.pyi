@@ -16,7 +16,7 @@ import pandas as pd
 import polars as pl
 import pyarrow as pa
 
-from ..akquant import AssetType, Bar, DataFeed
+from ..akquant import AssetType, Bar, DataFeed, Tick
 from ..config import BacktestConfig, RiskConfig
 from ..feed_adapter import DataFeedAdapter
 from ..indicator_recording import IndicatorSink
@@ -38,6 +38,8 @@ BacktestDataInput = Union[
     pa.Table,
     Dict[str, pd.DataFrame],
     List[Bar],
+    List[Tick],
+    List[Union[Bar, Tick]],
     DataFeed,
     DataFeedAdapter,
 ]
