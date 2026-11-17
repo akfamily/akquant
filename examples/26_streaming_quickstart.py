@@ -1,25 +1,59 @@
 from typing import Any
 
 import akquant as aq
-import akshare as ak
+import numpy as np
 import pandas as pd
 from akquant import Bar, Strategy
 from akquant.config import BacktestConfig, RiskConfig, StrategyConfig
 
 
+def synthetic_daily(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+    """生成固定种子的合成日线（几何随机游走），只用于取数失败时让示例跑通."""
+    dates = pd.bdate_range(start_date, end_date)
+    rng = np.random.default_rng(sum(map(ord, symbol)))
+    close = 10.0 * np.exp(np.cumsum(rng.normal(0.0003, 0.02, len(dates))))
+    open_ = np.concatenate([[10.0], close[:-1]])
+    return pd.DataFrame(
+        {
+            "date": dates,
+            "open": open_,
+            "high": np.maximum(open_, close) * 1.01,
+            "low": np.minimum(open_, close) * 0.99,
+            "close": close,
+            "volume": rng.integers(1_000_000, 5_000_000, len(dates)).astype(float),
+        }
+    )
+
+
+def fetch_daily(
+    symbol: str, start_date: str, end_date: str, adjust: str = ""
+) -> pd.DataFrame:
+    """用 AKShare 取新浪 A 股日线（代码带市场前缀，如 sh600000）.
+
+    取数失败（未安装 AKShare、断网、接口改名等）时改用合成数据，保证示例能跑通；
+    合成数据的回测结果没有参考意义。
+    """
+    try:
+        import akshare as ak
+
+        df = ak.stock_zh_a_hist_sina(
+            symbol=symbol, start_date=start_date, end_date=end_date, adjust=adjust
+        )
+        if df.empty:
+            raise ValueError("返回空表")
+        return pd.DataFrame(df)
+    except Exception as exc:  # noqa: BLE001 - 示例容错，任何取数问题都回退
+        print(f"警告: AKShare 取数失败（{type(exc).__name__}: {exc}），改用合成数据")
+        return synthetic_daily(symbol, start_date, end_date)
+
+
 def load_data() -> dict[str, pd.DataFrame]:
     """Load multi-symbol daily bars from AKShare."""
-    df_1 = ak.stock_zh_a_hist_sina(
-        symbol="sh600000", start_date="20000101", end_date="20261231"
-    )
+    df_1 = fetch_daily(symbol="sh600000", start_date="20000101", end_date="20261231")
     df_1["symbol"] = "600000"
-    df_2 = ak.stock_zh_a_hist_sina(
-        symbol="sh600004", start_date="20000101", end_date="20261231"
-    )
+    df_2 = fetch_daily(symbol="sh600004", start_date="20000101", end_date="20261231")
     df_2["symbol"] = "600004"
-    df_3 = ak.stock_zh_a_hist_sina(
-        symbol="sh600006", start_date="20000101", end_date="20261231"
-    )
+    df_3 = fetch_daily(symbol="sh600006", start_date="20000101", end_date="20261231")
     df_3["symbol"] = "600006"
     return {"600000": df_1, "600004": df_2, "600006": df_3}
 

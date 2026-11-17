@@ -19,9 +19,49 @@ from typing import List
 
 import akquant as aq
 import akquant.precomputed as ind
-import akshare as ak
+import numpy as np
 import pandas as pd
 from akquant import Bar, IntParam, Strategy
+
+
+def synthetic_daily(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+    """生成固定种子的合成日线（几何随机游走），只用于取数失败时让示例跑通."""
+    dates = pd.bdate_range(start_date, end_date)
+    rng = np.random.default_rng(sum(map(ord, symbol)))
+    close = 10.0 * np.exp(np.cumsum(rng.normal(0.0003, 0.02, len(dates))))
+    open_ = np.concatenate([[10.0], close[:-1]])
+    return pd.DataFrame(
+        {
+            "date": dates,
+            "open": open_,
+            "high": np.maximum(open_, close) * 1.01,
+            "low": np.minimum(open_, close) * 0.99,
+            "close": close,
+            "volume": rng.integers(1_000_000, 5_000_000, len(dates)).astype(float),
+        }
+    )
+
+
+def fetch_daily(
+    symbol: str, start_date: str, end_date: str, adjust: str = ""
+) -> pd.DataFrame:
+    """用 AKShare 取新浪 A 股日线（代码带市场前缀，如 sh600000）.
+
+    取数失败（未安装 AKShare、断网、接口改名等）时改用合成数据，保证示例能跑通；
+    合成数据的回测结果没有参考意义。
+    """
+    try:
+        import akshare as ak
+
+        df = ak.stock_zh_a_hist_sina(
+            symbol=symbol, start_date=start_date, end_date=end_date, adjust=adjust
+        )
+        if df.empty:
+            raise ValueError("返回空表")
+        return pd.DataFrame(df)
+    except Exception as exc:  # noqa: BLE001 - 示例容错，任何取数问题都回退
+        print(f"警告: AKShare 取数失败（{type(exc).__name__}: {exc}），改用合成数据")
+        return synthetic_daily(symbol, start_date, end_date)
 
 
 # Warm Start 下指标工厂必须是模块级可 pickle 对象: 快照要序列化策略实例,
@@ -145,7 +185,7 @@ def get_real_data(symbol: str, start_date: str, end_date: str) -> List[Bar]:
     s_date = start_date.replace("-", "")
     e_date = end_date.replace("-", "")
 
-    df = ak.stock_zh_a_hist_sina(symbol=symbol, start_date=s_date, end_date=e_date)
+    df = fetch_daily(symbol=symbol, start_date=s_date, end_date=e_date)
     if df.empty:
         print(f"Warning: No data found for {symbol}")
         return []
