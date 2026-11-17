@@ -10,12 +10,31 @@
 - 网络可访问 AKShare 对应数据源
 """
 
-from typing import Any, cast
+from typing import Any, Optional, cast
 
 import akquant as aq
-import akshare as ak
+import numpy as np
 import pandas as pd
 from akquant import IntParam, Strategy
+
+
+def synthetic_daily(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
+    """生成固定种子的合成日线（几何随机游走），只用于取数失败时让示例跑通."""
+    dates = pd.bdate_range(start_date, end_date)
+    rng = np.random.default_rng(sum(map(ord, symbol)))
+    close = 10.0 * np.exp(np.cumsum(rng.normal(0.0003, 0.02, len(dates))))
+    open_ = np.concatenate([[10.0], close[:-1]])
+    return pd.DataFrame(
+        {
+            "date": dates,
+            "open": open_,
+            "high": np.maximum(open_, close) * 1.01,
+            "low": np.minimum(open_, close) * 0.99,
+            "close": close,
+            "volume": rng.integers(1_000_000, 5_000_000, len(dates)).astype(float),
+        }
+    )
+
 
 ETF_SYMBOLS = ["510300", "510500", "159915"]
 ETF_NAMES = {
@@ -45,9 +64,16 @@ def fetch_etf_history(
     这里在本地按日期截取。价格为不复权价格，除息日会有小幅跳空；
     正式研究请自行复权。
     """
-    df = ak.fund_etf_hist_sina(symbol=to_sina_etf_symbol(symbol))
-    if df.empty:
-        raise ValueError(f"No ETF data returned for {symbol}")
+    try:
+        import akshare as ak
+
+        df = ak.fund_etf_hist_sina(symbol=to_sina_etf_symbol(symbol))
+        if df.empty:
+            raise ValueError("返回空表")
+    except Exception as exc:  # noqa: BLE001 - 示例容错，任何取数问题都回退
+        # 未安装 AKShare、断网、接口改名等: 改用合成数据，保证示例能跑通
+        print(f"警告: AKShare 取数失败（{type(exc).__name__}: {exc}），改用合成数据")
+        df = synthetic_daily(symbol, start_date, end_date)
 
     required_columns = ["date", "open", "high", "low", "close", "volume"]
     missing_columns = [col for col in required_columns if col not in df.columns]
@@ -66,6 +92,17 @@ def fetch_etf_history(
     df = df.dropna(subset=["date", "open", "high", "low", "close", "volume"])
     df["symbol"] = symbol
     return cast(pd.DataFrame, df.sort_values("date").reset_index(drop=True))
+
+
+def load_trading_calendar() -> Optional[pd.Series]:
+    """取真实沪深交易日历；取不到时返回 None，引擎改用内置的交易所日历."""
+    try:
+        import akshare as ak
+
+        return pd.Series(ak.calendar_trade_date_hist_sina()["trade_date"])
+    except Exception as exc:  # noqa: BLE001 - 示例容错
+        print(f"警告: AKShare 交易日历获取失败（{type(exc).__name__}: {exc}）")
+        return None
 
 
 def build_etf_universe_dataframe(
@@ -171,8 +208,7 @@ def main() -> None:
         transfer_fee_rate=0.0,
         min_commission=0.0,
         timezone="Asia/Shanghai",
-        # 传入真实沪深交易日历: 不传时引擎按工作日推算, 节假日会被当成交易日
-        trading_calendar=ak.calendar_trade_date_hist_sina()["trade_date"],
+        trading_calendar=load_trading_calendar(),
         show_progress=False,
     )
 

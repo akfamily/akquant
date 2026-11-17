@@ -73,7 +73,9 @@ docs = [
     "mkdocs>=1.5.0",
     "mkdocs-material>=9.5.0",
     "mkdocs-static-i18n>=1.2.0",
-    "akshare>=1.0.0",
+    # 示例与 scripts/update_cn_exchange_calendar.py 用的是 1.20.64 起的接口名
+    # （stock_zh_a_hist_sina 等）；该版本要求 Python >= 3.11.5，更低版本不装
+    "akshare>=1.20.64; python_full_version >= '3.11.5'",
 ]
 signal-redis = [
     "redis>=5.0.0",
@@ -99,6 +101,7 @@ dev = [
     "ta-lib==0.8.2; python_version >= '3.11'",  # 仅测试: 指标与 TA-Lib 逐值对拍的基准(tests/test_talib_alignment.py), 升级即口径变更; 无 cp310 wheel
     "types-pytz>=2025.2.0.20251108",
     "mcp>=2.3,<3",
+    "httpx>=0.27",  # 仅测试: tests/test_signal_sources_p3.py 向 HTTP 信号源发真实请求
 ]
 
 [tool.maturin]

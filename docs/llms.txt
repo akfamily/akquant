@@ -75,7 +75,8 @@ DeepSeek Harness (`dsh`) does not read `mcp.json`; append one
 ```
 
 `akquant mcp` and `akquant-mcp` are the same command. The `akquant[mcp]`
-extra includes the MCP SDK and AKShare. In mainland China add
+extra includes only the MCP SDK (AKShare is not installed since 0.3.91). In
+mainland China add
 `"env": {"UV_INDEX_URL": "https://mirrors.aliyun.com/pypi/simple/"}`. The
 first start downloads dependencies and may exceed the client's timeout; run
 `uvx --from "akquant[mcp]" akquant-mcp --help` once in a terminal first.
@@ -88,8 +89,10 @@ Tools:
   indicators, data format, market rules); also resources
   `akquant://guide/{topic}`.
 - `check_strategy(path)`: static check of a strategy file, without running it.
-- `prepare_data(spec)`: `source` is `file` (CSV/Parquet in the project),
-  `akshare` (6-digit A-share code, daily bars) or `synthetic`.
+- `prepare_data(spec)`: `source` is `file` (CSV/Parquet inside the project
+  directory or AKTools' data directory) or `synthetic` (only to check that a
+  strategy runs). `source: "akshare"` was removed in 0.3.91; the server does
+  not fetch market data itself.
 - `run_backtest(...)`: runs in a subprocess; returns core metrics, the first
   trades and structured errors (`error.user_frames`, `hint`).
 - `get_run_details(...)`: page through trades, orders, daily equity and logs.
@@ -101,8 +104,18 @@ from `error.user_frames` and `hint`, rerun.
 Limits: class-based strategies only (subclasses of `akquant.Strategy`); no
 sandbox, strategies run with the same trust as `python strategy.py`.
 
-With AKTools (`uvx --from aktools aktools-mcp`) also connected, the assistant
-can find AKShare data, write a strategy and backtest it end to end.
+Real market data comes from AKTools (`uvx --from aktools aktools-mcp`,
+AKTools >= 0.1.12): call its `save_data` to write an AKShare interface's
+full data to a CSV, then pass the returned `path` to `prepare_data` as
+`{"source": "file", "path": "<path>", "symbol": "<code>"}`. `symbol` is
+required for files in AKTools' data directory (the file name is not a
+symbol; omitting it is an error). Both servers default to
+`~/.aktools/data`; if `AKTOOLS_DATA_DIR` is set, use the same value in both
+servers' `env`. Chinese column names (开盘, 最高, 最低, 收盘, 成交量, 股票代码)
+are recognised; prefer interfaces ending in `_sina` or `_tx`, because
+Eastmoney quote interfaces report volume in lots of 100 shares and it is not
+converted. With both servers connected the assistant can find data, write a
+strategy and backtest it end to end.
 
 ## Python API In One Screen
 

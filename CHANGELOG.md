@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **回测入口的类型存根漏了 tick 输入**：`run_backtest(data=...)` 一直接受 `list[Tick]` 与 `Bar`、`Tick` 混合的列表，但类型存根里的 `BacktestDataInput` 没有列出，传 tick 列表时类型检查器会误报。现已补上，运行行为不变。
+- `docs/llms.txt`（给 AI 助手看的说明）仍写着 `prepare_data` 支持 `source="akshare"`、`akquant[mcp]` 自带 AKShare，已改为 0.3.91 的实际情况，并补上“AKTools `save_data` 存盘，再用 `source="file"` 读入”的两步用法。
+
+### Changed
+- **联网示例在取数失败时改用合成数据，不再直接报错退出**：`examples/` 下 11 个示例（`01_quickstart`、`11`、`17`、`21`、`26`、`59` 与 `strategies/01`～`04`、`06`）此前在未安装 AKShare、断网或 AKShare 接口改名时直接报错。现在会打印一行警告并改用固定种子的合成日线跑完；合成数据的回测结果没有参考意义。能取到数据时行为不变。
+- `docs` 可选依赖里的 AKShare 下限由 1.0.0 提高到 1.20.64（示例与内置日历更新脚本用的是该版本起的接口名），并限定 Python 3.11 及以上才安装。
+
+### Internal
+- CI 新增两个工作流：`Tests` 在 PR 与 `main` 上跑全部 Python 测试（此前测试只在本地跑）；`AKShare Compatibility` 每天用最新版 AKShare 核对示例、脚本与文档里调用的接口名是否还存在（`scripts/check_akshare_interfaces.py`），AKShare 再改名时当天就能发现。
+
 ## [0.3.91] - 2026-11-16
 
 > 规则版本仍为 2.4.1，回测结果不变。
