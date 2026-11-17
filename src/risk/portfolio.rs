@@ -18,9 +18,7 @@ impl RiskRule for MaxPositionPercentRule {
     }
 
     fn check(&self, order: &Order, ctx: &RiskCheckContext) -> Result<(), AkQuantError> {
-        let equity = ctx
-            .portfolio
-            .calculate_equity(ctx.current_prices, ctx.instruments);
+        let equity = ctx.account_equity();
 
         if equity.is_zero() {
             // Avoid division by zero, maybe allow if equity is zero (startup)?
@@ -60,7 +58,7 @@ impl RiskRule for MaxPositionPercentRule {
         let new_pos_value = (new_pos * price * multiplier).abs();
         let current_pct = new_pos_value / equity;
 
-        if current_pct > self.max_pct {
+        if current_pct > self.max_pct && !ctx.is_reducing_order(order) {
             return Err(AkQuantError::OrderError(format!(
                 "Risk: Position value ratio {:.2}% exceeds limit {:.2}% for {}",
                 current_pct * Decimal::from(100),
@@ -131,6 +129,54 @@ mod tests {
             timezone_offset: 0,
             trading_day: None,
         }
+    }
+
+    #[test]
+    fn reducing_order_is_opposite_side_within_position() {
+        let mut positions = HashMap::new();
+        positions.insert("LONG".to_string(), Decimal::from(100));
+        positions.insert("SHORT".to_string(), Decimal::from(-100));
+        let portfolio = Portfolio {
+            cash: Decimal::from(100_000),
+            positions: Arc::new(positions),
+            available_positions: Arc::new(HashMap::new()),
+        };
+        let instrument = Instrument {
+            asset_type: AssetType::Stock,
+            inner: InstrumentEnum::Stock(StockInstrument {
+                symbol: "LONG".to_string(),
+                lot_size: Decimal::ONE,
+                tick_size: Decimal::new(1, 2),
+                expiry_date: None,
+                sellable_after_days: 0,
+            }),
+        };
+        let instruments = HashMap::new();
+        let prices = HashMap::new();
+        let tracker = crate::analysis::TradeTracker::new();
+        let config = crate::risk::RiskConfig::new();
+        let ctx = create_context(
+            &portfolio,
+            &instrument,
+            &instruments,
+            &[],
+            &prices,
+            &tracker,
+            &config,
+        );
+        let order = |symbol: &str, side: OrderSide, quantity: i64| {
+            create_test_order(symbol, side, Decimal::from(quantity), Decimal::from(10))
+        };
+        // 平多、平空: 数量不超过持仓
+        assert!(ctx.is_reducing_order(&order("LONG", OrderSide::Sell, 40)));
+        assert!(ctx.is_reducing_order(&order("LONG", OrderSide::Sell, 100)));
+        assert!(ctx.is_reducing_order(&order("SHORT", OrderSide::Buy, 100)));
+        // 加仓、超过持仓的反手、无持仓的开仓都不算减仓
+        assert!(!ctx.is_reducing_order(&order("LONG", OrderSide::Buy, 1)));
+        assert!(!ctx.is_reducing_order(&order("LONG", OrderSide::Sell, 101)));
+        assert!(!ctx.is_reducing_order(&order("SHORT", OrderSide::Sell, 1)));
+        assert!(!ctx.is_reducing_order(&order("SHORT", OrderSide::Buy, 101)));
+        assert!(!ctx.is_reducing_order(&order("NONE", OrderSide::Sell, 1)));
     }
 
     #[test]
@@ -211,9 +257,7 @@ impl RiskRule for MaxLeverageRule {
     }
 
     fn check(&self, order: &Order, ctx: &RiskCheckContext) -> Result<(), AkQuantError> {
-        let equity = ctx
-            .portfolio
-            .calculate_equity(ctx.current_prices, ctx.instruments);
+        let equity = ctx.account_equity();
 
         if equity.is_zero() {
             return Ok(());
@@ -294,7 +338,7 @@ impl RiskRule for MaxLeverageRule {
 
         let leverage = total_exposure / equity;
 
-        if leverage > self.max_leverage {
+        if leverage > self.max_leverage && !ctx.is_reducing_order(order) {
             return Err(AkQuantError::OrderError(format!(
                 "Risk: Total leverage {:.2} exceeds limit {:.2}",
                 leverage, self.max_leverage
@@ -322,9 +366,7 @@ impl RiskRule for SectorConcentrationRule {
     }
 
     fn check(&self, order: &Order, ctx: &RiskCheckContext) -> Result<(), AkQuantError> {
-        let equity = ctx
-            .portfolio
-            .calculate_equity(ctx.current_prices, ctx.instruments);
+        let equity = ctx.account_equity();
 
         if equity.is_zero() {
             return Ok(());
@@ -384,7 +426,7 @@ impl RiskRule for SectorConcentrationRule {
 
         let concentration = sector_exposure / equity;
 
-        if concentration > self.max_pct {
+        if concentration > self.max_pct && !ctx.is_reducing_order(order) {
             return Err(AkQuantError::OrderError(format!(
                 "Risk: Sector '{}' concentration {:.2}% exceeds limit {:.2}%",
                 target_sector,
@@ -421,10 +463,8 @@ impl RiskRule for MaxDrawdownRule {
         "MaxDrawdownRule"
     }
 
-    fn check(&self, _order: &Order, ctx: &RiskCheckContext) -> Result<(), AkQuantError> {
-        let equity = ctx
-            .portfolio
-            .calculate_equity(ctx.current_prices, ctx.instruments);
+    fn check(&self, order: &Order, ctx: &RiskCheckContext) -> Result<(), AkQuantError> {
+        let equity = ctx.account_equity();
 
         if equity <= Decimal::ZERO {
             return Ok(());
@@ -440,7 +480,7 @@ impl RiskRule for MaxDrawdownRule {
         }
 
         let drawdown = (new_peak - equity) / new_peak;
-        if drawdown > self.limit {
+        if drawdown > self.limit && !ctx.is_reducing_order(order) {
             return Err(AkQuantError::OrderError(format!(
                 "Risk: Max drawdown {:.2}% exceeds limit {:.2}%",
                 drawdown * Decimal::from(100),
@@ -481,10 +521,8 @@ impl RiskRule for MaxDailyLossRule {
         "MaxDailyLossRule"
     }
 
-    fn check(&self, _order: &Order, ctx: &RiskCheckContext) -> Result<(), AkQuantError> {
-        let equity = ctx
-            .portfolio
-            .calculate_equity(ctx.current_prices, ctx.instruments);
+    fn check(&self, order: &Order, ctx: &RiskCheckContext) -> Result<(), AkQuantError> {
+        let equity = ctx.account_equity();
         if equity <= Decimal::ZERO {
             return Ok(());
         }
@@ -506,7 +544,7 @@ impl RiskRule for MaxDailyLossRule {
         }
 
         let daily_loss = (state.start_equity - equity) / state.start_equity;
-        if daily_loss > self.limit {
+        if daily_loss > self.limit && !ctx.is_reducing_order(order) {
             return Err(AkQuantError::OrderError(format!(
                 "Risk: Daily loss {:.2}% exceeds limit {:.2}%",
                 daily_loss * Decimal::from(100),
@@ -541,10 +579,8 @@ impl RiskRule for StopLossRule {
         "StopLossRule"
     }
 
-    fn check(&self, _order: &Order, ctx: &RiskCheckContext) -> Result<(), AkQuantError> {
-        let equity = ctx
-            .portfolio
-            .calculate_equity(ctx.current_prices, ctx.instruments);
+    fn check(&self, order: &Order, ctx: &RiskCheckContext) -> Result<(), AkQuantError> {
+        let equity = ctx.account_equity();
         if equity <= Decimal::ZERO {
             return Ok(());
         }
@@ -553,7 +589,7 @@ impl RiskRule for StopLossRule {
         let base = *init_guard.get_or_insert(equity);
         let trigger_equity = base * self.threshold;
 
-        if equity < trigger_equity {
+        if equity < trigger_equity && !ctx.is_reducing_order(order) {
             return Err(AkQuantError::OrderError(format!(
                 "Risk: Equity {equity:.4} below stop-loss threshold {trigger_equity:.4}",
             )));

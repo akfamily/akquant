@@ -305,6 +305,7 @@ impl RiskManager {
                         ctx.instruments,
                         &self.config,
                         ctx.market_model,
+                        ctx.trade_tracker,
                         ctx.active_orders,
                         price,
                         safety_margin,

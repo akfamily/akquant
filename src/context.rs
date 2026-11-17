@@ -1268,11 +1268,24 @@ impl StrategyContext {
         } else {
             None
         };
+        // 保证金账户里已有的期货持仓只计浮动盈亏, 不计名义市值(与 get_account 同口径)
+        let futures_notional = crate::account::futures_margin_notional(
+            &self.positions,
+            &prices,
+            &self.instruments,
+            &self.risk_config,
+        );
+        let futures_correction = if self.risk_config.is_margin_account() {
+            Decimal::from_f64(self.account_unrealized_pnl).unwrap_or(Decimal::ZERO)
+                - futures_notional
+        } else {
+            Decimal::ZERO
+        };
         let free_margin = projected.calculate_free_margin_with_stock_ratio(
             &prices,
             &self.instruments,
             stock_ratio_override,
-        );
+        ) + futures_correction;
         let safety = Decimal::from_f64(self.risk_config.safety_margin).unwrap_or(Decimal::ZERO);
         let factor = (Decimal::ONE - safety).max(Decimal::ZERO);
         free_margin

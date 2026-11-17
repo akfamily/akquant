@@ -201,6 +201,7 @@ impl RiskRule for CashMarginRule {
                 ctx.instruments,
                 ctx.config,
                 ctx.market_model,
+                ctx.trade_tracker,
                 ctx.active_orders,
                 order_price,
                 safety_margin,
@@ -454,6 +455,7 @@ pub(crate) fn check_affordability(
     instruments: &HashMap<String, crate::model::Instrument>,
     config: &crate::risk::RiskConfig,
     market_model: &dyn crate::market::MarketModel,
+    trade_tracker: &crate::analysis::TradeTracker,
     active_orders: &[Order],
     price: Decimal,
     safety_margin: Decimal,
@@ -497,10 +499,17 @@ pub(crate) fn check_affordability(
     } else {
         None
     };
+    // 保证金账户里已有的期货持仓只计浮动盈亏, 不能把名义市值当成可用资金
     let free_margin = projected_portfolio.calculate_free_margin_with_stock_ratio(
         prices,
         instruments,
         stock_ratio_override,
+    ) + crate::account::futures_margin_equity_correction(
+        portfolio,
+        prices,
+        instruments,
+        trade_tracker,
+        config,
     );
     let safety_factor = (Decimal::ONE - safety_margin).max(Decimal::ZERO);
     let available = free_margin

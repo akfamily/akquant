@@ -1456,6 +1456,11 @@ Account-level field semantics:
 *   `max_daily_loss`: Daily loss limit in 0~1 ratio. Loss is measured against equity at the first risk check of the trading day; once breached, new order requests are rejected.
 *   `stop_loss_threshold`: Equity stop-loss threshold in 0~1 ratio. If current equity falls below `baseline_equity_at_rule_activation * threshold`, new order requests are rejected.
 
+These three rules, together with the position-percent (`max_position_pct`), total-leverage and sector-concentration rules, share two conventions:
+
+*   **Equity basis**: the same as `get_account()["equity"]`. In a cash account it is cash plus position market value; in a margin account (`account_mode="margin"`) futures positions contribute only their unrealized PnL, not their notional value, since opening a futures position only ties up margin.
+*   **Once a rule is breached only risk-increasing orders are rejected; reducing orders pass**: an order on the opposite side of the current position with quantity not exceeding it (closing or trimming a long or short) goes through, otherwise a breached rule would make the position impossible to close. An order larger than the position is split into a closing leg (passes) and an opening leg (rejected). The rules never liquidate by themselves; the strategy has to reduce the position in `on_reject` or a later callback.
+
 Funds-check fields:
 
 *   `check_cash`: enable cash/margin checks (default `True`). It controls both the submission gate and the execution gate; `False` lets the account overdraw.
