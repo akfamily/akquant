@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs` 可选依赖里的 AKShare 下限由 1.0.0 提高到 1.20.64（示例与内置日历更新脚本用的是该版本起的接口名），并限定 Python 3.11 及以上才安装。
 
 ### Internal
-- CI 新增两个工作流：`Tests` 在 PR 与 `main` 上跑全部 Python 测试（此前测试只在本地跑）；`AKShare Compatibility` 每天用最新版 AKShare 核对示例、脚本与文档里调用的接口名是否还存在（`scripts/check_akshare_interfaces.py`），AKShare 再改名时当天就能发现。
+- CI 新增 `Tests` 工作流：在 PR 与 `main` 上跑全部 Python 测试（此前测试只在本地跑）。
 
 ## [0.3.91] - 2026-11-16
 
