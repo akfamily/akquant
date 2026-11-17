@@ -2,6 +2,10 @@
 
 基线: tests/fixtures/order_event_traces.json, 由 tests/_order_event_scenarios.py
 在订单账本改造前生成。轨迹不一致即回调种类、顺序、时机或数值发生了变化。
+
+规则版本 2.4.2 起量限按整根 bar 共用: ``random`` 与 ``random_checkpoint`` 两个场景
+开了量限且同一根 bar 上同一标的有多笔委托, 成交量随之变化, 基线已重新生成; 其余
+六个场景的轨迹与改造前逐条相同。
 """
 
 import json

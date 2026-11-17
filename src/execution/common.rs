@@ -348,13 +348,19 @@ impl CommonMatcher {
 
                     // Check Volume Limit
                     // 乘法溢出(量极大或比例 > 1)按不限制处理, 不 panic。
-                    // 令 raw = 成交量 * 比例(截断上限): 剩余量不超过 raw 时整笔一次成交
+                    // 量限是整根 bar 共用的: raw = 成交量 * 比例 - 这根 bar 上先撮合的
+                    // 委托已用掉的量(不小于 0)。剩余量不超过 raw 时整笔一次成交
                     // (可能是零股); 否则按最小交易单位向下取整(#409), 股票不出零股、
                     // 期货不出小数手。取整后为 0 时本根不成交: 普通订单继续挂着,
-                    // IOC/FOK 在下方按未成交撤销。
+                    // IOC/FOK 在下方按未成交撤销。FOK 成交不完就一股不成交; IOC 成交
+                    // 能成交的部分, 剩余量随即撤销。
                     let remaining = order.quantity - order.filled_quantity;
                     let max_qty = if !ctx.ignore_volume && volume_limit_pct > Decimal::ZERO {
-                        match bar.volume.checked_mul(volume_limit_pct) {
+                        match bar
+                            .volume
+                            .checked_mul(volume_limit_pct)
+                            .map(|cap| (cap - ctx.volume_used).max(Decimal::ZERO))
+                        {
                             Some(raw) if remaining <= raw => remaining,
                             Some(raw) => {
                                 let lot = instrument.lot_size();
@@ -373,7 +379,11 @@ impl CommonMatcher {
                         Decimal::MAX
                     };
 
-                    let trade_qty = remaining.min(max_qty);
+                    let mut trade_qty = remaining.min(max_qty);
+                    if order.time_in_force == TimeInForce::FOK && trade_qty < remaining {
+                        // FOK: 成交不完就整笔不成交, 走下方的撤销分支
+                        trade_qty = Decimal::ZERO;
+                    }
 
                     if trade_qty > Decimal::ZERO {
                         order.status = OrderStatus::Filled;
@@ -381,7 +391,12 @@ impl CommonMatcher {
 
                         // Check partial fill
                         if trade_qty < order.quantity - order.filled_quantity {
-                            order.status = OrderStatus::PartiallyFilled;
+                            // IOC: 成交能成交的部分, 剩余量随这笔成交一起撤销
+                            order.status = if order.time_in_force == TimeInForce::IOC {
+                                OrderStatus::Cancelled
+                            } else {
+                                OrderStatus::PartiallyFilled
+                            };
                         }
 
                         order.filled_quantity += trade_qty;

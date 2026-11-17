@@ -295,6 +295,38 @@ def test_live_run_error_abort_triggers_on_stop_and_keeps_summary(
     assert reasons == ["ABORTED ON ERROR"]
 
 
+def test_live_run_base_exception_abort_marks_summary_and_reraises(
+    patched_live: None,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """引擎抛 BaseException(Rust panic 即此类)时摘要不能自称 Manual Stop.
+
+    pyo3 把 Rust panic 转成 ``PanicException``, 它继承 ``BaseException``,
+    ``except Exception`` 接不住: 修复前摘要标题仍是 "Manual Stop"、也没有那条
+    CRITICAL, 崩溃的会话看起来像正常手动停止。异常本身继续向外抛。
+    """
+
+    class _Panic(BaseException):
+        """替身: 与 pyo3 的 PanicException 一样直接继承 BaseException."""
+
+    events: list[str] = []
+    reasons: list[str] = []
+    runner = LiveRunner(
+        strategy_cls=_make_recording_strategy(events), instruments=[], broker="ctp"
+    )
+    runner.engine = cast(Any, _FakeEngine(exc=cast(Any, _Panic("rust panicked"))))
+    monkeypatch.setattr(
+        runner, "_print_summary", lambda reason="Manual Stop": reasons.append(reason)
+    )
+    with caplog.at_level("CRITICAL"), pytest.raises(_Panic):
+        runner.run(cash=1000.0)
+
+    assert events.count("on_stop") == 1
+    assert reasons == ["ABORTED ON ERROR"]
+    assert any("rust panicked" in r.getMessage() for r in caplog.records)
+
+
 def test_live_run_user_on_stop_error_is_isolated(
     patched_live: None, caplog: pytest.LogCaptureFixture
 ) -> None:

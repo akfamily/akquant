@@ -199,8 +199,19 @@ def cancel_group(strategy: Any, group_id: Any) -> None:
     cancel_group_method = getattr(execution, "cancel_group", None)
     if callable(cancel_group_method):
         cancel_group_method(gid)
-    else:  # 回测后端无 group 概念：退化为撤单
-        execution.cancel_order(gid)
+        return
+    # 回测后端没有 cancel_group: 逐笔撤组内订单。以前把组号直接当订单号去撤,
+    # place_oco 返回的组号在引擎里查不到, 只留一条“忽略未知订单”的日志, 两条腿
+    # 都还挂着。
+    members = getattr(strategy, "_order_group_members", None)
+    order_ids: Any = members.pop(gid, None) if isinstance(members, dict) else None
+    if order_ids is None:
+        if isinstance(group_id, OrderReceipt) and group_id.order_ids:
+            order_ids = group_id.order_ids  # 拆腿回执: 每条腿一个订单号
+        else:
+            order_ids = (gid,)
+    for order_id in order_ids:
+        execution.cancel_order(order_id)
 
 
 def cancel_all_orders(strategy: Any, symbol: Optional[str] = None) -> None:

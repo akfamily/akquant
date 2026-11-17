@@ -53,6 +53,11 @@ pub struct OrderManager {
     /// Bracket 激活计划: entry_order_id -> plan
     #[serde(default)]
     pub pending_bracket_plans: HashMap<String, PendingBracketPlan>,
+    /// 被拆成多笔成交的委托已累计的 `(未套最低佣金的佣金, 成交数量)`, 供最低佣金按
+    /// 委托收(见 [`OrderManager::brokerage_floor_adjustment`])。只登记拆单的委托,
+    /// 成交完或离开在途账本后删除。入存档且排在最后: 旧存档缺这一项时取空表。
+    #[serde(default)]
+    pub partial_fill_brokerage: HashMap<String, (Decimal, Decimal)>,
     /// 历史订单的 id 索引, 供 [`OrderManager::find_order`] 用。不入存档, 用到时按
     /// `orders` 现状补建。
     #[serde(skip)]
@@ -92,6 +97,7 @@ impl OrderManager {
             oco_groups: HashMap::new(),
             oco_order_to_group: HashMap::new(),
             pending_bracket_plans: HashMap::new(),
+            partial_fill_brokerage: HashMap::new(),
             finished_index: FinishedOrderIndex::default(),
         }
     }
@@ -322,6 +328,9 @@ impl OrderManager {
         let mut terminal_without_fill_id: Option<String> = None;
         // Find existing order
         if let Some(existing) = self.active_orders.iter_mut().find(|o| o.id == report.id) {
+            // 这份回报带来了新成交(IOC 成交一部分后撤掉剩余): 不算“无成交终结”, OCO
+            // 对手单的撤销与括号单的激活由调用方按成交处理。
+            let carries_fill = report.filled_quantity > existing.filled_quantity;
             existing.status = report.status;
             // 成交时缩量会改写订单数量(见 execution::simulated)
             existing.quantity = report.quantity;
@@ -330,6 +339,7 @@ impl OrderManager {
             existing.updated_at = report.updated_at;
             existing.reject_reason = report.reject_reason;
             if existing.status != OrderStatus::Filled
+                && !carries_fill
                 && (existing.status == OrderStatus::Cancelled
                     || existing.status == OrderStatus::Expired
                     || existing.status == OrderStatus::Rejected)
@@ -370,6 +380,9 @@ impl OrderManager {
 
         for order in &finished {
             if order.status != OrderStatus::Filled {
+                // 部分成交后撤单/过期: 不会再有成交, 丢掉按委托累计的佣金记录。
+                // 成交完的委托在最后一笔成交记账时删除(见 brokerage_floor_adjustment)。
+                self.partial_fill_brokerage.remove(&order.id);
                 self.handle_oco_terminal_without_fill(&order.id);
                 self.pending_bracket_plans.remove(&order.id);
                 self.current_step_finalized_orders.push(order.clone());
@@ -384,6 +397,45 @@ impl OrderManager {
         let mut all = self.orders.clone();
         all.extend(self.active_orders.clone());
         all
+    }
+
+    /// 最低佣金按委托收: 返回本笔成交佣金相对逐笔套最低佣金的调整额(不大于 0)。
+    ///
+    /// 整笔委托的佣金为 `max(各笔成交佣金之和, 最低佣金)`: 首笔成交先按最低佣金收
+    /// 齐, 之后的成交只补累计佣金超出已收部分的差额。一笔成交就成交完的委托不登记、
+    /// 调整额为 0, 与逐笔口径相同。
+    fn brokerage_floor_adjustment(
+        &mut self,
+        order_id: &str,
+        order_quantity: Option<Decimal>,
+        fill_quantity: Decimal,
+        raw: Decimal,
+        min_commission: Decimal,
+    ) -> Decimal {
+        if min_commission <= Decimal::ZERO {
+            return Decimal::ZERO;
+        }
+        let prior = self.partial_fill_brokerage.get(order_id).copied();
+        let splits = order_quantity.is_some_and(|total| fill_quantity < total);
+        if prior.is_none() && !splits {
+            return Decimal::ZERO;
+        }
+        let (prior_raw, prior_quantity) = prior.unwrap_or((Decimal::ZERO, Decimal::ZERO));
+        let charged_before = if prior.is_some() {
+            prior_raw.max(min_commission)
+        } else {
+            Decimal::ZERO
+        };
+        let cumulative_raw = prior_raw + raw;
+        let cumulative_quantity = prior_quantity + fill_quantity;
+        let this_fill = cumulative_raw.max(min_commission) - charged_before;
+        if order_quantity.is_none_or(|total| cumulative_quantity >= total) {
+            self.partial_fill_brokerage.remove(order_id);
+        } else {
+            self.partial_fill_brokerage
+                .insert(order_id.to_string(), (cumulative_raw, cumulative_quantity));
+        }
+        this_fill - raw.max(min_commission)
     }
 
     /// 处理成交列表
@@ -411,20 +463,18 @@ impl OrderManager {
                     .get(&trade.symbol)
                     .copied()
                     .unwrap_or(Decimal::ZERO);
-                let order_override = self
-                    .active_orders
-                    .iter()
-                    .find(|o| o.id == trade.order_id)
-                    .and_then(|order| {
-                        Some((
-                            order
-                                .commission_type_override
-                                .as_ref()?
-                                .trim()
-                                .to_ascii_lowercase(),
-                            order.commission_value_override?,
-                        ))
-                    });
+                let active_order = self.active_orders.iter().find(|o| o.id == trade.order_id);
+                let order_quantity = active_order.map(|order| order.quantity);
+                let order_override = active_order.and_then(|order| {
+                    Some((
+                        order
+                            .commission_type_override
+                            .as_ref()?
+                            .trim()
+                            .to_ascii_lowercase(),
+                        order.commission_value_override?,
+                    ))
+                });
                 if let Some((override_type, override_value)) = order_override {
                     trade.commission = match override_type.as_str() {
                         "fixed" => override_value,
@@ -449,6 +499,17 @@ impl OrderManager {
                         trade.quantity,
                         position_before,
                     );
+                    if let Some((raw, min_commission)) =
+                        market_model.brokerage_floor(instr, trade.price, trade.quantity)
+                    {
+                        trade.commission += self.brokerage_floor_adjustment(
+                            &trade.order_id,
+                            order_quantity,
+                            trade.quantity,
+                            raw,
+                            min_commission,
+                        );
+                    }
                 }
             }
 
@@ -714,17 +775,105 @@ mod tests {
         );
         assert!(old_decoded.current_step_expired_orders.is_empty());
 
-        // 新布局往返: 过期单缓冲不入存档, 读回为空, 其余字段不变
+        assert!(old_decoded.partial_fill_brokerage.is_empty());
+
+        // 新布局往返: 过期单缓冲不入存档, 读回为空; 拆单委托的累计佣金排在最后,
+        // 其余字段不变
         manager
             .current_step_expired_orders
             .push(make_order("done-1", OrderStatus::Expired));
+        manager
+            .partial_fill_brokerage
+            .insert("active-1".to_string(), (dec!(0.3), dec!(100)));
         let encoded: Vec<u8> = rmp_serde::to_vec(&manager).unwrap();
-        assert_eq!(encoded, old_encoded);
+        let expected: Vec<u8> = rmp_serde::to_vec(&(
+            &manager.orders,
+            &manager.active_orders,
+            &manager.trades,
+            &manager.current_step_trades,
+            &manager.current_step_rejected_orders,
+            &manager.trade_tracker,
+            &manager.oco_groups,
+            &manager.oco_order_to_group,
+            &manager.pending_bracket_plans,
+            &manager.partial_fill_brokerage,
+        ))
+        .unwrap();
+        assert_eq!(encoded, expected);
         let decoded: OrderManager = rmp_serde::from_slice(&encoded).unwrap();
+        assert_eq!(
+            decoded.partial_fill_brokerage.get("active-1"),
+            Some(&(dec!(0.3), dec!(100)))
+        );
         assert_eq!(decoded.active_orders[0].id, "active-1");
         assert_eq!(decoded.orders[0].status, OrderStatus::Expired);
         assert_eq!(decoded.oco_groups.len(), 1);
         assert!(decoded.current_step_expired_orders.is_empty());
+    }
+
+    #[test]
+    fn brokerage_floor_is_charged_once_per_order() {
+        let mut manager = OrderManager::new();
+        let total = Some(dec!(300));
+        // 300 股拆 3 笔, 每笔佣金 0.3, 最低 5: 首笔收 5, 其余不再收
+        let first = manager.brokerage_floor_adjustment("o1", total, dec!(100), dec!(0.3), dec!(5));
+        assert_eq!(dec!(5) + first, dec!(5));
+        let second = manager.brokerage_floor_adjustment("o1", total, dec!(100), dec!(0.3), dec!(5));
+        assert_eq!(dec!(5) + second, dec!(0));
+        let third = manager.brokerage_floor_adjustment("o1", total, dec!(100), dec!(0.3), dec!(5));
+        assert_eq!(dec!(5) + third, dec!(0));
+        // 成交完后记录删除
+        assert!(manager.partial_fill_brokerage.is_empty());
+    }
+
+    #[test]
+    fn brokerage_floor_tops_up_once_cumulative_exceeds_minimum() {
+        let mut manager = OrderManager::new();
+        let total = Some(dec!(300));
+        // 每笔佣金 3, 最低 5: 5 → 累计 6 补 1 → 再收 3, 合计 9 = 整笔委托的佣金
+        let charged: Vec<Decimal> = (0..3)
+            .map(|_| {
+                dec!(5)
+                    + manager.brokerage_floor_adjustment("o1", total, dec!(100), dec!(3), dec!(5))
+            })
+            .collect();
+        assert_eq!(charged, vec![dec!(5), dec!(1), dec!(3)]);
+    }
+
+    #[test]
+    fn brokerage_floor_leaves_single_fill_orders_untouched() {
+        let mut manager = OrderManager::new();
+        // 一笔成交完: 不调整、不登记
+        let adj = manager.brokerage_floor_adjustment(
+            "o1",
+            Some(dec!(100)),
+            dec!(100),
+            dec!(0.3),
+            dec!(5),
+        );
+        assert_eq!(adj, Decimal::ZERO);
+        // 没有最低佣金: 不调整、不登记
+        let adj = manager.brokerage_floor_adjustment(
+            "o2",
+            Some(dec!(300)),
+            dec!(100),
+            dec!(0.3),
+            dec!(0),
+        );
+        assert_eq!(adj, Decimal::ZERO);
+        assert!(manager.partial_fill_brokerage.is_empty());
+    }
+
+    #[test]
+    fn brokerage_floor_record_dropped_when_partial_order_cancelled() {
+        let mut manager = OrderManager::new();
+        manager
+            .active_orders
+            .push(make_order("o1", OrderStatus::Cancelled));
+        manager.brokerage_floor_adjustment("o1", Some(dec!(300)), dec!(100), dec!(0.3), dec!(5));
+        assert_eq!(manager.partial_fill_brokerage.len(), 1);
+        manager.cleanup_finished_orders();
+        assert!(manager.partial_fill_brokerage.is_empty());
     }
 
     #[test]

@@ -213,6 +213,8 @@ impl Portfolio {
         *entry += quantity;
     }
 
+    /// 现金 + 持仓名义市值。只在持仓都按全额入账时等于权益; 保证金账户里的期货持仓
+    /// 开仓不扣名义额, 权益请用 [`crate::account::account_equity`]。
     pub fn calculate_equity(
         &self,
         prices: &HashMap<String, Decimal>,

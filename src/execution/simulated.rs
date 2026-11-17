@@ -81,6 +81,10 @@ struct Uncross {
 pub struct SimulatedExecutionClient {
     slippage_model: Box<dyn SlippageModel>,
     volume_limit_pct: Decimal, // 成交量限制比例 (0.0 = 不限制)
+    /// 各品种当前这根 bar 上已成交的数量: `品种 → (bar 时间戳, 已成交量)`。量限按
+    /// 整根 bar 共用, 同一根 bar 可能分几次撮合(上一根下的单先撮合, 本根回调里下的
+    /// 单后撮合), 所以记在这里而不是单次撮合的局部变量里; 时间戳变了即作废。
+    bar_volume_used: HashMap<String, (i64, Decimal)>,
     // Map order_id -> Order (O(1) access)
     orders: HashMap<String, Order>,
     // List of order_ids to maintain submission order (for matching fairness)
@@ -227,6 +231,7 @@ impl SimulatedExecutionClient {
         SimulatedExecutionClient {
             slippage_model: Box::new(ZeroSlippage),
             volume_limit_pct: Decimal::ZERO,
+            bar_volume_used: HashMap::new(),
             orders: HashMap::new(),
             order_queue: Vec::new(),
             matchers,
@@ -696,6 +701,14 @@ impl SimulatedExecutionClient {
                             execution_policy_core: Self::effective_policy(order, ctx),
                             slippage: self.slippage_model.as_ref(),
                             volume_limit_pct: self.volume_limit_pct,
+                            volume_used: match event {
+                                Event::Bar(bar) => self
+                                    .bar_volume_used
+                                    .get(&bar.symbol)
+                                    .filter(|(timestamp, _)| *timestamp == bar.timestamp)
+                                    .map_or(Decimal::ZERO, |(_, used)| *used),
+                                _ => Decimal::ZERO,
+                            },
                             ignore_volume: uncross.is_some_and(|u| u.ignore_volume),
                             bar_index: ctx.bar_index,
                             last_price: ctx.last_prices.get(&order.symbol).copied(),
@@ -976,6 +989,17 @@ impl SimulatedExecutionClient {
                                     funds_projection_ready,
                                     "带成交的回报必先经过上面的资金检查分支"
                                 );
+                                // 记入这根 bar 的已成交量(成交时缩量后的实际成交量)
+                                if let Event::Bar(bar) = event {
+                                    let used = self
+                                        .bar_volume_used
+                                        .entry(bar.symbol.clone())
+                                        .or_insert((bar.timestamp, Decimal::ZERO));
+                                    if used.0 != bar.timestamp {
+                                        *used = (bar.timestamp, Decimal::ZERO);
+                                    }
+                                    used.1 += trade.quantity;
+                                }
                                 if matches!(
                                     instrument.asset_type,
                                     AssetType::Stock | AssetType::Fund

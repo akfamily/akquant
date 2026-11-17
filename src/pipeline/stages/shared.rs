@@ -122,7 +122,11 @@ pub(crate) fn apply_execution_report(
         );
     }
 
-    if report_status == OrderStatus::Filled {
+    // 成交完, 或 IOC 成交一部分后撤掉剩余(回报带成交且已撤销): 都按成交处理 OCO 对手单
+    // 与括号单。
+    let filled_terminal = report_status == OrderStatus::Filled
+        || (report_status == OrderStatus::Cancelled && trade.is_some());
+    if filled_terminal {
         let peer_ids = engine
             .state
             .order_manager

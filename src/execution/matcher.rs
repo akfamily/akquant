@@ -10,6 +10,9 @@ pub struct MatchContext<'a> {
     pub execution_policy_core: ExecutionPolicyCore,
     pub slippage: &'a dyn SlippageModel,
     pub volume_limit_pct: Decimal,
+    /// 这根 bar 上该品种已被先撮合的委托用掉的成交量。量限是整根 bar 共用的:
+    /// 本笔最多成交 `成交量 × 比例 − 已用量`。
+    pub volume_used: Decimal,
     /// 不做成交量检查(停牌判断与成交量限制都跳过)。集合竞价统一撮合的合成事件:
     /// 竞价价来自 tick(tick 撮合本就不看成交量), 或竞价期行情成交量全为 0。
     pub ignore_volume: bool,

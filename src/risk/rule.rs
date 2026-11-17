@@ -36,6 +36,34 @@ impl<'a> RiskCheckContext<'a> {
             .expect("Invalid timestamp")
     }
 
+    /// 账户口径的权益(保证金账户里期货只计浮动盈亏), 见 [`crate::account::account_equity`]。
+    pub fn account_equity(&self) -> Decimal {
+        crate::account::account_equity(
+            self.portfolio,
+            self.current_prices,
+            self.instruments,
+            self.trade_tracker,
+            self.config,
+        )
+    }
+
+    /// 这笔委托是否只减仓: 方向与现有持仓相反, 且数量不超过持仓(超过会反手开仓)。
+    ///
+    /// 账户级规则(回撤、日亏损、止损线、杠杆、集中度)触发后只拒会增加风险的委托,
+    /// 减仓单放行, 否则仓位平不掉。只看已成交持仓, 不计同标的其它在途减仓单。
+    pub fn is_reducing_order(&self, order: &Order) -> bool {
+        let position = self
+            .portfolio
+            .positions
+            .get(&order.symbol)
+            .copied()
+            .unwrap_or(Decimal::ZERO);
+        match order.side {
+            crate::model::OrderSide::Buy => position < Decimal::ZERO && order.quantity <= -position,
+            crate::model::OrderSide::Sell => position > Decimal::ZERO && order.quantity <= position,
+        }
+    }
+
     pub fn local_date(&self) -> NaiveDate {
         if let Some(d) = self.trading_day {
             return d;

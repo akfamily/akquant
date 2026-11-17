@@ -36,7 +36,7 @@
 *   **Timer**: 支持 `schedule(timestamp, payload)` 注册定时事件，触发 `on_timer` 回调。支持每日定时任务 (`schedule_daily`)。
 *   **命名成交模式**: 通过 `fill_policy` 传入 `FillMode` 对象（`NextOpen`/`NextClose`/`NextAverage`/`NextHighLowMid`/`CurrentClose`）统一表达成交价格与撮合时序；引擎内部仍以 `(price_basis, bar_offset, temporal)` 三元组表示。
 *   **滑点模型 (Slippage)**: 支持 Fixed (固定金额) 和 Percent (百分比) 滑点模型。
-*   **成交量限制 (Volume Limit)**: 支持按 K 线成交量比例限制单笔撮合数量。
+*   **成交量限制 (Volume Limit)**: 支持按 K 线成交量比例限制撮合数量，上限由同一根 K 线上该品种的全部委托共用。
 
 ### 2.3 严密的风控系统
 *   **T+1 严格风控**: 针对股票/基金，严格执行 T+1 可用持仓检查。

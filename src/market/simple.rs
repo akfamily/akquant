@@ -45,6 +45,27 @@ impl SimpleMarket {
 }
 
 impl MarketModel for SimpleMarket {
+    fn brokerage_floor(
+        &self,
+        instrument: &Instrument,
+        price: Decimal,
+        quantity: Decimal,
+    ) -> Option<(Decimal, Decimal)> {
+        let cfg: Cow<'_, SimpleMarketConfig> =
+            match self.config.fee_overrides.get(instrument.symbol()) {
+                Some(o) => Cow::Owned(o.apply_simple(&self.config)),
+                None => Cow::Borrowed(&self.config),
+            };
+        let raw = match cfg.commission_mode {
+            CommissionMode::Percent => {
+                price * quantity * instrument.multiplier() * cfg.commission_rate
+            }
+            CommissionMode::Fixed => cfg.commission_rate,
+            CommissionMode::PerUnit => quantity * cfg.commission_rate,
+        };
+        Some((raw, cfg.min_commission))
+    }
+
     fn calculate_commission(
         &self,
         instrument: &Instrument,

@@ -1424,6 +1424,16 @@ impl Engine {
             .unwrap_or(0)
     }
 
+    /// 合约乘数(股票等无乘数的品种、未登记的标的为 1)。
+    ///
+    /// 按金额设的策略级限额、风险预算与策略级盈亏都要乘它: 期货/期权一手的金额是
+    /// `价格 × 数量 × 乘数`, 漏掉乘数时限额被放宽“乘数”倍。
+    pub(crate) fn contract_multiplier(&self, symbol: &str) -> Decimal {
+        self.instruments
+            .get(symbol)
+            .map_or(Decimal::ONE, |instrument| instrument.multiplier())
+    }
+
     pub(crate) fn order_estimated_notional(&self, order: &Order) -> Option<Decimal> {
         let price = if let Some(p) = order.price {
             Some(p)
@@ -1434,11 +1444,11 @@ impl Engine {
                 .get(&order.symbol)
                 .copied()
         }?;
-        Some((price * order.quantity).abs())
+        Some((price * order.quantity * self.contract_multiplier(&order.symbol)).abs())
     }
 
     pub(crate) fn trade_notional(&self, trade: &Trade) -> Decimal {
-        (trade.price * trade.quantity).abs()
+        (trade.price * trade.quantity * self.contract_multiplier(&trade.symbol)).abs()
     }
 
     pub(crate) fn maybe_reset_risk_budget_usage(&mut self, current_time: i64) {
@@ -1548,6 +1558,7 @@ impl Engine {
             &strategy_id,
             order.quantity,
             price,
+            self.contract_multiplier(&order.symbol),
             *max_value,
         )
     }
@@ -1598,13 +1609,14 @@ impl Engine {
             OrderSide::Buy => *entry += trade.quantity,
             OrderSide::Sell => *entry -= trade.quantity,
         }
+        let turnover = trade.price * trade.quantity * self.contract_multiplier(&trade.symbol);
         let cashflow_entry = self
             .strategy_cashflows
             .entry(strategy_key)
             .or_insert(Decimal::ZERO);
         match trade.side {
-            OrderSide::Buy => *cashflow_entry -= trade.price * trade.quantity,
-            OrderSide::Sell => *cashflow_entry += trade.price * trade.quantity,
+            OrderSide::Buy => *cashflow_entry -= turnover,
+            OrderSide::Sell => *cashflow_entry += turnover,
         }
         *cashflow_entry -= trade.commission;
     }
@@ -1624,7 +1636,7 @@ impl Engine {
                     .iter()
                     .map(|(symbol, qty)| {
                         let price = prices.get(symbol).copied().unwrap_or(Decimal::ZERO);
-                        *qty * price
+                        *qty * price * self.contract_multiplier(symbol)
                     })
                     .sum::<Decimal>()
             })

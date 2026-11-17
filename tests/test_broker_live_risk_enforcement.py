@@ -165,6 +165,7 @@ def _run_session(
     *,
     max_order_value: float | None = MAX_ORDER_VALUE,
     max_order_size: float | None = None,
+    instrument: Instrument | None = None,
 ) -> _OversizedBuyStrategy:
     """跑一轮 broker_live 会话: replay 供行情, 桩网关供交易.
 
@@ -176,7 +177,7 @@ def _run_session(
     try:
         run_live(
             strategy_cls=strategy,
-            instruments=[_instrument(SYMBOL)],
+            instruments=[instrument or _instrument(SYMBOL)],
             market_broker="replay",
             trader_broker="riskguard-fake",
             trading_mode="broker_live",
@@ -233,6 +234,51 @@ def test_broker_live_risk_allows_within_limit_order() -> None:
     assert len(gateway.placed) == 1, "限额内的单应正常报到柜台"
     assert gateway.placed[0].symbol == SYMBOL
     assert strategy.rejected == [], "限额内不应产生拒单"
+
+
+def _futures_instrument(symbol: str, multiplier: float) -> Instrument:
+    """构造带合约乘数的期货标的."""
+    return Instrument(
+        symbol=symbol,
+        asset_type=AssetType.Futures,
+        multiplier=multiplier,
+        margin_ratio=0.1,
+        tick_size=1.0,
+        lot_size=1,
+        option_type=None,
+        strike_price=None,
+        expiry_date=None,
+    )
+
+
+def test_broker_live_risk_order_value_counts_contract_multiplier() -> None:
+    """期货的委托名义额要乘合约乘数, 与回测口径一致.
+
+    100 手 × 100 元 × 乘数 10 = 100000, 超过上限 50000; 漏掉乘数时按 10000 计,
+    这笔单会被放行到柜台。
+    """
+    gateway = _RecordingTraderGateway()
+    strategy = _run_session(
+        gateway,
+        max_order_value=50_000.0,
+        instrument=_futures_instrument(SYMBOL, 10.0),
+    )
+
+    assert gateway.placed == [], "名义额 100000 超过上限 50000, 不应到达柜台"
+    assert strategy.rejected, "被风控拦下的单应触发 on_reject"
+
+
+def test_broker_live_risk_order_value_allows_futures_within_limit() -> None:
+    """上限高于含乘数的名义额时照常放行(防止乘数被重复计入)."""
+    gateway = _RecordingTraderGateway()
+    strategy = _run_session(
+        gateway,
+        max_order_value=150_000.0,
+        instrument=_futures_instrument(SYMBOL, 10.0),
+    )
+
+    assert len(gateway.placed) == 1
+    assert strategy.rejected == []
 
 
 def test_broker_live_risk_blocks_oversized_quantity() -> None:

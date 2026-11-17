@@ -172,7 +172,7 @@ self.buy(symbol, 100, price=price)
 
 *   **费率**：券商收取的交易费用，通常在 **0.01% - 0.03%** (万一到万三) 之间。
 *   **最低收费**：单笔交易最低 **5 元**。这意味着对于小资金（如 1 万元以下）的交易，佣金比例可能高达 0.1% 甚至更多。
-*   **默认引擎实现**：`commission = max(min_commission, fill_price * fill_quantity * commission_rate)`
+*   **默认引擎实现**：最低佣金按**委托**收，不按成交收。一笔委托一次成交完时 `commission = max(min_commission, fill_price * fill_quantity * commission_rate)`；一笔委托被拆成多笔成交时（开了 `volume_limit_pct` 量限后常见），整笔委托的佣金是 `max(min_commission, 各笔成交佣金之和)`——首笔成交先按最低佣金收齐，之后的成交只补累计佣金超出已收部分的差额。印花税、过户费仍按每笔成交额计。
 *   **AKQuant 扩展模式**：
     *   `percent`：按成交额比例收费，是股票默认口径。
     *   `fixed`：每次成交固定金额，不随成交数量变化。

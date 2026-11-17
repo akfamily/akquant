@@ -13,15 +13,16 @@ use rust_decimal::Decimal;
 use rust_decimal::prelude::FromPrimitive;
 use std::collections::HashMap;
 
-/// 单笔委托名义超限?
+/// 单笔委托名义超限? 名义额 = 价格 × 数量 × 合约乘数(股票等无乘数的品种传 1)。
 pub fn exceeds_order_value(
     strategy_id: &str,
     quantity: Decimal,
     price: Option<Decimal>,
+    multiplier: Decimal,
     max_value: Decimal,
 ) -> Option<String> {
     let price = price?;
-    let value = price * quantity;
+    let value = price * quantity * multiplier;
     if value > max_value {
         return Some(format!(
             "Risk: Strategy {strategy_id} order value {value} exceeds strategy limit {max_value}"
@@ -75,6 +76,7 @@ pub fn check_all(
     symbol: &str,
     quantity: Decimal,
     price: Option<Decimal>,
+    multiplier: Decimal,
     signed_delta: Decimal,
     current_positions: &HashMap<String, Decimal>,
     max_order_value: Option<Decimal>,
@@ -96,7 +98,7 @@ pub fn check_all(
         }
     }
     if let Some(limit) = max_order_value
-        && let Some(err) = exceeds_order_value(strategy_id, quantity, price, limit)
+        && let Some(err) = exceeds_order_value(strategy_id, quantity, price, multiplier, limit)
     {
         return Some(err);
     }
@@ -124,6 +126,7 @@ fn to_decimal(value: f64) -> Option<Decimal> {
 /// :param max_order_value: 单笔名义上限(None 表示不限)
 /// :param max_order_size: 单笔数量上限(None 表示不限)
 /// :param max_position_size: 持仓上限(None 表示不限)
+/// :param multiplier: 合约乘数, 名义额按 价格 × 数量 × 乘数 计; None 或非正数按 1
 /// :return: 拒单原因; None 表示通过
 #[gen_stub_pyfunction]
 #[pyfunction]
@@ -137,6 +140,7 @@ fn to_decimal(value: f64) -> Option<Decimal> {
     max_order_value=None,
     max_order_size=None,
     max_position_size=None,
+    multiplier=None,
 ))]
 #[allow(clippy::too_many_arguments)]
 pub fn check_strategy_limits(
@@ -149,8 +153,13 @@ pub fn check_strategy_limits(
     max_order_value: Option<f64>,
     max_order_size: Option<f64>,
     max_position_size: Option<f64>,
+    multiplier: Option<f64>,
 ) -> Option<String> {
     let quantity_dec = to_decimal(quantity)?;
+    let multiplier_dec = multiplier
+        .and_then(to_decimal)
+        .filter(|value| *value > Decimal::ZERO)
+        .unwrap_or(Decimal::ONE);
     let price_dec = price.and_then(to_decimal);
     let signed_delta = if side.trim().eq_ignore_ascii_case("sell") {
         -quantity_dec
@@ -168,6 +177,7 @@ pub fn check_strategy_limits(
         symbol,
         quantity_dec,
         price_dec,
+        multiplier_dec,
         signed_delta,
         &positions,
         max_order_value.and_then(to_decimal),
@@ -187,16 +197,24 @@ mod tests {
     #[test]
     fn order_value_rejects_above_limit_and_passes_at_boundary() {
         // 100 * 100 = 10000 > 500 → 拒
-        let err = exceeds_order_value("s1", dec(100), Some(dec(100)), dec(500));
+        let err = exceeds_order_value("s1", dec(100), Some(dec(100)), dec(1), dec(500));
         assert!(err.unwrap().contains("order value 10000"));
         // 恰好等于上限不拒(判定是严格大于)
-        assert!(exceeds_order_value("s1", dec(5), Some(dec(100)), dec(500)).is_none());
+        assert!(exceeds_order_value("s1", dec(5), Some(dec(100)), dec(1), dec(500)).is_none());
+    }
+
+    #[test]
+    fn order_value_counts_contract_multiplier() {
+        // 螺纹钢 1 手 4000、乘数 10: 名义额 40000 而不是 4000
+        let err = exceeds_order_value("s1", dec(1), Some(dec(4000)), dec(10), dec(10000));
+        assert!(err.unwrap().contains("order value 40000"));
+        assert!(exceeds_order_value("s1", dec(1), Some(dec(4000)), dec(10), dec(40000)).is_none());
     }
 
     #[test]
     fn order_value_skips_check_when_price_unknown() {
         // 无参考价无法折算名义, 不能凭空拒单
-        assert!(exceeds_order_value("s1", dec(100), None, dec(1)).is_none());
+        assert!(exceeds_order_value("s1", dec(100), None, dec(1), dec(1)).is_none());
     }
 
     #[test]
@@ -231,6 +249,7 @@ mod tests {
             "X",
             dec(200),
             Some(dec(100)),
+            dec(1),
             dec(200),
             &HashMap::new(),
             Some(dec(500)),
@@ -249,6 +268,7 @@ mod tests {
                 "X",
                 dec(10_000),
                 Some(dec(10_000)),
+                dec(1),
                 dec(10_000),
                 &HashMap::new(),
                 None,
@@ -275,6 +295,7 @@ mod tests {
                 None,
                 None,
                 Some(100.0),
+                None,
             )
             .is_none()
         );
@@ -290,6 +311,7 @@ mod tests {
                 None,
                 None,
                 Some(100.0),
+                None,
             )
             .is_some()
         );

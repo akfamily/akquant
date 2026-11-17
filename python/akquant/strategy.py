@@ -428,6 +428,7 @@ class Strategy:
     _trading_day_cross_section_timestamps: Dict[str, int]
     _oco_groups: Dict[str, set[str]]
     _oco_order_to_group: Dict[str, str]
+    _order_group_members: Dict[str, Tuple[str, ...]]
     _use_engine_oco: bool
     _pending_engine_oco_groups: List[Tuple[str, str, str]]
     _use_engine_bracket: bool
@@ -686,6 +687,7 @@ class Strategy:
         instance._trading_day_cross_section_timestamps = {}
         instance._oco_groups = {}
         instance._oco_order_to_group = {}
+        instance._order_group_members = {}
         instance._use_engine_oco = False
         instance._pending_engine_oco_groups = []
         instance._use_engine_bracket = False
@@ -863,6 +865,8 @@ class Strategy:
             self._oco_groups = {}
         if not hasattr(self, "_oco_order_to_group"):
             self._oco_order_to_group = {}
+        if not hasattr(self, "_order_group_members"):
+            self._order_group_members = {}
         if not hasattr(self, "_use_engine_oco"):
             self._use_engine_oco = False
         if not hasattr(self, "_pending_engine_oco_groups"):
@@ -3335,6 +3339,9 @@ class Strategy:
                 self._order_group_seq += 1
                 group_id = f"oco-{self._order_group_seq}"
             group_key = str(group_id).strip()
+            # 组号 → 组内订单号, 供回测下 cancel_group 按组撤单: 组关系登记在引擎
+            # 里时 Python 侧的 _oco_groups 是空的, 拿组号查不到成员。
+            self._order_group_members[group_key] = (first, second)
 
             engine = getattr(self, "_engine", None)
             register_oco = getattr(engine, "register_oco_group", None)

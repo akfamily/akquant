@@ -125,6 +125,67 @@ pub fn estimate_futures_realized_pnl(
     realized
 }
 
+/// 账户口径的权益: 保证金账户里期货持仓只计浮动盈亏, 不计名义市值。
+///
+/// [`Portfolio::calculate_equity`] 是“现金 + 持仓名义市值”, 只在持仓都按全额入账
+/// 时才等于权益; 保证金账户开期货仓不扣名义额, 用它会把多头名义额加进权益、把空头
+/// 名义额减出权益。风控规则、可用资金一律用本函数的口径。
+pub fn account_equity(
+    portfolio: &Portfolio,
+    prices: &HashMap<String, Decimal>,
+    instruments: &HashMap<String, Instrument>,
+    trade_tracker: &TradeTracker,
+    risk_config: &RiskConfig,
+) -> Decimal {
+    if !risk_config.is_margin_account() {
+        return portfolio.calculate_equity(prices, instruments);
+    }
+    calculate_account_metrics(portfolio, prices, instruments, trade_tracker, risk_config).equity
+}
+
+/// 保证金账户里期货持仓的带符号名义市值之和(非保证金账户为 0)。
+pub fn futures_margin_notional(
+    positions: &HashMap<String, Decimal>,
+    prices: &HashMap<String, Decimal>,
+    instruments: &HashMap<String, Instrument>,
+    risk_config: &RiskConfig,
+) -> Decimal {
+    if !risk_config.is_margin_account() {
+        return Decimal::ZERO;
+    }
+    let mut notional = Decimal::ZERO;
+    for (symbol, quantity) in positions.iter() {
+        if quantity.is_zero() {
+            continue;
+        }
+        let (Some(price), Some(instrument)) = (prices.get(symbol), instruments.get(symbol)) else {
+            continue;
+        };
+        if is_futures_margin_account(instrument, risk_config) {
+            notional += *quantity * *price * instrument.multiplier();
+        }
+    }
+    notional
+}
+
+/// “现金 + 持仓名义市值”口径相对账户口径权益的修正额(加到前者上得到后者)。
+///
+/// 用于在投影了挂单的组合上算可用资金: 投影按全额名义价调现金与持仓, 两者相抵,
+/// 需要修正的只有**已有**期货持仓——它们开仓时没扣名义额。
+pub fn futures_margin_equity_correction(
+    portfolio: &Portfolio,
+    prices: &HashMap<String, Decimal>,
+    instruments: &HashMap<String, Instrument>,
+    trade_tracker: &TradeTracker,
+    risk_config: &RiskConfig,
+) -> Decimal {
+    if !risk_config.is_margin_account() {
+        return Decimal::ZERO;
+    }
+    account_equity(portfolio, prices, instruments, trade_tracker, risk_config)
+        - portfolio.calculate_equity(prices, instruments)
+}
+
 pub fn calculate_account_metrics(
     portfolio: &Portfolio,
     prices: &HashMap<String, Decimal>,
@@ -245,6 +306,93 @@ mod tests {
             &TradeTracker::new(),
             &config,
         )
+    }
+
+    fn futures(symbol: &str) -> Instrument {
+        use crate::model::instrument::FuturesInstrument;
+        Instrument {
+            asset_type: AssetType::Futures,
+            inner: InstrumentEnum::Futures(FuturesInstrument {
+                symbol: symbol.to_string(),
+                multiplier: Decimal::from(10),
+                margin_ratio: Decimal::new(1, 1),
+                tick_size: Decimal::ONE,
+                expiry_date: None,
+                settlement_type: None,
+                settlement_price: None,
+            }),
+        }
+    }
+
+    /// 保证金账户持有 `quantity` 手期货(价格 4000、乘数 10)、现金 50 万、无浮动盈亏。
+    fn futures_account(quantity: i64, mode: &str) -> (Portfolio, RiskConfig) {
+        let mut positions = HashMap::new();
+        positions.insert("RB".to_string(), Decimal::from(quantity));
+        let portfolio = Portfolio {
+            cash: Decimal::from(500_000),
+            positions: Arc::new(positions),
+            available_positions: Arc::new(HashMap::new()),
+        };
+        let mut config = RiskConfig::new();
+        config.account_mode = mode.to_string();
+        (portfolio, config)
+    }
+
+    fn futures_market() -> (HashMap<String, Decimal>, HashMap<String, Instrument>) {
+        let mut prices = HashMap::new();
+        prices.insert("RB".to_string(), Decimal::from(4000));
+        let mut instruments = HashMap::new();
+        instruments.insert("RB".to_string(), futures("RB"));
+        (prices, instruments)
+    }
+
+    #[test]
+    fn account_equity_excludes_futures_notional_in_margin_account() {
+        let (prices, instruments) = futures_market();
+        let tracker = TradeTracker::new();
+        for quantity in [5, -5] {
+            let (portfolio, config) = futures_account(quantity, "margin");
+            // 多头不把名义额 20 万加进权益, 空头也不减出去: 无浮动盈亏时权益就是现金
+            assert_eq!(
+                account_equity(&portfolio, &prices, &instruments, &tracker, &config),
+                Decimal::from(500_000)
+            );
+            let notional = Decimal::from(quantity * 40_000);
+            assert_eq!(
+                futures_margin_notional(&portfolio.positions, &prices, &instruments, &config),
+                notional
+            );
+            assert_eq!(
+                futures_margin_equity_correction(
+                    &portfolio,
+                    &prices,
+                    &instruments,
+                    &tracker,
+                    &config
+                ),
+                -notional
+            );
+        }
+    }
+
+    #[test]
+    fn account_equity_matches_cash_plus_notional_in_cash_account() {
+        // 现金账户里期货按全额名义价入账, 现金 + 名义市值就是权益, 不做修正
+        let (prices, instruments) = futures_market();
+        let tracker = TradeTracker::new();
+        let (portfolio, config) = futures_account(5, "cash");
+        assert_eq!(
+            account_equity(&portfolio, &prices, &instruments, &tracker, &config),
+            Decimal::from(700_000)
+        );
+        assert_eq!(
+            futures_margin_notional(&portfolio.positions, &prices, &instruments, &config),
+            Decimal::ZERO
+        );
+        assert_eq!(
+            futures_margin_equity_correction(&portfolio, &prices, &instruments, &tracker, &config),
+            Decimal::ZERO
+        );
     }
 
     #[test]

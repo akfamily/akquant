@@ -10,7 +10,7 @@ def test_streaming_indicator_sink_is_public() -> None:
 
 
 def test_engine_rule_version_is_2_3_1() -> None:
-    """cancel_order 传订单对象时真正撤单, 规则版本为 2.4.1."""
+    """最低佣金按委托收、按金额设的限额计入合约乘数, 规则版本为 2.4.2."""
     import akquant
 
-    assert akquant.__engine_rule_version__ == "2.4.1"
+    assert akquant.__engine_rule_version__ == "2.4.2"

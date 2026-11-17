@@ -40,6 +40,20 @@ pub trait MarketModel: Send + Sync {
         position_before: Decimal,
     ) -> Decimal;
 
+    /// 一笔成交里受最低佣金约束的那部分: `(未套最低佣金的佣金, 最低佣金)`。
+    ///
+    /// 最低佣金按委托收而不是按成交收: 一笔委托被拆成多笔成交时, 调用方用它把
+    /// [`MarketModel::calculate_commission`] 里逐笔套上的最低佣金换成按委托累计的
+    /// 口径(见 `OrderManager::process_trades`)。没有最低佣金的品种返回 `None`。
+    fn brokerage_floor(
+        &self,
+        _instrument: &Instrument,
+        _price: Decimal,
+        _quantity: Decimal,
+    ) -> Option<(Decimal, Decimal)> {
+        None
+    }
+
     fn update_available_position(
         &self,
         available_positions: &mut HashMap<String, Decimal>,

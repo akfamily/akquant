@@ -418,6 +418,14 @@ class BrokerOrderSubmitter:
 
         return round_sizer_quantity(self._strategy, symbol, float(size))
 
+    def _contract_multiplier(self, symbol: str) -> float:
+        """合约乘数(名义额 = 价格 × 数量 × 乘数); 标的未登记或取不到时按 1."""
+        try:
+            value = float(self._strategy.get_instrument(symbol).multiplier)
+        except (KeyError, AttributeError, TypeError, ValueError):
+            return 1.0
+        return value if value > 0 else 1.0
+
     def _check_risk(
         self,
         symbol: str,
@@ -485,6 +493,7 @@ class BrokerOrderSubmitter:
                     max_order_value=max_order_value,
                     max_order_size=max_order_size,
                     max_position_size=max_position_size,
+                    multiplier=self._contract_multiplier(symbol),
                 ),
             )
         except Exception:  # noqa: BLE001 — 风控自身异常不应吞掉下单能力
