@@ -6,6 +6,7 @@
 
 from typing import Any, List
 
+import pandas as pd
 import pytest
 from akquant import Strategy, run_backtest
 from akquant.akquant import Bar, Tick
@@ -50,6 +51,75 @@ class _BothRecorder(Strategy):
     def on_tick(self, tick: Any) -> None:
         """记录原始 tick."""
         self.ticks.append(tick)
+
+
+STOCK = "600000.SH"
+
+
+def _stock_tick(clock: str, price: float, volume: float = 100.0) -> Tick:
+    """构造 2024-01-02(周二)上海时间 ``clock`` 的 A 股 tick."""
+    ts = int(pd.Timestamp(f"2024-01-02 {clock}", tz="Asia/Shanghai").value)
+    return Tick(timestamp=ts, price=price, volume=volume, symbol=STOCK)
+
+
+class _StockRecorder(_BothRecorder):
+    """记录 A 股标的的 bar 与 tick."""
+
+    def on_start(self) -> None:
+        """订阅标的."""
+        self.subscribe(STOCK)
+
+
+def _run_stock(ticks: List[Tick], freq: str) -> List[str]:
+    """跑一次 A 股 tick 回测, 返回合成 bar 的上海时间 ``HH:MM`` 标签."""
+    strategy = _StockRecorder()
+    run_backtest(
+        data=ticks,
+        strategy=strategy,
+        symbols=[STOCK],
+        initial_cash=100_000.0,
+        show_progress=False,
+        fill_policy=CurrentClose(),
+        freq=freq,
+    )
+    return [
+        pd.Timestamp(int(bar.timestamp), unit="ns", tz="UTC")
+        .tz_convert("Asia/Shanghai")
+        .strftime("%H:%M")
+        for bar in strategy.bars
+    ]
+
+
+def test_freq_hour_bars_start_at_stock_session_open() -> None:
+    """A 股 60 分钟合成 bar 从 09:30 起算(10:30、11:30), 与行情服务的 K 线一致."""
+    ticks = [
+        _stock_tick("09:31:00", 10.0),
+        _stock_tick("10:15:00", 10.2),
+        _stock_tick("10:30:05", 10.4),
+        _stock_tick("11:29:00", 10.6),
+        _stock_tick("13:00:05", 10.8),
+    ]
+    assert _run_stock(ticks, "60min") == ["10:30", "11:30"]
+
+
+def test_freq_minute_bars_keep_opening_auction_as_own_bar() -> None:
+    """1 分钟周期: 开盘集合竞价的 tick 单独成一根 09:30 的 bar, 不出 09:26 的 bar."""
+    ticks = [
+        _stock_tick("09:25:03", 10.0),
+        _stock_tick("09:30:05", 10.2),
+        _stock_tick("09:31:05", 10.4),
+    ]
+    assert _run_stock(ticks, "1min") == ["09:30", "09:31"]
+
+
+def test_freq_five_minute_bars_merge_opening_auction_into_first_bar() -> None:
+    """5 分钟周期: 开盘集合竞价的 tick 并入首根 (09:30, 09:35]."""
+    ticks = [
+        _stock_tick("09:25:03", 10.0),
+        _stock_tick("09:31:00", 10.2),
+        _stock_tick("09:35:01", 10.4),
+    ]
+    assert _run_stock(ticks, "5min") == ["09:35"]
 
 
 def _minute_one_ticks() -> List[Tick]:

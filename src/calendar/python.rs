@@ -328,6 +328,32 @@ impl PySessionResolver {
         Ok(b.map(|b| (b.trading_day, b.index, b.start, b.end)))
     }
 
+    /// 时刻 ``timestamp`` 的 tick 所属 K 线（周期 ``interval_ns``）的 ``(终点, 起点)``
+    /// （UTC 纳秒，右闭区间），与 ``BarAggregator`` 接了本解析器时的分桶一致。
+    ///
+    /// 股票、基金、期权的内置时段表从交易块的连续竞价起点起算（A 股 60 分钟：
+    /// 10:30、11:30、14:00、15:00），开盘集合竞价的 tick 归首根，1 分钟周期下单独成
+    /// 一根终点为连续竞价起点的 bar；其余情况按绝对时间取整。``asset_type`` 省略时取
+    /// ``set_active`` 登记的类型。
+    #[pyo3(signature = (symbol, timestamp, interval_ns, asset_type=None))]
+    fn tick_bar_bounds(
+        &self,
+        symbol: &str,
+        timestamp: i64,
+        interval_ns: i64,
+        asset_type: Option<AssetType>,
+    ) -> PyResult<(i64, i64)> {
+        if interval_ns <= 0 {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "interval_ns 必须为正（收到 {interval_ns}），请传 K 线周期的纳秒数"
+            )));
+        }
+        let asset_type = asset_type.or_else(|| self.inner.registered_asset_type(symbol));
+        Ok(self
+            .inner
+            .tick_bar_bounds(symbol, asset_type, timestamp, interval_ns))
+    }
+
     /// 内置时段模板名。
     #[staticmethod]
     fn templates() -> Vec<String> {

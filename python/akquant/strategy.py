@@ -2138,11 +2138,26 @@ class Strategy:
         minutes = base_interval_minutes(self.freq)
         return None if minutes is None else int(minutes) * 60 * 1_000_000_000
 
+    def _intrabar_label(self, symbol: str, timestamp_ns: int, interval: int) -> int:
+        """时刻 ``timestamp_ns`` 的 tick 所属基础 bar 将来闭合时的时间戳.
+
+        框架注入了合成基础 bar 所用的时段解析器(``_framework_tick_bar_resolver``:
+        回测 ``freq=`` 聚合、实盘网关接了解析器的聚合器)时按它分桶, 否则按绝对时间
+        取整(:func:`end_stamp_label`)。
+        """
+        resolver = self.__dict__.get("_framework_tick_bar_resolver")
+        if resolver is None:
+            return end_stamp_label(timestamp_ns, interval)
+        end, _ = resolver.tick_bar_bounds(symbol, int(timestamp_ns), int(interval))
+        return int(end)
+
     def _verify_intrabar_label(self, closed: PartialBar, bar_ts: int) -> None:
         interval = self._intrabar_interval_ns()
         if interval is None:
             return
-        predicted = end_stamp_label(closed.timestamp, interval)
+        predicted = self._intrabar_label(
+            str(closed.symbol), int(closed.timestamp), interval
+        )
         if predicted == bar_ts:
             return
         mismatched: set[str] = self.__dict__.setdefault(
@@ -2183,7 +2198,7 @@ class Strategy:
         label = (
             UNKNOWN_LABEL
             if interval is None
-            else end_stamp_label(int(tick.timestamp), interval)
+            else self._intrabar_label(symbol, int(tick.timestamp), interval)
         )
         item.set_provisional(resolved_symbol, value, label)
         if not item.plot or label == UNKNOWN_LABEL:

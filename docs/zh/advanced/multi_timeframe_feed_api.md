@@ -53,7 +53,7 @@ class FiveMinuteTrend(Strategy):
 
 关键 API：
 
-- `subscribe_bars(freq, callback=None, symbols=None, *, session_windows=None)`：声明订阅。`freq` 支持整数分钟 `"Nmin"`、整数小时 `"Nh"`、日线 `"1d"`。`symbols=None` 表示全部标的。不传 `session_windows`（推荐）时按品种时段表的交易块切分：开盘集合竞价并入上午块（A 股 09:15～11:30），收盘集合竞价与下午连续竞价同块（13:00～15:00）；日内窗口标签不超过块结束（A 股 1h 为 10:00、11:00、11:30、14:00、15:00）；日线窗口按交易日切分（夜盘归下一交易日），标签为交易日收盘时刻。`session_windows` 只在需要覆盖时段表时手写。
+- `subscribe_bars(freq, callback=None, symbols=None, *, session_windows=None)`：声明订阅。`freq` 支持整数分钟 `"Nmin"`、整数小时 `"Nh"`、日线 `"1d"`。`symbols=None` 表示全部标的。不传 `session_windows`（推荐）时按品种时段表的交易块切分：开盘集合竞价并入上午块（A 股 09:15～11:30），收盘集合竞价与下午连续竞价同块（13:00～15:00）；日内窗口不跨块：股票、基金、期权的内置时段表从块内连续竞价起点起算，开盘集合竞价并入首个窗口（A 股 1h：10:30、11:30、14:00、15:00，与行情软件一致）；其余时段表（期货、自定义）标签为本地时钟 ceil 到周期但不超过块结束（股指期货 1h：10:00、11:00、11:30、14:00、15:00）；日线窗口按交易日切分（夜盘归下一交易日），标签为交易日收盘时刻。`session_windows` 只在需要覆盖时段表时手写。
 - `callback`：省略时闭合的窗口 bar 会回调策略的 `on_window_bar(bar)`；传入具体函数（如示例 14 的 `on_daily`）则改由该函数接收，`on_window_bar` 不再触发该条订阅。
 - `on_window_bar(bar)`：默认窗口回调，`bar.freq` 是该 bar 所属的周期标签（如 `"5min"`、`"1d"`）。
 - `current_window(symbol, freq)`：查看某标的当前正在形成、尚未闭合的窗口快照（只能在行情回调内调用），不会触发回调。
@@ -124,7 +124,7 @@ replayed = feed.replay(
   - `replay(freq, align="session", emit_partial=False, agg=None, label="right", closed="right", session_windows=None, sessions=None, trading_calendar=None, asset_type=None, base_interval_min=None)`
 - 两者均返回可直接传入 `run_backtest(data=...)` 的适配器对象。
 - `replay(align="session")`（不传 `session_windows`）与 `replay(align="day", day_mode="trading")` 用引擎 `subscribe_bars` 同一个窗口聚合器切分，对同一数据、同一时段表与 `subscribe_bars`、`BarGenerator` 产出相同的窗口：
-  - 日内窗口（`Nmin`/`Nh`）按（交易日，交易块）切分，标签为本地时钟 ceil 到周期但不超过块结束（A 股 1h：10:00、11:00、11:30、14:00、15:00）。
+  - 日内窗口（`Nmin`/`Nh`）按（交易日，交易块）切分：股票、基金、期权的内置时段表从块内连续竞价起点起算，开盘集合竞价并入首个窗口（A 股 1h：10:30、11:30、14:00、15:00，与行情软件一致）；其余时段表（期货、自定义）标签为本地时钟 ceil 到周期但不超过块结束（股指期货 1h：10:00、11:00、11:30、14:00、15:00）。
   - 日线窗口（`1D`）按交易日切分（夜盘归下一交易日），标签为交易日收盘时刻。
   - `sessions`、`trading_calendar`、`asset_type` 与 `run_backtest` 同义（默认股票）；`base_interval_min` 是源数据周期（分钟），不传时按相邻时间戳间隔的众数推断。
   - OHLCV 取聚合器结果；`agg` 里的其他列（或改写了默认聚合方式的列）按聚合器给每行分配的窗口分组计算。
@@ -184,8 +184,7 @@ replayed = feed.replay(
 
 `BarGenerator` 底层就是引擎 `subscribe_bars` 用的同一个 Rust 窗口聚合器
 （也可直接用 `akquant.WindowAggregator`），对同一数据、同一时段表产出相同的
-窗口：日内窗口按（交易日，交易块）切分，标签为本地时钟 ceil 到周期但不超过
-交易块结束（A 股 1h：10:00、11:00、11:30、14:00、15:00）；日线窗口按交易日
+窗口：日内窗口按（交易日，交易块）切分，股票、基金、期权的内置时段表从块内连续竞价起点起算，开盘集合竞价并入首个窗口（A 股 1h：10:30、11:30、14:00、15:00，与行情软件一致）；其余时段表（期货、自定义）标签为本地时钟 ceil 到周期但不超过块结束（股指期货 1h：10:00、11:00、11:30、14:00、15:00）；日线窗口按交易日
 切分（夜盘归下一交易日），标签为交易日收盘时刻。窗口 bar 带 `freq` 与
 `interval_start`。
 

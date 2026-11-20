@@ -10,7 +10,7 @@ def test_streaming_indicator_sink_is_public() -> None:
 
 
 def test_engine_rule_version_is_2_3_1() -> None:
-    """最低佣金按委托收、按金额设的限额计入合约乘数, 规则版本为 2.4.2."""
+    """股票类日内 K 线改为从交易时段的连续竞价起点起算, 规则版本为 2.5.0."""
     import akquant
 
-    assert akquant.__engine_rule_version__ == "2.4.2"
+    assert akquant.__engine_rule_version__ == "2.5.0"

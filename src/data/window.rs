@@ -4,8 +4,10 @@
 //! 不成为 Event**, 只写历史缓冲并交给策略阶段派发。
 //!
 //! 有会话解析器([`WindowAggregator::set_resolver`])时:
-//! - 日内窗口(`Nmin`/`Nh`)按(交易日, 交易块)分组, 不跨块; 标签 = 本地时钟 ceil
-//!   到周期, 但不超过块结束(A 股 1h: 10:00、11:00、11:30、14:00、15:00)。
+//! - 日内窗口(`Nmin`/`Nh`)按(交易日, 交易块)分组, 不跨块、标签不超过块结束。
+//!   股票、基金、期权的内置时段表从块内连续竞价起点起算, 开盘集合竞价并入首个窗口
+//!   (A 股 1h: 10:30、11:30、14:00、15:00); 其余时段表的标签 = 本地时钟 ceil 到周期
+//!   (股指期货 1h: 10:00、11:00、11:30、14:00、15:00)。
 //! - 日线窗口按交易日分组(夜盘 bar 归下一交易日), 标签 = 该交易日收盘,
 //!   `interval_start` = 前一交易日收盘。
 //! - 基础 bar 归属按区间内一点 `ts - 1` 判断。
@@ -586,6 +588,16 @@ impl WindowAggregator {
         if self.subscriptions[sub_idx].sessions.is_empty() {
             match self.block_for(symbol, point) {
                 Some(Some(block)) => {
+                    if let Some((label, start)) = block.bucket(point + 1, period_ns) {
+                        return Placement {
+                            label,
+                            session_key: Some((block.trading_day, block.index as i32)),
+                            date: block.trading_day,
+                            trading_day: Some(block.trading_day),
+                            interval_start: Some(start),
+                            close_at: Some(label),
+                        };
+                    }
                     return Placement {
                         label: clock_label.min(block.end),
                         session_key: Some((block.trading_day, block.index as i32)),
@@ -1246,16 +1258,105 @@ mod tests {
     fn stock_hour_window_clamps_at_lunch_and_closes_immediately() {
         let mut a = resolved_agg(&[("1h", None)], vec![], "S", AssetType::Stock);
         assert!(a.update(&bar(ns(2024, 1, 2, 11, 1), 10, "S")).is_empty());
-        // 11:01～11:30 的窗口标签截到块结束 11:30, 在 11:30 那根即时闭合
+        // 10:31～11:30 的窗口在 11:30 那根即时闭合, 不等午休后
         let closed = a.update(&bar(ns(2024, 1, 2, 11, 30), 11, "S"));
         assert_eq!(closed.len(), 1);
         assert_eq!(closed[0].timestamp, ns(2024, 1, 2, 11, 30));
-        assert_eq!(closed[0].interval_start, Some(ns(2024, 1, 2, 11, 0)));
+        assert_eq!(closed[0].interval_start, Some(ns(2024, 1, 2, 10, 30)));
         // 下午块: 13:01 开新窗口, 起点为块起点 13:00
         assert!(a.update(&bar(ns(2024, 1, 2, 13, 1), 12, "S")).is_empty());
         let cur = a.current("S", "1h").unwrap();
         assert_eq!(cur.timestamp, ns(2024, 1, 2, 14, 0));
         assert_eq!(cur.interval_start, Some(ns(2024, 1, 2, 13, 0)));
+    }
+
+    /// 喂入 `times` (时, 分) 的 1 分钟 bar, 返回闭合窗口的 (标签, 起点, 量)。
+    fn feed_minutes(
+        a: &mut WindowAggregator,
+        symbol: &str,
+        times: &[(u32, u32)],
+    ) -> Vec<(i64, Option<i64>, Decimal)> {
+        let mut out = Vec::new();
+        for &(h, m) in times {
+            for b in a.update(&bar(ns(2024, 1, 2, h, m), 10, symbol)) {
+                out.push((b.timestamp, b.interval_start, b.volume));
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn stock_hour_windows_anchor_at_continuous_session_start() {
+        // A 股 1h 从 09:30 / 13:00 起算: 10:30、11:30、14:00、15:00, 一天 4 根
+        let mut a = resolved_agg(&[("1h", None)], vec![], "S", AssetType::Stock);
+        let closed = feed_minutes(
+            &mut a,
+            "S",
+            &[
+                (9, 31),
+                (10, 0),
+                (10, 30),
+                (10, 31),
+                (11, 30),
+                (13, 1),
+                (14, 0),
+                (14, 1),
+                (15, 0),
+            ],
+        );
+        let t = |h, m| ns(2024, 1, 2, h, m);
+        assert_eq!(
+            closed
+                .iter()
+                .map(|c| (c.0, c.1))
+                .collect::<Vec<(i64, Option<i64>)>>(),
+            vec![
+                (t(10, 30), Some(t(9, 30))),
+                (t(11, 30), Some(t(10, 30))),
+                (t(14, 0), Some(t(13, 0))),
+                (t(15, 0), Some(t(14, 0))),
+            ]
+        );
+    }
+
+    #[test]
+    fn stock_opening_auction_bar_merges_into_first_window() {
+        // 打在 09:30 的开盘集合竞价 bar 并入首个窗口, 不单独成一根 09:30 的窗口
+        let mut a = resolved_agg(&[("5min", None)], vec![], "S", AssetType::Stock);
+        let closed = feed_minutes(
+            &mut a,
+            "S",
+            &[(9, 30), (9, 31), (9, 32), (9, 33), (9, 34), (9, 35)],
+        );
+        assert_eq!(
+            closed,
+            vec![(
+                ns(2024, 1, 2, 9, 35),
+                Some(ns(2024, 1, 2, 9, 30)),
+                Decimal::from(60)
+            )]
+        );
+    }
+
+    #[test]
+    fn futures_hour_windows_keep_clock_alignment() {
+        // 期货时段表不按时段起点起算: 股指期货 1h 仍是 10:00、11:00、11:30
+        let mut a = resolved_agg(
+            &[("1h", None)],
+            vec![("if", "CN_FUTURES_CFFEX_STOCK_INDEX_DAY")],
+            "IF2401",
+            AssetType::Futures,
+        );
+        let closed = feed_minutes(
+            &mut a,
+            "IF2401",
+            &[(9, 31), (10, 0), (10, 1), (11, 0), (11, 1), (11, 30)],
+        );
+        let t = |h, m| ns(2024, 1, 2, h, m);
+        assert_eq!(
+            closed.iter().map(|c| c.0).collect::<Vec<i64>>(),
+            vec![t(10, 0), t(11, 0), t(11, 30)]
+        );
     }
 
     #[test]
@@ -1484,8 +1585,8 @@ mod tests {
 
     #[test]
     fn out_of_block_bars_merge_with_same_label_in_block_window() {
-        // 期货 rb2405 误用股票时段表: 09:01～09:15 落在块外(块 0 = 09:15 起),
-        // 09:16～09:30 在块内, 两段时钟标签都是 09:30, 只能出一根 09:30 窗口。
+        // 期货 rb2405 误用股票时段表: 09:01～09:15 落在块外(块 0 = 09:15 起), 按时钟
+        // 标签出一根 09:30 窗口; 09:16～09:30 在块内连续竞价之前, 归首个窗口(10:00)。
         let mut a = resolved_agg(&[("30min", None)], vec![], "rb2405", AssetType::Stock);
         let mut out = Vec::new();
         for m in 1..=30 {
@@ -1493,9 +1594,11 @@ mod tests {
         }
         assert_eq!(out.len(), 1, "同标签不得出两根窗口: {out:?}");
         assert_eq!(out[0].timestamp, ns(2024, 1, 2, 9, 30));
-        assert_eq!(out[0].volume, Decimal::from(300));
-        assert!(a.current("rb2405", "30min").is_none());
-        // 5min: 块外 09:05/09:10/09:15 与块内 09:20～09:30 各一根, 标签不重复
+        assert_eq!(out[0].volume, Decimal::from(150));
+        let forming = a.current("rb2405", "30min").unwrap();
+        assert_eq!(forming.timestamp, ns(2024, 1, 2, 10, 0));
+        assert_eq!(forming.volume, Decimal::from(150));
+        // 5min: 块外 09:05/09:10/09:15 各一根; 块内 09:16～09:30 都在形成中的 09:35 窗口
         let mut a = resolved_agg(&[("5min", None)], vec![], "rb2405", AssetType::Stock);
         let mut labels = Vec::new();
         for m in 1..=30 {
@@ -1505,8 +1608,12 @@ mod tests {
                     .map(|b| b.timestamp),
             );
         }
-        let expected: Vec<i64> = (1..=6).map(|k| ns(2024, 1, 2, 9, 5 * k)).collect();
+        let expected: Vec<i64> = (1..=3).map(|k| ns(2024, 1, 2, 9, 5 * k)).collect();
         assert_eq!(labels, expected);
+        assert_eq!(
+            a.current("rb2405", "5min").unwrap().timestamp,
+            ns(2024, 1, 2, 9, 35)
+        );
     }
 
     #[test]

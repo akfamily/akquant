@@ -38,8 +38,13 @@ def _bars_1min(
     return bars
 
 
-def _expected_resample(bars: list[Bar], freq: str) -> pd.DataFrame:
-    """用 pandas resample 造期望窗口 bar(label=right, closed=right)."""
+def _expected_resample(
+    bars: list[Bar], freq: str, offset: str | None = None
+) -> pd.DataFrame:
+    """用 pandas resample 造期望窗口 bar(label=right, closed=right).
+
+    ``offset`` 平移桶边界: A 股 1h 从 09:30 起算, 对应 ``offset="30min"``。
+    """
     df = pd.DataFrame(
         {
             "open": [b.open for b in bars],
@@ -50,7 +55,7 @@ def _expected_resample(bars: list[Bar], freq: str) -> pd.DataFrame:
         },
         index=pd.to_datetime([b.timestamp for b in bars]),
     )
-    out = df.resample(freq, label="right", closed="right").agg(
+    out = df.resample(freq, label="right", closed="right", offset=offset).agg(
         {"open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"}
     )
     return pd.DataFrame(out.dropna(subset=["open"]))
@@ -68,7 +73,8 @@ def _collect(freq_window_interval: tuple[int, str, str], bars: list[Bar]) -> lis
 
 def test_matches_pandas_resample_5min() -> None:
     """5min 聚合逐桶应与 pandas resample(label=right, closed=right) 一致."""
-    bars = _bars_1min(17)  # 跨多个 5min 桶 + 尾部半截
+    # 从 09:31 起: 09:30 那根是开盘集合竞价, 并入首个窗口, 与 pandas 的切法不同
+    bars = _bars_1min(17, start="2024-01-02 09:31:00")  # 跨多个 5min 桶 + 尾部半截
     got = _collect((5, "minute", "5min"), bars)
     exp = _expected_resample(bars, "5min")
     assert len(got) == len(exp)
@@ -84,12 +90,19 @@ def test_matches_pandas_resample_5min() -> None:
 def test_matches_pandas_resample_15min_and_hour() -> None:
     """15min 与 1h 聚合逐桶应与 pandas resample 一致.
 
-    120 根 = 09:30-11:29, 全在 A 股上午交易块内(11:30 之后是午休)。
+    120 根 = 09:31-11:30, 恰为 A 股上午连续竞价段; 1h 从 09:30 起算
+    (10:30、11:30), 对应 pandas 的 ``offset="30min"``。
     """
-    bars = _bars_1min(120)
-    for window, interval, freq in [(15, "minute", "15min"), (1, "hour", "1h")]:
+    bars = _bars_1min(120, start="2024-01-02 09:31:00")
+    for window, interval, freq, offset in [
+        (15, "minute", "15min", None),
+        (1, "hour", "1h", "30min"),
+    ]:
         got = _collect((window, interval, freq), bars)
-        exp = _expected_resample(bars, freq)
+        exp = _expected_resample(bars, freq, offset)
+        assert [b.timestamp for b in got] == [
+            int(pd.Timestamp(cast(datetime, ts)).value) for ts in exp.index
+        ]
         assert len(got) == len(exp)
         assert [b.close for b in got] == list(exp["close"])
         assert [b.volume for b in got] == list(exp["volume"])
@@ -149,8 +162,8 @@ def test_gap_bucket_not_filled() -> None:
 
 def test_multi_symbol_independent() -> None:
     """多标的独立聚合, 互不干扰."""
-    a = _bars_1min(6, symbol="A")
-    b = _bars_1min(6, symbol="B")
+    a = _bars_1min(6, symbol="A", start="2024-01-02 09:31:00")
+    b = _bars_1min(6, symbol="B", start="2024-01-02 09:31:00")
     interleaved = [x for pair in zip(a, b) for x in pair]
     got = []
     bg = BarGenerator(lambda bar: got.append(bar), window=5, interval="minute")
@@ -314,7 +327,10 @@ def test_session_boundary_inside_clock_bucket_discriminates() -> None:
 
 
 def test_asset_type_picks_session_table() -> None:
-    """asset_type 决定时段表: 期货 10:15 收上午第一块, 1h 窗口标签截到 10:15."""
+    """asset_type 决定时段表.
+
+    期货 10:15 收上午第一块, 1h 窗口标签截到 10:15; 股票 1h 从 09:30 起算, 标签 10:30。
+    """
     import pytest
 
     ts = ["2024-01-02 10:01:00", "2024-01-02 10:15:00"]
@@ -333,7 +349,7 @@ def test_asset_type_picks_session_table() -> None:
             bg.update_bar(b)
         bg.flush()
         labels[name] = [b.timestamp for b in got]
-    assert labels["stock"] == [_ns("2024-01-02 11:00")]
+    assert labels["stock"] == [_ns("2024-01-02 10:30")]
     assert labels["futures"] == [_ns("2024-01-02 10:15")]
 
     with pytest.raises(ValueError, match="asset_type"):
@@ -359,9 +375,9 @@ def test_out_of_block_bars_warn_once_per_symbol(
     assert len(hits) == 2, hits
     assert "rb2405" in hits[0] and "asset_type=" in hits[0] and "sessions=" in hits[0]
     assert "ag2406" in hits[1]
-    # 同标签只出一根窗口
+    # 块外 09:05/09:10/09:15 各一根; 09:16～09:30 在连续竞价之前, 归形成中的 09:35 窗口
     labels = [b.timestamp for b in got if b.symbol == "rb2405"]
-    assert len(labels) == len(set(labels)) == 6
+    assert labels == [_ns(f"2024-01-02 09:{m:02d}") for m in (5, 10, 15)]
 
 
 def test_window_aggregator_rejects_resolver_timezone_mismatch() -> None:

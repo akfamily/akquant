@@ -86,7 +86,7 @@ def parse_freq_to_interval_min(freq: str) -> int:
 
 
 def aggregate_ticks_into_feed(
-    feed: Any, ticks: Sequence[Tick], interval_min: int
+    feed: Any, ticks: Sequence[Tick], interval_min: int, resolver: Any = None
 ) -> None:
     """经 ``BarAggregator`` 把 tick 聚合成 bar 并推入 ``feed``.
 
@@ -114,6 +114,10 @@ def aggregate_ticks_into_feed(
     :param feed: 目标 ``DataFeed``（合成的 bar 会写入其中）
     :param ticks: 已按时间戳升序的 tick 序列
     :param interval_min: 聚合周期（整数分钟）
+    :param resolver: 时段解析器（须已 ``set_active`` 相关标的）。给定时按交易时段
+        分桶（A 股 60 分钟: 10:30、11:30、14:00、15:00, 开盘集合竞价归首根, 1 分钟
+        周期下单独成一根 09:30 的 bar）, 与实盘网关接了解析器的聚合器同一口径;
+        省略时按绝对时间取整
     """
     from ..akquant import BarAggregator
 
@@ -122,6 +126,8 @@ def aggregate_ticks_into_feed(
         interval_min,
         volume_is_cumulative=False,
     )
+    if resolver is not None:
+        aggregator.set_session_resolver(resolver)
     for tick in ticks:
         aggregator.on_tick(
             str(tick.symbol),
