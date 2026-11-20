@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.93] - 2026-11-20
+
 > 规则版本 2.4.2 → 2.5.0：股票、基金、期权的日内 K 线改为从交易时段的连续竞价起点起算（见下文）。用了 1 小时及以上日内窗口的股票类回测、数据里带 09:30 开盘集合竞价 bar 的回测、用 `freq=` 把股票 tick 聚合成 bar 的回测结果会变；期货、自定义时段表、只用 1～30 分钟窗口且数据不含竞价 bar 的回测不变。
 
 ### Changed
