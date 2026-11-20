@@ -13,6 +13,37 @@ from ..log import get_logger
 logger = get_logger("gateway.live")
 
 
+_SHORT_DIRECTIONS = frozenset({"sell", "short"})
+
+
+def is_short_row(row: Any) -> bool:
+    """持仓行是否为空头: 方向写明时以方向为准, 否则看数量正负."""
+    direction = str(getattr(row, "direction", "") or "").strip().lower()
+    if direction in _SHORT_DIRECTIONS:
+        return True
+    if direction in {"buy", "long"}:
+        return False
+    return float(getattr(row, "quantity", 0.0) or 0.0) < 0
+
+
+def _net_by_symbol(rows: list[Any], field: str) -> dict[str, float]:
+    """把持仓行按标的合并成带符号净数量(多头正, 空头负).
+
+    柜台对空头的写法不统一: 有的给负数, 有的数量恒正、方向写在 ``direction`` 里;
+    同一合约锁仓时还会多空各给一行。这里统一成回测的口径: 空头行计负, 同标的
+    的行相加。不在这里做的话, 空头会被读成多头, 锁仓的两行会后者覆盖前者。
+    """
+    net: dict[str, float] = {}
+    for row in rows:
+        value = float(getattr(row, field, 0.0) or 0.0)
+        direction = str(getattr(row, "direction", "") or "").strip().lower()
+        if direction in _SHORT_DIRECTIONS:
+            value = -abs(value)
+        symbol = str(row.symbol)
+        net[symbol] = net.get(symbol, 0.0) + value
+    return net
+
+
 class BrokerStateCache:
     """缓存 trader_gateway 状态；总持仓事件溯源, 其余查柜台失效."""
 
@@ -21,6 +52,8 @@ class BrokerStateCache:
         self._gw = trader_gateway
         self._positions: dict[str, float] = {}
         self._available: dict[str, float] = {}
+        # 最近一次查到的持仓行(与 _available 同时刷新), 供持仓明细按方向读取
+        self._rows: list[Any] = []
         self._total_loaded = False
         self._available_loaded = False
         self._account: Any = None
@@ -43,6 +76,16 @@ class BrokerStateCache:
         """Mark account snapshot stale."""
         self._account_loaded = False
 
+    def set_account(self, account: Any) -> None:
+        """用已查到的账户快照替换缓存(恢复轮询送来的 ``account`` 事件).
+
+        ``None`` 不覆盖。之后的委托/成交回报照旧经 ``invalidate_account`` 让它过期。
+        """
+        if account is None:
+            return
+        self._account = account
+        self._account_loaded = True
+
     def invalidate_open_orders(self) -> None:
         """Mark open-orders snapshot stale."""
         self._open_orders_loaded = False
@@ -64,8 +107,9 @@ class BrokerStateCache:
         except Exception:  # noqa: BLE001 柜台查询失败 → 保留上次缓存, 不抛
             logger.exception("broker_state_cache.query_positions failed")
             return
-        self._positions = {str(p.symbol): float(p.quantity) for p in rows}
-        self._available = {str(p.symbol): float(p.available_quantity) for p in rows}
+        self._positions = _net_by_symbol(rows, "quantity")
+        self._available = _net_by_symbol(rows, "available_quantity")
+        self._rows = rows
         self._total_loaded = True
         self._available_loaded = True
 
@@ -76,8 +120,18 @@ class BrokerStateCache:
             logger.exception("broker_state_cache.query_positions failed")
             return
         # 仅刷新可用, 不动事件溯源的总持仓
-        self._available = {str(p.symbol): float(p.available_quantity) for p in rows}
+        self._available = _net_by_symbol(rows, "available_quantity")
+        self._rows = rows
         self._available_loaded = True
+
+    def position_rows(self, symbol: str) -> list[Any]:
+        """返回某标的最近一次查到的持仓行(每个方向一行), 过期时重查柜台.
+
+        与可用持仓同一份查询: 成交后失效, 下次读取时重查。
+        """
+        if not self._available_loaded:
+            self._load_available()
+        return [row for row in self._rows if str(row.symbol) == symbol]
 
     def positions(self) -> dict[str, float]:
         """Return {symbol: quantity}. 事件溯源总持仓(seed 后成交叠 delta)."""

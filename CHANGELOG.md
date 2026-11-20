@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **经柜台交易时，`get_account()` 在没有委托和成交期间一直是旧值**：框架按 `recovery_account_interval_sec`（默认 5 秒）向柜台查询账户，查到的快照此前只用于 `on_portfolio_update` 回调和权益曲线，没有写进 `get_account()` 读取的缓存；缓存只在委托或成交回报后才重查。于是持仓不动时，策略读到的权益、可用资金、持仓市值、浮动盈亏停在上一次成交时的值，不随行情变化，按它做的止损、仓位计算用的是过期数据。现在每次查询到的快照都会更新缓存。回测与 paper 模式不受影响。
+
+- **经柜台交易时，空头持仓被读成多头**：柜台用方向字段表示空头、数量给正数时（如 `broker='middleware'`），`get_position()`、`get_available_position()`、`self.positions` 此前返回正数，策略会把空头当多头，平仓指令变成加仓。现在按持仓行的方向取符号，空头为负，与回测一致。
+- **经柜台交易时，同一合约多空同时持有只读到其中一边**：柜台对锁仓给多、空两行，此前后一行覆盖前一行。现在按净持仓合并。
+- **经柜台交易时，卖出可能被拆成平仓腿而账户里并没有多头**：按今昨仓拆平仓腿时只看持仓数量的正负，数量为正的空头行会被当成可平的多头。现在持仓行写明方向时以方向为准。
+- **经柜台交易时，`get_holding_bars()` 恒为 0**：按持仓时长离场的逻辑在实盘不会触发。现在按柜台持仓逐 bar 累计（持仓从无到有或多空反转的那根 bar 记 1）；只统计本次会话收到的 bar，会话开始前就有的持仓从第一根 bar 起算。
+- **经柜台交易时，`self.position` 读到的不是柜台持仓**：`self.position.size`、`.available`、`.entry_price` 此前读引擎内部的持仓（经柜台交易时恒为 0），与 `get_position()` 不一致。现在数量与可用数量和 `get_position()`、`get_available_position()` 同源，`entry_price` 取柜台的持仓成本。
+
+### Added
+- **`get_position_detail(symbol)` 持仓明细**：返回 `PositionDetail`，回测与实盘同一个结构。`quantity`、`available` 带符号，与 `get_position()`、`get_available_position()` 相同；另有持仓成本 `avg_price`、`market_value`、`unrealized_pnl`、`margin`，以及多头、空头两边各自的 `detail.long`、`detail.short`（数量、可用、成本、今仓、昨仓、冻结量、最新价）。拿不到的项为 `None`：回测没有今昨仓、冻结量和逐标的保证金，实盘取决于柜台是否提供。`PositionDetail`、`PositionLeg` 可从 `akquant` 直接导入。自定义执行后端没有实现该方法时，返回只含数量的明细。
+- **实盘成交带柜台手续费**：`UnifiedTrade` 新增可选字段 `commission`（默认 `None`）。交易网关填了，`on_trade` 收到的成交对象的 `commission` 就是柜台的值；不填照旧为 0。
+- **实盘挂单带方向、委托数量、委托价**：`UnifiedOrderSnapshot` 新增可选字段 `side`、`quantity`、`price`（默认 `None`）。交易网关填了，`get_open_orders()`、`get_order()` 返回的委托就有这三项；此前不经下单请求读到的委托这三项恒为 `None`。
+- **`UnifiedPosition` 新增五个可选字段**：`frozen_quantity`、`market_value`、`unrealized_pnl`、`margin`、`last_price`（默认 `None`，排在 `timestamp_ns` 之后），经 `get_position_detail()` 读到。
+- **CTP 网关上报委托的方向、数量、价格与持仓的占用保证金、持仓盈亏**：委托回报带 `Direction`、`VolumeTotalOriginal`、`LimitPrice`；持仓查询带 `UseMargin`、`PositionProfit`（同一合约同一方向的今仓行、昨仓行相加）。
+- **实盘 `get_account()` 采用柜台给出的持仓市值、冻结资金、占用保证金、浮动盈亏**：`UnifiedAccount` 新增四个可选字段 `market_value`、`frozen_cash`、`margin`、`unrealized_pnl`（默认 `None`，排在 `timestamp_ns` 之后，既有的位置参数写法不受影响）。交易网关填了哪个，`get_account()` 的对应项就用柜台的值（`0.0` 也算给了），`free_margin` 按 `equity - margin` 算；不填时照旧（市值按 `equity - cash` 推算，其余为 0，`free_margin` 等于权益）。此前经柜台交易时这几项恒为推算值或 0：有在途或冻结资金、负债时“市值”与柜台不一致，冻结资金和保证金读出来永远是 0，按 `free_margin` 算仓位会把已占用的保证金当成可用。回测不变。
+- **CTP 网关上报占用保证金、挂单冻结、持仓盈亏**：账户查询结果带上 `CurrMargin`、`FrozenMargin + FrozenCash + FrozenCommission`、`PositionProfit`，经上一条进入 `get_account()`。
+
 ## [0.3.93] - 2026-11-20
 
 > 规则版本 2.4.2 → 2.5.0：股票、基金、期权的日内 K 线改为从交易时段的连续竞价起点起算（见下文）。用了 1 小时及以上日内窗口的股票类回测、数据里带 09:30 开盘集合竞价 bar 的回测、用 `freq=` 把股票 tick 聚合成 bar 的回测结果会变；期货、自定义时段表、只用 1～30 分钟窗口且数据不含竞价 bar 的回测不变。

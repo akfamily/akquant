@@ -310,6 +310,9 @@ def test_ctp_adapter_query_account_maps_native_snapshot() -> None:
             "equity": 200000.0,
             "cash": 200000.0,
             "available_cash": 150000.0,
+            "margin": 30000.0,
+            "frozen_cash": 2500.0,
+            "unrealized_pnl": 0.0,
             "timestamp_ns": 99,
         }
 
@@ -321,6 +324,28 @@ def test_ctp_adapter_query_account_maps_native_snapshot() -> None:
     assert account.account_id == "acct-002"
     assert account.equity == 200000.0
     assert account.available_cash == 150000.0
+    assert account.margin == 30000.0
+    assert account.frozen_cash == 2500.0
+    # 0.0 是柜台给出的值, 不能当成"没给"
+    assert account.unrealized_pnl == 0.0
+    assert account.market_value is None
+
+
+def test_ctp_adapter_account_without_optional_fields_leaves_them_unset() -> None:
+    """原生快照不带保证金等字段(旧载荷)时留 None, 不编造 0."""
+    adapter = _build_adapter(connected=True)
+    setattr(
+        cast(Any, adapter.gateway),
+        "query_account",
+        lambda: {"account_id": "a", "equity": 1.0, "cash": 1.0, "available_cash": 1.0},
+    )
+    account = adapter.query_account()
+    assert account is not None
+    assert (account.margin, account.frozen_cash, account.unrealized_pnl) == (
+        None,
+        None,
+        None,
+    )
 
 
 def test_ctp_adapter_sync_today_trades_maps_and_deduplicates() -> None:
@@ -512,3 +537,62 @@ def test_ctp_adapter_sync_open_orders_excludes_terminal_orders() -> None:
     assert all(
         order.broker_order_id != broker_order_id for order in open_orders_after_cancel
     )
+
+
+def test_ctp_adapter_order_snapshot_carries_side_quantity_and_price() -> None:
+    """下单后的委托快照带上方向、委托数量、委托价(策略读挂单时用)."""
+    adapter = _build_adapter(connected=True)
+    adapter.gateway.insert_order = lambda **kwargs: {  # type: ignore[method-assign]
+        "broker_order_id": "ctp-1-2-cside",
+        "timestamp_ns": 1,
+    }
+
+    broker_order_id = adapter.place_order(
+        UnifiedOrderRequest(
+            client_order_id="cside",
+            symbol="au2606",
+            side="Sell",
+            quantity=3.0,
+            price=512.5,
+            order_type="Limit",
+        )
+    )
+
+    snapshot = adapter.query_order(broker_order_id)
+    assert snapshot is not None
+    assert (snapshot.side, snapshot.quantity, snapshot.price) == ("Sell", 3.0, 512.5)
+
+
+def test_ctp_adapter_order_event_carries_side_quantity_and_price() -> None:
+    """柜台推来的委托回报里有方向/数量/价格就带进快照, 没有留 None."""
+    adapter = _build_adapter(connected=True)
+    base = {"broker_order_id": "b1", "symbol": "au2606", "status": "submitted"}
+
+    full = adapter.ingest_order_event(
+        {**base, "side": "Buy", "quantity": 2.0, "price": 510.0}
+    )
+    assert (full.side, full.quantity, full.price) == ("Buy", 2.0, 510.0)
+
+    bare = adapter.ingest_order_event(dict(base))
+    assert (bare.side, bare.quantity, bare.price) == (None, None, None)
+
+
+def test_ctp_adapter_position_carries_margin_and_position_profit() -> None:
+    """持仓行里的占用保证金、持仓盈亏带进 UnifiedPosition; 没有留 None."""
+    adapter = _build_adapter(connected=True)
+    rows: list[dict[str, object]] = [
+        {
+            "symbol": "au2606",
+            "direction": "Buy",
+            "quantity": 5.0,
+            "margin": 25000.0,
+            "unrealized_pnl": -300.0,
+        },
+        {"symbol": "ag2606", "direction": "Sell", "quantity": 1.0},
+    ]
+    setattr(cast(Any, adapter.gateway), "query_positions", lambda: rows)
+
+    reported, bare = adapter.query_positions()
+
+    assert (reported.margin, reported.unrealized_pnl) == (25000.0, -300.0)
+    assert (bare.margin, bare.unrealized_pnl) == (None, None)

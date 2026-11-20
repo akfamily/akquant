@@ -12,23 +12,33 @@ logger = get_logger("gateway.stats")
 def _account_to_dict(acct: Any) -> dict[str, Any]:
     """Map a broker UnifiedAccount to the backtest get_account dict shape.
 
-    Keys the broker cannot source (margin/PnL/interest 等) default to 0.0 so a
-    strategy written against backtest does not KeyError in broker_live (parity).
+    柜台给了的字段(持仓市值、冻结资金、占用保证金、浮动盈亏)如实采用; 给不了的
+    (融资负债、利息等)记 0.0, 让按回测写的策略在 broker_live 下不 KeyError。
     """
     cash = float(getattr(acct, "cash", 0.0) or 0.0)
     equity = float(getattr(acct, "equity", 0.0) or 0.0)
     available = float(getattr(acct, "available_cash", 0.0) or 0.0)
+
+    def reported(name: str) -> float | None:
+        value = getattr(acct, name, None)
+        return None if value is None else float(value)
+
+    # 柜台给了就用(0.0 也算给了); 没给时持仓市值用 权益 − 现金 推算, 其余记 0。
+    market_value = reported("market_value")
+    if market_value is None:
+        market_value = equity - cash
+    margin = reported("margin") or 0.0
     return {
         "cash": cash,
         "available_cash": available,
         "equity": equity,
-        "market_value": equity - cash,
+        "market_value": market_value,
         "notional_value": 0.0,
-        "frozen_cash": 0.0,
-        "margin": 0.0,
-        "used_margin": 0.0,
-        "free_margin": equity,
-        "unrealized_pnl": 0.0,
+        "frozen_cash": reported("frozen_cash") or 0.0,
+        "margin": margin,
+        "used_margin": margin,
+        "free_margin": equity - margin,
+        "unrealized_pnl": reported("unrealized_pnl") or 0.0,
         "borrowed_cash": 0.0,
         "short_market_value": 0.0,
         "maintenance_ratio": 0.0,
@@ -83,6 +93,8 @@ def wrap_state_invalidation(
     on_new_fill: Callable[[Any], None] | None = None,
 ) -> Callable[[str, Any], None]:
     """Wrap the broker update callback: trade 幂等叠总持仓 delta, order 失效委托/资金.
+
+    account(恢复轮询查到的账户快照)直接写进各缓存。
 
     多 slot broker_live 各 target 一缓存, 都镜像同一账户持仓; 一笔成交的 delta
     应用到 ALL 缓存(账户级)。trade 不失效总持仓(改为同步 delta), 失效可用/资金/委托;
@@ -144,5 +156,11 @@ def wrap_state_invalidation(
                     continue
                 cache.invalidate_open_orders()
                 cache.invalidate_account()
+        elif event_name == "account":
+            # 恢复轮询定期查到的账户快照: 写进缓存, 否则 get_account() 只在委托/
+            # 成交后才重查, 持仓不动时权益、市值、浮动盈亏一直是旧值。
+            for cache in caches:
+                if cache is not None:
+                    cache.set_account(payload)
 
     return _wrapped

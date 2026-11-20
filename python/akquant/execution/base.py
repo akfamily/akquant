@@ -2,7 +2,49 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
+
+
+@dataclass(frozen=True)
+class PositionLeg:
+    """一个标的在一个方向(多头或空头)上的持仓.
+
+    数量都是非负数。``None`` 表示这一项拿不到(回测没有今昨仓和冻结量; 实盘取决于
+    柜台给不给), 不要当成 0。
+    """
+
+    quantity: float = 0.0
+    available: float = 0.0
+    avg_price: float | None = None
+    today_quantity: float | None = None
+    yesterday_quantity: float | None = None
+    frozen_quantity: float | None = None
+    last_price: float | None = None
+    market_value: float | None = None
+    unrealized_pnl: float | None = None
+    margin: float | None = None
+
+
+@dataclass(frozen=True)
+class PositionDetail:
+    """一个标的的持仓明细: 净持仓加多空两边.
+
+    ``quantity`` / ``available`` 带符号(多头正, 空头负), 与 ``get_position()`` /
+    ``get_available_position()`` 相同。``avg_price`` 取净持仓所在一侧的成本。
+    ``market_value`` / ``unrealized_pnl`` / ``margin`` 是多空两边的合计, 持仓的任何
+    一边拿不到就是 ``None``。回测只有净持仓, 另一边恒为空。
+    """
+
+    symbol: str
+    quantity: float = 0.0
+    available: float = 0.0
+    avg_price: float | None = None
+    market_value: float | None = None
+    unrealized_pnl: float | None = None
+    margin: float | None = None
+    long: PositionLeg = field(default_factory=PositionLeg)
+    short: PositionLeg = field(default_factory=PositionLeg)
 
 
 @runtime_checkable
@@ -33,6 +75,9 @@ class ExecutionBackend(Protocol):
 
     def get_positions(self) -> dict[str, float]:
         """获取所有持仓信息."""
+
+    def get_position_detail(self, symbol: str | None = None) -> PositionDetail:
+        """获取指定标的的持仓明细(净持仓、多空两边、成本、盈亏等)."""
 
     def hold_bar(self, symbol: str | None = None) -> int:
         """获取当前持仓持有的 Bar 数量."""

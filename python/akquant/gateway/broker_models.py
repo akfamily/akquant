@@ -207,7 +207,12 @@ def validate_execution_semantics(
 
 @dataclass
 class UnifiedOrderSnapshot:
-    """Normalized order state snapshot."""
+    """Normalized order state snapshot.
+
+    ``side`` / ``quantity`` / ``price`` 是委托本身的方向、委托数量、委托价, 柜台的
+    委托查询或推送里有就填, 没有留 ``None``。策略经 ``get_open_orders()`` /
+    ``get_order()`` 读到的委托不带下单请求, 这三项只能来自这里。
+    """
 
     client_order_id: str
     broker_order_id: str
@@ -219,11 +224,18 @@ class UnifiedOrderSnapshot:
     timestamp_ns: int = 0
     position_effect: str = "auto"
     group_id: str = ""
+    side: str | None = None
+    quantity: float | None = None
+    price: float | None = None
 
 
 @dataclass
 class UnifiedTrade:
-    """Normalized trade fill record."""
+    """Normalized trade fill record.
+
+    ``commission`` 是柜台给出的这笔成交的手续费, 柜台不提供时留 ``None``
+    (不要填 0.0: ``0.0`` 表示柜台明确给了 0)。
+    """
 
     trade_id: str
     broker_order_id: str
@@ -235,6 +247,7 @@ class UnifiedTrade:
     timestamp_ns: int
     position_effect: str = "auto"
     group_id: str = ""
+    commission: float | None = None
 
 
 @dataclass
@@ -255,18 +268,41 @@ class UnifiedExecutionReport:
 
 @dataclass
 class UnifiedAccount:
-    """Normalized account snapshot."""
+    """Normalized account snapshot.
+
+    后四个字段是柜台直接给出的值, 柜台不提供时留 ``None``(不要填 0.0: ``0.0`` 表示
+    柜台明确给了 0)。策略侧 ``get_account()`` 对 ``None`` 的处理:
+
+    - ``market_value`` 持仓市值: 退回 ``equity - cash``。有在途/冻结资金或负债时两者
+      并不相等。
+    - ``frozen_cash`` 挂单冻结的资金: 记 0。
+    - ``margin`` 持仓占用的保证金: 记 0; ``free_margin`` 按 ``equity - margin`` 算。
+    - ``unrealized_pnl`` 持仓浮动盈亏: 记 0。
+    """
 
     account_id: str
     equity: float
     cash: float
     available_cash: float
     timestamp_ns: int = 0
+    market_value: float | None = None
+    frozen_cash: float | None = None
+    margin: float | None = None
+    unrealized_pnl: float | None = None
 
 
 @dataclass
 class UnifiedPosition:
-    """Normalized position snapshot."""
+    """Normalized position snapshot.
+
+    一行表示一个标的在一个方向上的持仓。``direction`` 为 ``"long"`` / ``"short"``
+    (也接受 ``"buy"`` / ``"sell"``), 股票这类只有净持仓的留空串。空头行的
+    ``quantity`` 给正数或负数都可以, 核心按 ``direction`` 取符号; 同一标的多空
+    同时持有时给两行。
+
+    后五个字段是柜台直接给出的值, 柜台不提供时留 ``None``(不要填 0.0)。策略经
+    ``get_position_detail()`` 读到它们。
+    """
 
     symbol: str
     quantity: float
@@ -278,3 +314,8 @@ class UnifiedPosition:
     available_yesterday_quantity: float = 0.0
     avg_price: float = 0.0
     timestamp_ns: int = 0
+    frozen_quantity: float | None = None
+    market_value: float | None = None
+    unrealized_pnl: float | None = None
+    margin: float | None = None
+    last_price: float | None = None

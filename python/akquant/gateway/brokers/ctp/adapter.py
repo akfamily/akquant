@@ -198,6 +198,9 @@ class CTPTraderAdapter:
             status=UnifiedOrderStatus.SUBMITTED,
             timestamp_ns=now_ns,
             position_effect=req.position_effect,
+            side=req.side,
+            quantity=req.quantity,
+            price=req.price,
         )
         self.orders[broker_order_id] = snapshot
         self._sync_order_mapping(req.client_order_id, broker_order_id)
@@ -415,6 +418,10 @@ class CTPTraderAdapter:
                 return payload.get(name, default)
             return getattr(payload, name, default)
 
+        def _reported(name: str) -> float | None:
+            value = _field(name, None)
+            return None if value is None else float(value)
+
         direction = str(
             _field("direction", _field("side", _field("posi_direction", "")))
         ).strip()
@@ -457,6 +464,11 @@ class CTPTraderAdapter:
             available_yesterday_quantity=available_yesterday_quantity,
             avg_price=float(_field("avg_price", _field("price", 0.0)) or 0.0),
             timestamp_ns=int(_field("timestamp_ns", 0) or 0),
+            frozen_quantity=_reported("frozen_quantity"),
+            market_value=_reported("market_value"),
+            unrealized_pnl=_reported("unrealized_pnl"),
+            margin=_reported("margin"),
+            last_price=_reported("last_price"),
         )
 
     def _map_native_account_payload(self, payload: Any) -> UnifiedAccount:
@@ -468,6 +480,10 @@ class CTPTraderAdapter:
                 return payload.get(name, default)
             return getattr(payload, name, default)
 
+        def _optional(name: str) -> float | None:
+            value = _field(name, None)
+            return None if value is None else float(value)
+
         gateway_user_id = str(getattr(self.gateway, "user_id", ""))
         return UnifiedAccount(
             account_id=str(_field("account_id", _field("AccountID", gateway_user_id))),
@@ -477,6 +493,9 @@ class CTPTraderAdapter:
                 _field("available_cash", _field("Available", 0.0)) or 0.0
             ),
             timestamp_ns=int(_field("timestamp_ns", 0) or 0),
+            frozen_cash=_optional("frozen_cash"),
+            margin=_optional("margin"),
+            unrealized_pnl=_optional("unrealized_pnl"),
         )
 
     def _position_cache_key(self, symbol: str, direction: str) -> tuple[str, str]:

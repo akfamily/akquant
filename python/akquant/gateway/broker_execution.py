@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional, cast
 
+from ..execution.base import PositionDetail, PositionLeg
 from ..log import build_log_extra, get_logger
 from .broker_event_adapter import map_local_stop, map_order_snapshot
-from .broker_state_cache import BrokerStateCache
+from .broker_state_cache import BrokerStateCache, is_short_row
 from .broker_strategy_api import _account_to_dict, _resolve_symbol
 from .local_stop_book import (
     LocalStopBook,
@@ -25,8 +26,54 @@ logger = get_logger("gateway.live")
 MAX_STOP_SUBMIT_ATTEMPTS = 3
 
 
+def _sum_reported(values: list[float | None]) -> float | None:
+    """合计柜台给出的值; 没有持仓或有一边没给时返回 None."""
+    if not values or any(value is None for value in values):
+        return None
+    return float(sum(value for value in values if value is not None))
+
+
+def _leg_from_rows(rows: list[Any]) -> PositionLeg:
+    """把同一方向的持仓行(通常只有一行)合并成一个 PositionLeg, 数量取非负."""
+    if not rows:
+        return PositionLeg()
+
+    def total(name: str) -> float:
+        return float(sum(abs(float(getattr(r, name, 0.0) or 0.0)) for r in rows))
+
+    def reported(name: str) -> float | None:
+        return _sum_reported([getattr(r, name, None) for r in rows])
+
+    quantity = total("quantity")
+    cost = sum(
+        abs(float(r.quantity or 0.0)) * float(getattr(r, "avg_price", 0.0) or 0.0)
+        for r in rows
+    )
+    avg_price = cost / quantity if quantity and cost else None
+    today, yesterday = total("today_quantity"), total("yesterday_quantity")
+    # 今昨仓两项都是 0 而总量不为 0: 柜台没给拆分, 记 None 而不是 0。
+    has_split = bool(today or yesterday) or not quantity
+    last_prices = [getattr(r, "last_price", None) for r in rows]
+    return PositionLeg(
+        quantity=quantity,
+        available=total("available_quantity"),
+        avg_price=avg_price,
+        today_quantity=today if has_split else None,
+        yesterday_quantity=yesterday if has_split else None,
+        frozen_quantity=reported("frozen_quantity"),
+        last_price=next((float(p) for p in last_prices if p is not None), None),
+        market_value=reported("market_value"),
+        unrealized_pnl=reported("unrealized_pnl"),
+        margin=reported("margin"),
+    )
+
+
 class BrokerExecution:
     """broker_live 后端：柜台为唯一真相."""
+
+    #: 持仓以柜台为准(引擎上下文里的持仓不记柜台成交)。框架里按持仓做判断的地方
+    #: 据此改读本后端, 见 ``strategy_events._position_for_holding_bars``。
+    tracks_broker_positions = True
 
     def __init__(
         self,
@@ -46,7 +93,6 @@ class BrokerExecution:
         self._group_broker_ids = group_broker_ids
         self._stop_book = LocalStopBook()
         self._stop_seq = 0
-        self._warned_hold_bar = False
         # 会话级交易统计器(BrokerRuntime.install_submitter 挂上, 所有 slot 共用);
         # self.stats 与每 bar 的权益采样经它取数, 见 strategy_stats/strategy_events。
         self.trade_stats: Optional[BrokerTradeStats] = None
@@ -91,19 +137,42 @@ class BrokerExecution:
         """获取所有持仓信息."""
         return dict(self._cache.positions())
 
+    def get_position_detail(self, symbol: str | None = None) -> PositionDetail:
+        """获取持仓明细: 净持仓取自本后端的持仓口径, 多空两边取自柜台持仓行.
+
+        净数量与 ``get_position()`` 同值(成交后立即更新); 多空两边来自最近一次
+        持仓查询, 成交后下次读取时重查柜台。
+        """
+        resolved = _resolve_symbol(self._s, symbol)
+        rows = self._cache.position_rows(resolved)
+        long_leg = _leg_from_rows([r for r in rows if not is_short_row(r)])
+        short_leg = _leg_from_rows([r for r in rows if is_short_row(r)])
+        quantity = self._cache.positions().get(resolved, 0.0)
+        net_leg = long_leg if quantity > 0 else short_leg if quantity < 0 else None
+        held = [leg for leg in (long_leg, short_leg) if leg.quantity]
+        return PositionDetail(
+            symbol=resolved,
+            quantity=quantity,
+            available=self._cache.available_positions().get(resolved, 0.0),
+            avg_price=net_leg.avg_price if net_leg is not None else None,
+            market_value=_sum_reported([leg.market_value for leg in held]),
+            unrealized_pnl=_sum_reported([leg.unrealized_pnl for leg in held]),
+            margin=_sum_reported([leg.margin for leg in held]),
+            long=long_leg,
+            short=short_leg,
+        )
+
     def hold_bar(self, symbol: str | None = None) -> int:
         """获取当前持仓持有的 Bar 数量.
 
-        柜台不提供持有 Bar 数, broker_live 下恒返回 0。首次调用发一次告警,
-        避免依赖持仓时长的离场逻辑在实盘静默失效(回测 hold_bar 有真实值)。
+        柜台不提供持有 Bar 数, 由本会话按柜台持仓逐 bar 累计(``on_bar_event``):
+        持仓从无到有或多空反转的那根 bar 记 1, 之后每根 bar 加 1, 空仓记 0。
+        只统计本会话收到的 bar: 会话开始前就有的持仓从第一根 bar 起算, 重启后重新计。
         """
-        if not self._warned_hold_bar:
-            self._warned_hold_bar = True
-            logger.warning(
-                "broker_live 不提供 hold_bar(持有 Bar 数), 恒返回 0; "
-                "依赖持仓时长的离场逻辑在实盘不会触发"
-            )
-        return 0
+        hold_bars = getattr(self._s, "_hold_bars", None)
+        if hold_bars is None:
+            return 0
+        return int(hold_bars.get(_resolve_symbol(self._s, symbol), 0))
 
     def get_open_orders(self, symbol: str | None = None) -> list[Any]:
         """获取未完成订单列表(含本地止损).

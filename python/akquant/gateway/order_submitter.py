@@ -104,13 +104,19 @@ def find_live_close_position(
             continue
         position_direction = str(payload_field(position, "direction")).strip().lower()
         position_quantity = float(payload_field(position, "quantity") or 0.0)
-        if normalized_side == "sell" and (
-            position_direction in {"buy", "long"} or position_quantity > 0
-        ):
+        # 方向写明时以方向为准: 有的柜台空头行数量恒正, 只看正负会把空头当成多头。
+        # 方向为空(股票净持仓)才按数量正负判断。
+        if position_direction in {"buy", "long"}:
+            is_long = True
+        elif position_direction in {"sell", "short"}:
+            is_long = False
+        elif position_quantity != 0:
+            is_long = position_quantity > 0
+        else:
+            continue
+        if normalized_side == "sell" and is_long:
             return position
-        if normalized_side == "buy" and (
-            position_direction in {"sell", "short"} or position_quantity < 0
-        ):
+        if normalized_side == "buy" and not is_long:
             return position
     return None
 

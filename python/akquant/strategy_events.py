@@ -140,6 +140,20 @@ def _feed_broker_stats_equity(strategy: Any, timestamp: int) -> None:
         logger.warning("broker_live 统计权益采样失败", exc_info=True)
 
 
+def _position_for_holding_bars(
+    strategy: Any, ctx: StrategyContext, symbol: str
+) -> float:
+    """持有 bar 数按哪份持仓计: 回测读引擎上下文, 经柜台交易时读柜台持仓.
+
+    经柜台交易时引擎不记成交, 上下文里的持仓恒为 0; 按它计的话持有 bar 数永远是 0,
+    按持仓时长离场的逻辑在实盘不会触发。回测直接读上下文, 不多绕一层(每根 bar 都走)。
+    """
+    execution = getattr(strategy, "execution", None)
+    if execution is not None and getattr(execution, "tracks_broker_positions", False):
+        return float(execution.get_position(symbol))
+    return float(ctx.get_position(symbol))
+
+
 def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
     """引擎调用的 Bar 回调 (Internal)."""
     ensure_framework_state(strategy)
@@ -152,7 +166,7 @@ def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
     check_expiry_events(strategy)
 
     symbol = bar.symbol
-    current_pos = ctx.get_position(symbol)
+    current_pos = _position_for_holding_bars(strategy, ctx, symbol)
 
     if current_pos == 0:
         strategy._hold_bars[symbol] = 0

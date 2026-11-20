@@ -6,6 +6,7 @@ from typing import Any
 
 from .. import strategy_trading_api as api
 from ..gateway.order_receipt import OrderReceipt
+from .base import PositionDetail
 
 
 class SimExecution:
@@ -34,6 +35,10 @@ class SimExecution:
     def get_positions(self) -> dict[str, float]:
         """获取所有持仓信息."""
         return api._sim_get_positions(self._s)
+
+    def get_position_detail(self, symbol: str | None = None) -> PositionDetail:
+        """获取指定标的的持仓明细."""
+        return api._sim_get_position_detail(self._s, symbol)
 
     def hold_bar(self, symbol: str | None = None) -> int:
         """获取当前持仓持有的 Bar 数量."""

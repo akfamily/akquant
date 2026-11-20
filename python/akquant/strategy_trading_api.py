@@ -6,6 +6,7 @@ from .config import bare_slippage_error
 
 if TYPE_CHECKING:
     from .backtest.fill_mode import FillMode
+from .execution.base import PositionDetail, PositionLeg
 from .gateway.broker_models import normalize_asset_type
 from .gateway.order_receipt import OrderLeg, OrderReceipt
 from .log import get_logger
@@ -1760,6 +1761,74 @@ def _sim_get_positions(strategy: Any) -> Dict[str, float]:
     if strategy.ctx is None:
         raise RuntimeError("Context not ready")
     return cast(Dict[str, float], strategy.ctx.positions)
+
+
+def _sim_get_position_detail(
+    strategy: Any, symbol: Optional[str] = None
+) -> PositionDetail:
+    """回测持仓明细: 只有净持仓一边; 市值与浮动盈亏按最新价、合约乘数现算.
+
+    今昨仓、冻结量、逐标的保证金回测没有, 留 ``None``。
+    """
+    resolved = resolve_symbol(strategy, symbol)
+    if strategy.ctx is None:
+        return PositionDetail(symbol=resolved)
+    quantity = float(strategy.ctx.get_position(resolved))
+    available = float(strategy.ctx.get_available_position(resolved))
+    if quantity == 0:
+        return PositionDetail(symbol=resolved, available=available)
+
+    entry = float(strategy.ctx.get_position_entry_price(resolved))
+    avg_price = entry if entry else None
+    last = (getattr(strategy, "_last_prices", None) or {}).get(resolved)
+    snapshot = (getattr(strategy, "_instrument_snapshots", None) or {}).get(resolved)
+    multiplier = float(getattr(snapshot, "multiplier", 1.0) or 1.0)
+    market_value = unrealized = None
+    if last is not None:
+        market_value = quantity * float(last) * multiplier
+        if avg_price is not None:
+            unrealized = (float(last) - avg_price) * quantity * multiplier
+    leg = PositionLeg(
+        quantity=abs(quantity),
+        available=abs(available),
+        avg_price=avg_price,
+        last_price=float(last) if last is not None else None,
+        market_value=abs(market_value) if market_value is not None else None,
+        unrealized_pnl=unrealized,
+    )
+    return PositionDetail(
+        symbol=resolved,
+        quantity=quantity,
+        available=available,
+        avg_price=avg_price,
+        market_value=market_value,
+        unrealized_pnl=unrealized,
+        long=leg if quantity > 0 else PositionLeg(),
+        short=leg if quantity < 0 else PositionLeg(),
+    )
+
+
+def get_position_detail(strategy: Any, symbol: Optional[str] = None) -> PositionDetail:
+    """获取持仓明细（经执行后端）.
+
+    自定义执行后端没有实现 ``get_position_detail`` 时, 用它的净持仓与可用持仓拼一个
+    只有数量的明细, 不抛错。
+    """
+    execution = strategy.execution
+    getter = getattr(execution, "get_position_detail", None)
+    if callable(getter):
+        return cast(PositionDetail, getter(symbol))
+    resolved = resolve_symbol(strategy, symbol)
+    quantity = float(execution.get_position(resolved))
+    available = float(execution.get_available_position(resolved))
+    leg = PositionLeg(quantity=abs(quantity), available=abs(available))
+    return PositionDetail(
+        symbol=resolved,
+        quantity=quantity,
+        available=available,
+        long=leg if quantity > 0 else PositionLeg(),
+        short=leg if quantity < 0 else PositionLeg(),
+    )
 
 
 def _sim_get_holding_bars(strategy: Any, symbol: Optional[str] = None) -> int:

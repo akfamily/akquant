@@ -51,6 +51,9 @@ class BrokerEventMapper:
             reject_reason=str(payload.get("reject_reason", "")),
             timestamp_ns=int(payload.get("timestamp_ns", 0)),
             position_effect=str(payload.get("position_effect", "auto")),
+            side=_optional_str(payload.get("side")),
+            quantity=_optional_float(payload.get("quantity")),
+            price=_optional_float(payload.get("price")),
         )
 
     def map_trade_event(self, payload: dict[str, Any]) -> UnifiedTrade:
@@ -65,6 +68,7 @@ class BrokerEventMapper:
             price=float(payload.get("price", 0.0)),
             timestamp_ns=int(payload.get("timestamp_ns", 0)),
             position_effect=str(payload.get("position_effect", "auto")),
+            commission=_optional_float(payload.get("commission")),
         )
 
     def map_execution_report(self, payload: dict[str, Any]) -> UnifiedExecutionReport:
@@ -81,6 +85,15 @@ class BrokerEventMapper:
             timestamp_ns=int(payload.get("timestamp_ns", 0)),
             position_effect=str(payload.get("position_effect", "auto")),
         )
+
+
+def _optional_float(value: Any) -> float | None:
+    """柜台没给(缺键或 None)留 None, 给了就转成 float(0 也算给了)."""
+    return None if value is None else float(value)
+
+
+def _optional_str(value: Any) -> str | None:
+    return None if value in (None, "") else str(value)
 
 
 DEFAULT_STATUS_MAP = {

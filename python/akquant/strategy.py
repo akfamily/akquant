@@ -37,6 +37,7 @@ from .akquant import (
 )
 from .bar_batch import flush_at_replay_end as _flush_bars_at_replay_end
 from .chart import CANDLE_ROLES
+from .execution.base import PositionDetail
 from .gateway.order_receipt import OrderReceipt
 from .indicator_declaration import (
     DEFAULT_LOOKBACK,
@@ -158,6 +159,9 @@ from .strategy_trading_api import (
 )
 from .strategy_trading_api import (
     get_position as _get_position_impl,
+)
+from .strategy_trading_api import (
+    get_position_detail as _get_position_detail_impl,
 )
 from .strategy_trading_api import (
     get_positions as _get_positions_impl,
@@ -2889,7 +2893,7 @@ class Strategy:
             raise RuntimeError("Context not ready")
 
         symbol = self._resolve_symbol(None)
-        return Position(self.ctx, symbol)
+        return Position(self.ctx, symbol, getattr(self, "execution", None))
 
     def on_tick(self, tick: Tick) -> None:
         """
@@ -3137,6 +3141,24 @@ class Strategy:
         """
         return _get_available_position_impl(self, symbol)
 
+    def get_position_detail(self, symbol: Optional[str] = None) -> PositionDetail:
+        """
+        获取指定标的的持仓明细.
+
+        比 ``get_position()`` 多出持仓成本、市值、浮动盈亏, 以及多头、空头两边
+        各自的数量(``detail.long`` / ``detail.short``)。回测与实盘返回同一个结构;
+        拿不到的项为 ``None``: 回测没有今昨仓、冻结量和逐标的保证金, 实盘取决于
+        柜台给不给。
+
+        Args:
+            symbol: 标的代码 (如果不填, 默认使用当前 Bar/Tick 的 symbol)
+
+        Returns:
+            PositionDetail: ``quantity`` / ``available`` 带符号, 与
+            ``get_position()`` / ``get_available_position()`` 相同
+        """
+        return _get_position_detail_impl(self, symbol)
+
     def get_holding_bars(self, symbol: Optional[str] = None) -> int:
         """
         获取当前持仓持有的 Bar 数量.
@@ -3274,7 +3296,10 @@ class Strategy:
                 - cash: 现金余额 (期货保证金账户下, 开仓不从此扣减保证金,
                   故并非可用于新开仓的资金; 请改用 free_margin)
                 - equity: 总权益 (现金 + 持仓市值 + 浮动盈亏)
-                - market_value: 持仓总市值 (equity - cash)
+                - market_value: 持仓总市值 (equity - cash; 实盘柜台直接给出
+                  持仓市值时取柜台的值)。实盘经柜台交易时, frozen_cash、margin、
+                  free_margin、unrealized_pnl 也取柜台的值; 柜台不提供的记 0
+                  (free_margin 为 equity)
                 - frozen_cash: 当前未完成订单预占资金
                 - margin: 当前仓位占用保证金
                 - used_margin: 同 margin
