@@ -4285,10 +4285,31 @@ def run_backtest(
             for one_tick in ticks_part:
                 tick_feed.add_tick(one_tick)
             if freq is not None:
-                # 原始 tick 仍投递, 合成 bar 进同一 feed。
-                aggregate_ticks_into_feed(
-                    tick_feed, ticks_part, parse_freq_to_interval_min(freq)
+                # 原始 tick 仍投递, 合成 bar 进同一 feed。合成 bar 按交易时段分桶
+                # (与引擎同配置的解析器), intrabar 临时点的标签用同一个解析器预测。
+                tick_bar_resolver = SessionResolver(
+                    sessions=session_map,
+                    trading_calendar=calendar_days,
+                    timezone=timezone,
                 )
+                _activate_session_symbols(
+                    tick_bar_resolver,
+                    sorted({str(one_tick.symbol) for one_tick in ticks_part}),
+                    session_asset_type_of,
+                    underlying_of=session_underlying_of,
+                )
+                aggregate_ticks_into_feed(
+                    tick_feed,
+                    ticks_part,
+                    parse_freq_to_interval_min(freq),
+                    resolver=tick_bar_resolver,
+                )
+                for current_strategy in all_strategy_instances:
+                    setattr(
+                        current_strategy,
+                        "_framework_tick_bar_resolver",
+                        tick_bar_resolver,
+                    )
             # 既有 bar(含 freq 合成的)又有 tick 的标的是双流: 基础周期指标只由
             # bar 推进, 否则 tick 与 bar 各推进一次, 值静默算错。只有 tick 的
             # 标的(纯 tick)不算, tick 照旧推进。

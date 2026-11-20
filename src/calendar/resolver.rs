@@ -26,6 +26,44 @@ pub struct TradingBlock {
     pub index: usize,
     pub start: i64,
     pub end: i64,
+    /// 块内第一个连续竞价段的起点；时段表不按时段起点起算 K 线时为 `None`。
+    pub anchor: Option<i64>,
+}
+
+impl TradingBlock {
+    /// 终点为 `end` 的数据（bar 的区间终点或 tick 时刻）所属 K 线的 `(终点, 起点)`。
+    ///
+    /// 桶从 [`Self::anchor`] 起每 `period_ns` 一个，右闭，末桶截到块结束；锚点之前的
+    /// 数据（开盘集合竞价）归首桶。块没有锚点时返回 `None`，由调用方按本地时钟取整。
+    pub fn bucket(&self, end: i64, period_ns: i64) -> Option<(i64, i64)> {
+        let anchor = self.anchor?;
+        let index = if end <= anchor {
+            0
+        } else {
+            (end - anchor - 1).div_euclid(period_ns)
+        };
+        let start = anchor + index * period_ns;
+        Some(((start + period_ns).min(self.end), start))
+    }
+
+    /// 时刻 `ts` 的 tick 所属 K 线的 `(终点, 起点)`, 同 [`Self::bucket`]; 例外: 周期
+    /// 不超过 1 分钟时, 锚点之前的 tick（开盘集合竞价）单独成一根终点为锚点的 bar
+    /// （与行情服务的 1 分钟线一致）。
+    pub fn tick_bucket(&self, ts: i64, period_ns: i64) -> Option<(i64, i64)> {
+        let anchor = self.anchor?;
+        if ts <= anchor && period_ns <= NS_PER_MIN {
+            return Some((anchor, self.start));
+        }
+        self.bucket(ts, period_ns)
+    }
+}
+
+const NS_PER_MIN: i64 = 60 * 1_000_000_000;
+
+/// 按绝对时间取整的右闭桶 `(终点, 起点)`: 终点为不小于 `ts` 的最小周期整数倍。
+pub fn epoch_bucket(ts: i64, period_ns: i64) -> (i64, i64) {
+    let end = ((ts - 1).div_euclid(period_ns) + 1) * period_ns;
+    (end, end - period_ns)
 }
 
 /// 一个交易日展开成绝对时间（UTC 纳秒）后的时段。
@@ -797,7 +835,15 @@ impl SessionResolver {
                     index: blocks.len(),
                     start: s,
                     end: e,
+                    anchor: None,
                 }),
+            }
+            if schedule.anchor_bars_at_session_start
+                && sess == TradingSession::Continuous
+                && let Some(cur) = blocks.last_mut()
+                && cur.anchor.is_none()
+            {
+                cur.anchor = Some(s);
             }
             open = true;
         }
@@ -835,6 +881,25 @@ impl SessionResolver {
             .iter()
             .find(|b| b.start <= point && point < b.end)
             .copied())
+    }
+
+    /// 时刻 `ts` 的 tick 所属 K 线（周期 `period_ns`）的 `(终点, 起点)`。
+    ///
+    /// 按时段起点起算的时段表（股票、基金、期权）在交易块内用
+    /// [`TradingBlock::tick_bucket`]；其余情况（块外、其他时段表、解析出错）用
+    /// [`epoch_bucket`]。`BarAggregator` 的分桶与此一致。
+    pub fn tick_bar_bounds(
+        &self,
+        symbol: &str,
+        asset_type: Option<AssetType>,
+        ts: i64,
+        period_ns: i64,
+    ) -> (i64, i64) {
+        self.block_at(symbol, asset_type, ts - 1)
+            .ok()
+            .flatten()
+            .and_then(|block| block.tick_bucket(ts, period_ns))
+            .unwrap_or_else(|| epoch_bucket(ts, period_ns))
     }
 
     /// 品种所用交易日历上 `day` 的前一个交易日（日历首日之前没有时返回错误）。

@@ -66,8 +66,7 @@ Key API:
   `session_windows` (recommended), windows are split by the trading blocks of
   the symbol's session table: the opening call auction joins the morning block
   (A-shares 09:15–11:30) and the closing call auction shares the afternoon
-  continuous block (13:00–15:00); intraday window labels never pass the block
-  end (A-share 1h labels are 10:00, 11:00, 11:30, 14:00, 15:00); daily windows
+  continuous block (13:00–15:00); intraday windows never span blocks: the built-in stock, fund and option session tables count from the start of continuous trading in each block and merge the opening call auction into the first window (A-share 1h: 10:30, 11:30, 14:00, 15:00, as charting software does); other session tables (futures, custom) label by the local clock ceiled to the period, never past the block end (index futures 1h: 10:00, 11:00, 11:30, 14:00, 15:00); daily windows
   are split by trading day (night sessions belong to the next trading day) and
   labelled with the trading day's close. Hand-write `session_windows` only to
   override the session table.
@@ -202,7 +201,7 @@ Prefer omitting `session_windows`: windows are then split by the symbol's sessio
   - `replay(freq, align="session", emit_partial=False, agg=None, label="right", closed="right", session_windows=None, sessions=None, trading_calendar=None, asset_type=None, base_interval_min=None)`
 - Both return adapter objects that can be passed directly to `run_backtest(data=...)`.
 - `replay(align="session")` (without `session_windows`) and `replay(align="day", day_mode="trading")` use the same window aggregator as the engine's `subscribe_bars`, so for the same data and session table they produce the same windows as `subscribe_bars` and `BarGenerator`:
-  - Intraday windows (`Nmin`/`Nh`) are split by (trading day, trading block); the label is the local clock ceiling to the period, clamped to the block end (A-share 1h: 10:00, 11:00, 11:30, 14:00, 15:00).
+  - Intraday windows (`Nmin`/`Nh`) are split by (trading day, trading block): the built-in stock, fund and option session tables count from the start of continuous trading in each block and merge the opening call auction into the first window (A-share 1h: 10:30, 11:30, 14:00, 15:00, as charting software does); other session tables (futures, custom) label by the local clock ceiled to the period, never past the block end (index futures 1h: 10:00, 11:00, 11:30, 14:00, 15:00).
   - Daily windows (`1D`) are split by trading day (night session belongs to the next trading day) and labelled at the trading-day close.
   - `sessions`, `trading_calendar` and `asset_type` mean the same as in `run_backtest` (default: stock); `base_interval_min` is the source bar period in minutes, inferred from the modal timestamp spacing when omitted.
   - OHLCV comes from the aggregator; other `agg` columns (or columns whose default aggregation is overridden) are grouped by the window the aggregator assigned to each row.
@@ -265,9 +264,7 @@ running under.
 Under the hood `BarGenerator` wraps the same Rust window aggregator used by the
 engine's `subscribe_bars` (also available directly as
 `akquant.WindowAggregator`), so it produces identical windows for the same data
-and session table: intraday windows are split by (trading day, trading block),
-labelled by the local clock ceiled to the period but never past the block end
-(A-share 1h: 10:00, 11:00, 11:30, 14:00, 15:00); daily windows are split by
+and session table: intraday windows are split by (trading day, trading block); the built-in stock, fund and option session tables count from the start of continuous trading in each block and merge the opening call auction into the first window (A-share 1h: 10:30, 11:30, 14:00, 15:00, as charting software does); other session tables (futures, custom) label by the local clock ceiled to the period, never past the block end (index futures 1h: 10:00, 11:00, 11:30, 14:00, 15:00); daily windows are split by
 trading day (night session belongs to the next trading day) and labelled with
 the trading-day close. Window bars carry `freq` and `interval_start`.
 

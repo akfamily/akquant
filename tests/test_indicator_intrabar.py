@@ -666,6 +666,33 @@ def _run_tick_intrabar(ticks: int = 13, **kwargs: Any) -> Any:
     )
 
 
+def test_tick_intrabar_label_follows_session_bucketed_bars() -> None:
+    """A 股开盘集合竞价的 tick 归 09:30 那根 bar: 临时点标签随之, 不被判成打戳不符."""
+    stock = "600000.SH"
+    clocks = ["09:25:03", "09:30:10", "09:30:40", "09:31:10", "09:31:40", "09:32:10"]
+    ticks = [
+        Tick(
+            timestamp=int(pd.Timestamp(f"2024-01-02 {c}", tz="Asia/Shanghai").value),
+            price=10.0 + 0.1 * i,
+            volume=100.0,
+            symbol=stock,
+        )
+        for i, c in enumerate(clocks)
+    ]
+    result = run_backtest(
+        strategy=_TickIntrabarProbe,
+        data=ticks,
+        freq="1min",
+        symbols=[stock],
+        initial_cash=1e5,
+        show_progress=False,
+    )
+    probe = result.strategy
+    assert probe is not None
+    assert len(probe.tick_rows) == len(clocks)
+    assert not probe.__dict__.get("_intrabar_label_mismatch")
+
+
 def test_tick_intrabar_provisional_uses_forming_bar_close() -> None:
     """on_tick 里 [0] = SMA(上一根确认 bar 的 close, 形成中 bar 最新价), 未确认."""
     probe = _run_tick_intrabar().strategy

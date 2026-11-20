@@ -192,6 +192,22 @@ class SessionResolver:
         timestamp: int,
         asset_type: typing.Optional[AssetType] = None,
     ) -> typing.Optional[tuple[datetime.date, int, int, int]]: ...
+    def tick_bar_bounds(
+        self,
+        symbol: str,
+        timestamp: int,
+        interval_ns: int,
+        asset_type: typing.Optional[AssetType] = None,
+    ) -> tuple[int, int]:
+        r"""
+        时刻 ``timestamp`` 的 tick 所属 K 线的 ``(终点, 起点)``（UTC 纳秒，右闭区间）.
+
+        ``interval_ns`` 为 K 线周期，结果与 ``BarAggregator`` 接了本解析器时的分桶一致。
+        股票、基金、期权的内置时段表从交易块的连续竞价起点起算（A 股 60 分钟：
+        10:30、11:30、14:00、15:00），开盘集合竞价的 tick 归首根，1 分钟周期下单独成
+        一根终点为连续竞价起点的 bar；其余情况按绝对时间取整。``asset_type`` 省略时取
+        ``set_active`` 登记的类型。``interval_ns`` 不为正时抛 ``ValueError``。
+        """
     def set_active(
         self, symbols: list[tuple[str, typing.Optional[AssetType]]]
     ) -> None: ...
@@ -569,7 +585,13 @@ class BarAggregator:
     r"""
     K 线合成器.
 
-    用于将 Tick 数据合成为 K 线 (Bar) 数据。
+    用于将 Tick 数据合成为 K 线 (Bar) 数据。按右闭区间 ``(S, E]`` 分桶, 封闭的 bar
+    恒用区间终点戳: ``timestamp = E``, ``interval_start = S``。
+
+    桶边界缺省按绝对时间取整。接了时段解析器(``set_session_resolver`` /
+    ``set_session_clamp``)后, 股票、基金、期权的内置时段表从交易块的连续竞价起点起算
+    (A 股 60 分钟: 10:30、11:30、14:00、15:00), 开盘集合竞价的 tick 归首根, 1 分钟
+    周期下单独成一根终点为 09:30 的 bar; 块外的 tick 与其余时段表仍按绝对时间取整。
     """
 
     def __new__(
@@ -647,8 +669,17 @@ class BarAggregator:
         :param grace_ns: 收盘后宽限 (纳秒, 不能为负, 否则抛 ``ValueError``)
         """
         ...
+    def set_session_resolver(self, resolver: "SessionResolver") -> None:
+        r"""
+        接入时段解析器, 之后的 tick 按交易时段分桶.
+
+        须在喂入 tick 之前调用。``set_session_clamp`` 也会接入其解析器。
+
+        :param resolver: 与引擎同配置的时段解析器(须已 ``set_active`` 全部合约)
+        """
+        ...
     def clear_session_clamp(self) -> None:
-        r"""关闭收盘宽限钳制."""
+        r"""关闭收盘宽限钳制(按交易时段分桶不受影响)."""
         ...
 
 class BollingerBands:

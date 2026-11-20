@@ -1791,10 +1791,10 @@ def test_session_clamp_resolver_follows_option_underlying_futures() -> None:
     assert resolver.day_bounds("XOPT2405C3500", day, AssetType.Option) == expected
 
 
-def test_live_runner_skips_session_clamp_when_delay_too_short(
+def test_live_runner_passes_zero_grace_when_delay_too_short(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """day_close_delay 不足 5 秒时不开启钳制（收盘 bar 来不及在定时器之前推出）."""
+    """day_close_delay 不足 5 秒时宽限为 0（不钳制），解析器仍交给网关用于分桶."""
     calls: List[Tuple[Any, int]] = []
     _patch_clamp_hook(monkeypatch, calls)
     _run_live_replay(
@@ -1803,7 +1803,10 @@ def test_live_runner_skips_session_clamp_when_delay_too_short(
         trading_calendar=["2024-01-02", "2024-01-03"],
         day_close_delay=4.5,
     )
-    assert calls == []
+    assert len(calls) == 1
+    resolver, grace_ns = calls[0]
+    assert grace_ns == 0
+    assert isinstance(resolver, aq.SessionResolver)
 
 
 def test_live_runner_session_clamp_hook_failure_only_warns(

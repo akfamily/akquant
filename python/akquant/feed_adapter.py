@@ -132,8 +132,9 @@ class BasePandasFeedAdapter:
         ``align="session"``（未给 ``session_windows``）与 ``align="day"`` +
         ``day_mode="trading"`` 用引擎 ``subscribe_bars`` 同一个窗口聚合器
         (:class:`akquant.WindowAggregator`) 切分, 对同一数据、同一时段表产出相同的
-        窗口: 日内窗口按(交易日, 交易块)切分、标签为本地时钟 ceil 到周期但不超过块
-        结束(A 股 1h: 10:00、11:00、11:30、14:00、15:00); 日线窗口按交易日切分(夜盘
+        窗口: 日内窗口按(交易日, 交易块)切分, 股票、基金、期权的内置时段表从块内
+        连续竞价起点起算(A 股 1h: 10:30、11:30、14:00、15:00), 其余时段表的标签为本地
+        时钟 ceil 到周期但不超过块结束; 日线窗口按交易日切分(夜盘
         归下一交易日)、标签为交易日收盘时刻。
 
         交易块截断只对默认 ``label="right", closed="right"`` 且 ``freq`` 为

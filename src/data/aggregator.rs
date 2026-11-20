@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use super::feed::DataFeed;
 use crate::calendar::python::PySessionResolver;
-use crate::calendar::resolver::SessionResolver;
+use crate::calendar::resolver::{SessionResolver, TradingBlock, epoch_bucket};
 
 const NS_PER_MIN: i64 = 60 * 1_000_000_000;
 
@@ -26,7 +26,9 @@ struct ActiveBar {
     #[allow(dead_code)]
     volume_base: Decimal,
     volume_curr: Decimal,
-    timestamp_min: i64,
+    /// 区间 `(start_ns, end_ns]`。
+    end_ns: i64,
+    start_ns: i64,
     /// 补发基准: `flush_due` 在它 + 补发宽限之后推出。通常为区间终点; 开启收盘钳制时
     /// 收盘桶为 max(区间终点, 收盘 + 钳制宽限)。
     emit_after: i64,
@@ -93,6 +95,11 @@ struct SessionClamp {
 /// `E` 的 tick 属于以 `E` 结尾的 bar, 与 bar 时间戳口径、qmf_market 服务端 M1
 /// 一致), 封闭的 bar 恒用区间**终点**戳: `timestamp = E`, `interval_start = S`。
 /// 实盘与回测同一口径。
+///
+/// 桶边界缺省按绝对时间取整。接了时段解析器(`set_session_resolver` /
+/// `set_session_clamp`)后, 股票、基金、期权的内置时段表从交易块的连续竞价起点起算
+/// (A 股 60 分钟: 10:30、11:30、14:00、15:00), 开盘集合竞价的 tick 归首根, 1 分钟
+/// 周期下单独成一根终点为 09:30 的 bar; 块外的 tick 与其余时段表仍按绝对时间取整。
 pub struct BarAggregator {
     feed: DataFeed,
     active_bars: HashMap<String, ActiveBar>,
@@ -104,7 +111,7 @@ pub struct BarAggregator {
     /// **单笔**量, 直接计入即可。两者不可混用: 用累计口径处理单笔量会让每个
     /// symbol 的首笔量被丢弃(首次差分恒为 0)。
     volume_is_cumulative: bool,
-    /// 每个品种最近一次封闭推出的区间编号。之后到达、区间编号不大于它的 tick
+    /// 每个品种最近一次封闭推出的区间终点。之后到达、区间终点不大于它的 tick
     /// 属于已推出的 bar: 不参与 OHLC(否则会重开旧区间、推出时间戳倒退的 bar),
     /// 其量计入下一根 bar(日累计量守恒)。
     last_emitted_key: HashMap<String, i64>,
@@ -114,6 +121,10 @@ pub struct BarAggregator {
     pending_late_volume: HashMap<String, Decimal>,
     /// 收盘宽限钳制(默认关闭, 只由实盘 runner 经网关钩子开启)。
     session_clamp: Option<SessionClamp>,
+    /// 按交易时段分桶用的解析器(默认无, 按绝对时间取整)。
+    session_resolver: Option<Arc<SessionResolver>>,
+    /// 按品种缓存上一次命中的交易块。
+    block_cache: HashMap<String, TradingBlock>,
 }
 
 impl BarAggregator {
@@ -129,7 +140,15 @@ impl BarAggregator {
             late_ticks: HashMap::new(),
             pending_late_volume: HashMap::new(),
             session_clamp: None,
+            session_resolver: None,
+            block_cache: HashMap::new(),
         }
+    }
+
+    /// 接入时段解析器, 之后的 tick 按交易时段分桶(Python 见 `set_session_resolver`)。
+    pub fn set_session_resolver_arc(&mut self, resolver: Arc<SessionResolver>) {
+        self.session_resolver = Some(resolver);
+        self.block_cache.clear();
     }
 
     /// 开启收盘宽限钳制(Rust 侧入口, Python 见 `set_session_clamp`)。
@@ -137,6 +156,7 @@ impl BarAggregator {
     /// tick 落在其品种交易日 D 的 `(收盘(D), 收盘(D) + grace_ns]` 且早于 D 的下一
     /// 交易日首段起点时, 归入以收盘(D) 结尾的那个桶; 该桶推迟到
     /// `收盘(D) + grace_ns` 之后才由 `flush_due` 补发。收盘按品种自己的时段表取。
+    /// 同时用该解析器按交易时段分桶(见 [`Self::set_session_resolver_arc`])。
     pub fn set_session_clamp_arc(
         &mut self,
         resolver: Arc<SessionResolver>,
@@ -147,6 +167,7 @@ impl BarAggregator {
                 "收盘钳制宽限 grace_ns 不能为负（收到 {grace_ns}），请传 0 或正的纳秒数"
             ));
         }
+        self.set_session_resolver_arc(resolver.clone());
         self.session_clamp = Some(SessionClamp {
             resolver,
             grace_ns,
@@ -156,67 +177,92 @@ impl BarAggregator {
         Ok(())
     }
 
-    /// 关闭收盘宽限钳制; 在形成的 bar 恢复按区间终点补发。
+    /// 关闭收盘宽限钳制; 在形成的 bar 恢复按区间终点补发。按交易时段分桶不受影响。
     pub fn clear_session_clamp(&mut self) {
         self.session_clamp = None;
-        let interval_ns = self.interval_ns();
         for bar in self.active_bars.values_mut() {
-            bar.emit_after = (bar.timestamp_min + 1) * interval_ns;
+            bar.emit_after = bar.end_ns;
             bar.session_close = None;
             bar.has_after_close = false;
         }
+    }
+
+    /// `ts` 的 tick 所属桶的 `(终点, 起点)`: 接了时段解析器时按
+    /// `TradingBlock::tick_bucket`(块内、按时段起点起算的时段表), 否则按绝对时间取整。
+    fn bucket_of(&mut self, symbol: &str, ts: i64) -> (i64, i64) {
+        let interval_ns = self.interval_ns();
+        self.session_bucket(symbol, ts, interval_ns)
+            .unwrap_or_else(|| epoch_bucket(ts, interval_ns))
+    }
+
+    fn session_bucket(&mut self, symbol: &str, ts: i64, interval_ns: i64) -> Option<(i64, i64)> {
+        let resolver = self.session_resolver.as_ref()?;
+        let point = ts - 1;
+        let block = match self.block_cache.get(symbol) {
+            Some(b) if b.start <= point && point < b.end => *b,
+            _ => {
+                let asset_type = resolver.registered_asset_type(symbol);
+                // 解析失败(超出交易日历等)或落在块外: 按绝对时间取整
+                let block = resolver.block_at(symbol, asset_type, point).ok()??;
+                self.block_cache.insert(symbol.to_string(), block);
+                block
+            }
+        };
+        block.tick_bucket(ts, interval_ns)
     }
 
     /// 开启钳制时对 tick 分类: 落在收盘桶(或被钳进收盘桶)时返回钳制信息, 否则
     /// `None`(收盘后紧接下一交易日、没有闭市间隙时如 ALWAYS_OPEN, 也是 `None`)。
     /// 顺带登记品种不晚于收盘的最后价格。
     fn classify_for_clamp(&mut self, symbol: &str, ts: i64, price: Decimal) -> Option<ClampHit> {
-        let interval_ns = self.interval_ns();
-        let clamp = self.session_clamp.as_mut()?;
-        let span = match clamp.spans.get(symbol) {
-            Some(span) if span.contains(ts) => *span,
-            _ => {
-                let asset_type = clamp.resolver.registered_asset_type(symbol);
-                // 解析失败(超出交易日历等)不钳, 按普通分桶
-                let (prev_close, first_start, close, next_start) = clamp
-                    .resolver
-                    .symbol_day_span(symbol, asset_type, ts)
-                    .ok()?;
-                let span = ClampSpan {
-                    prev_close,
-                    first_start,
-                    close,
-                    next_start,
-                };
-                clamp.spans.insert(symbol.to_string(), span);
-                span
+        let (span, grace_ns) = {
+            let clamp = self.session_clamp.as_mut()?;
+            let span = match clamp.spans.get(symbol) {
+                Some(span) if span.contains(ts) => *span,
+                _ => {
+                    let asset_type = clamp.resolver.registered_asset_type(symbol);
+                    // 解析失败(超出交易日历等)不钳, 按普通分桶
+                    let (prev_close, first_start, close, next_start) = clamp
+                        .resolver
+                        .symbol_day_span(symbol, asset_type, ts)
+                        .ok()?;
+                    let span = ClampSpan {
+                        prev_close,
+                        first_start,
+                        close,
+                        next_start,
+                    };
+                    clamp.spans.insert(symbol.to_string(), span);
+                    span
+                }
+            };
+            // 前一交易日收盘后的闭市间隙里、宽限之内: 钳到前一交易日的收盘桶
+            if let Some(prev_close) = span.prev_close
+                && ts < span.first_start
+                && ts - prev_close <= clamp.grace_ns
+            {
+                return Some(ClampHit {
+                    close: prev_close,
+                    clamp_end: clamp_end_of(prev_close, clamp.grace_ns, Some(span.first_start)),
+                    after_close: true,
+                });
             }
-        };
-        // 前一交易日收盘后的闭市间隙里、宽限之内: 钳到前一交易日的收盘桶
-        if let Some(prev_close) = span.prev_close
-            && ts < span.first_start
-            && ts - prev_close <= clamp.grace_ns
-        {
-            return Some(ClampHit {
-                close: prev_close,
-                clamp_end: clamp_end_of(prev_close, clamp.grace_ns, Some(span.first_start)),
-                after_close: true,
-            });
-        }
-        if span.first_start <= ts {
-            match clamp.last_in_session.get_mut(symbol) {
-                Some(slot) if slot.0 > ts => {}
-                Some(slot) => *slot = (ts, price, span.close),
-                None => {
-                    clamp
-                        .last_in_session
-                        .insert(symbol.to_string(), (ts, price, span.close));
+            if span.first_start <= ts {
+                match clamp.last_in_session.get_mut(symbol) {
+                    Some(slot) if slot.0 > ts => {}
+                    Some(slot) => *slot = (ts, price, span.close),
+                    None => {
+                        clamp
+                            .last_in_session
+                            .insert(symbol.to_string(), (ts, price, span.close));
+                    }
                 }
             }
-        }
-        let key = |t: i64| (t - 1).div_euclid(interval_ns);
-        let clamp_end = clamp_end_of(span.close, clamp.grace_ns, span.next_start);
-        (key(ts) == key(span.close) && clamp_end > span.close).then_some(ClampHit {
+            (span, clamp.grace_ns)
+        };
+        let clamp_end = clamp_end_of(span.close, grace_ns, span.next_start);
+        let in_close_bucket = self.bucket_of(symbol, ts).0 == self.bucket_of(symbol, span.close).0;
+        (in_close_bucket && clamp_end > span.close).then_some(ClampHit {
             close: span.close,
             clamp_end,
             after_close: false,
@@ -227,19 +273,13 @@ impl BarAggregator {
         NS_PER_MIN * self.interval_min
     }
 
-    /// 右闭区间 `(key*I, (key+1)*I]` 的编号: `floor((ts - 1) / I)`。
-    fn interval_key(&self, timestamp_ns: i64) -> i64 {
-        (timestamp_ns - 1).div_euclid(self.interval_ns())
-    }
-
     /// 把在形成的 bar 封闭为终点戳 `Bar`(on_tick 与 flush_due 共用)。
     fn close_bar(&self, symbol: &str, bar: &ActiveBar) -> crate::model::Bar {
-        let interval_ns = self.interval_ns();
         crate::model::Bar {
             // 区间终点 E: 不早于本区间所有 tick(含恰在 E 的那笔), 早于下一区间
             // 任何 tick(都 > E)。同刻 E 的 tick 与 bar: 回测靠 feed 稳定排序
             // (tick 先入队), 实盘 bar 只在下一区间 tick 到达或补发时才推出。
-            timestamp: (bar.timestamp_min + 1) * interval_ns,
+            timestamp: bar.end_ns,
             open: bar.open,
             high: bar.high,
             low: bar.low,
@@ -249,7 +289,7 @@ impl BarAggregator {
             extra: self.clamped_bar_extra(symbol, bar),
             freq: None,
             // 区间为 (起点, 终点]
-            interval_start: Some(bar.timestamp_min * interval_ns),
+            interval_start: Some(bar.start_ns),
         }
     }
 
@@ -268,12 +308,11 @@ impl BarAggregator {
         extra
     }
 
-    /// 封闭并推出 bar, 登记该品种最近推出的区间编号。
+    /// 封闭并推出 bar, 登记该品种最近推出的区间终点。
     fn emit_bar(&mut self, symbol: &str, bar: &ActiveBar) -> PyResult<()> {
         let finished = self.close_bar(symbol, bar);
         self.feed.add_bar(finished)?;
-        self.last_emitted_key
-            .insert(symbol.to_string(), bar.timestamp_min);
+        self.last_emitted_key.insert(symbol.to_string(), bar.end_ns);
         Ok(())
     }
 }
@@ -328,10 +367,10 @@ impl BarAggregator {
         // 收盘宽限钳制(开启时): 收盘后宽限期内的 tick 归入以收盘结尾的桶
         let clamp_info = self.classify_for_clamp(&symbol, timestamp_ns, price);
         let after_close = clamp_info.is_some_and(|h| h.after_close);
-        // 右闭区间编号: 恰在整分的 tick 属于以它结尾的那根 bar
-        let current_key = match clamp_info {
-            Some(hit) if hit.after_close => self.interval_key(hit.close),
-            _ => self.interval_key(timestamp_ns),
+        // 右闭区间: 恰在整分的 tick 属于以它结尾的那根 bar
+        let (current_key, bucket_start) = match clamp_info {
+            Some(hit) if hit.after_close => self.bucket_of(&symbol, hit.close),
+            _ => self.bucket_of(&symbol, timestamp_ns),
         };
 
         let volume_delta = if self.volume_is_cumulative {
@@ -373,7 +412,7 @@ impl BarAggregator {
         }
 
         if let Some(bar) = self.active_bars.get_mut(&symbol) {
-            if bar.timestamp_min == current_key {
+            if bar.end_ns == current_key {
                 // Update current bar
                 if price > bar.high {
                     bar.high = price;
@@ -390,7 +429,7 @@ impl BarAggregator {
             let finished = bar.clone();
             self.emit_bar(&symbol, &finished)?;
         }
-        let interval_end = (current_key + 1) * self.interval_ns();
+        let interval_end = current_key;
         let new_bar = ActiveBar {
             open: price,
             high: price,
@@ -402,7 +441,8 @@ impl BarAggregator {
                     .pending_late_volume
                     .remove(&symbol)
                     .unwrap_or(Decimal::ZERO),
-            timestamp_min: current_key,
+            end_ns: current_key,
+            start_ns: bucket_start,
             emit_after: clamp_info.map_or(interval_end, |hit| interval_end.max(hit.clamp_end)),
             session_close: clamp_info.map(|hit| hit.close),
             has_after_close: after_close,
@@ -431,7 +471,7 @@ impl BarAggregator {
             .map(|(symbol, bar)| (symbol.clone(), bar.clone()))
             .collect();
         // 按 (区间, 品种) 排序: 推出顺序确定, 时间戳不倒退
-        due.sort_by(|a, b| (a.1.timestamp_min, &a.0).cmp(&(b.1.timestamp_min, &b.0)));
+        due.sort_by(|a, b| (a.1.end_ns, &a.0).cmp(&(b.1.end_ns, &b.0)));
         for (symbol, bar) in &due {
             self.active_bars.remove(symbol);
             self.emit_bar(symbol, bar)?;
@@ -460,6 +500,19 @@ impl BarAggregator {
     ) -> PyResult<()> {
         self.set_session_clamp_arc(resolver.arc(), grace_ns)
             .map_err(PyValueError::new_err)
+    }
+
+    /// 接入时段解析器, 之后的 tick 按交易时段分桶.
+    ///
+    /// 股票、基金、期权的内置时段表从交易块的连续竞价起点起算(A 股 60 分钟:
+    /// 10:30、11:30、14:00、15:00), 开盘集合竞价的 tick 归首根, 1 分钟周期下单独成
+    /// 一根终点为 09:30 的 bar; 块外的 tick 与其余时段表仍按绝对时间取整。须在喂入
+    /// tick 之前调用。`set_session_clamp` 也会接入其解析器。
+    ///
+    /// :param resolver: 与引擎同配置的时段解析器(须已 `set_active` 全部合约)
+    #[pyo3(name = "set_session_resolver")]
+    pub fn py_set_session_resolver(&mut self, resolver: PyRef<'_, PySessionResolver>) {
+        self.set_session_resolver_arc(resolver.arc());
     }
 
     /// 关闭收盘宽限钳制.
@@ -1031,6 +1084,165 @@ mod tests {
         let bars = feed.drain_bars_for_test();
         assert_eq!(bars[0].timestamp, sh_on(5, 21, 1, 0));
         assert!(bars[0].extra.is_empty());
+    }
+
+    /// 喂入 `(时, 分, 秒, 价, 量)` 的 tick。
+    fn feed_ticks(agg: &mut BarAggregator, symbol: &str, ticks: &[(u32, u32, u32, f64, f64)]) {
+        for &(h, m, s, price, volume) in ticks {
+            agg.on_tick(symbol.to_string(), price, volume, sh(h, m, s))
+                .unwrap();
+        }
+    }
+
+    fn bounds(bars: &[crate::model::Bar]) -> Vec<(i64, Option<i64>)> {
+        bars.iter()
+            .map(|b| (b.timestamp, b.interval_start))
+            .collect()
+    }
+
+    #[test]
+    fn session_resolver_anchors_stock_hour_bars_at_session_start() {
+        let feed = DataFeed::new();
+        let mut agg = BarAggregator::new(feed.clone(), Some(60), false);
+        agg.set_session_resolver_arc(stock_resolver());
+        feed_ticks(
+            &mut agg,
+            "600000",
+            &[
+                (9, 31, 0, 10.0, 1.0),
+                (10, 15, 0, 10.2, 1.0),
+                (10, 30, 0, 10.4, 1.0),
+                (10, 30, 5, 10.6, 1.0),
+                (11, 29, 0, 10.8, 1.0),
+                (13, 0, 5, 11.0, 1.0),
+            ],
+        );
+        let bars = feed.drain_bars_for_test();
+        assert_eq!(
+            bounds(&bars),
+            vec![
+                (sh(10, 30, 0), Some(sh(9, 30, 0))),
+                (sh(11, 30, 0), Some(sh(10, 30, 0))),
+            ]
+        );
+        // 恰在 10:30:00 的 tick 属于以 10:30 结尾的那根
+        assert_eq!((bars[0].close, bars[0].volume), (dec!(10.4), dec!(3)));
+        // 下午首根 (13:00, 14:00], 到期补发
+        assert_eq!(agg.flush_due(sh(14, 0, 2), FLUSH).unwrap(), 1);
+        assert_eq!(
+            bounds(&feed.drain_bars_for_test()),
+            vec![(sh(14, 0, 0), Some(sh(13, 0, 0)))]
+        );
+    }
+
+    #[test]
+    fn session_resolver_merges_opening_auction_ticks_into_first_bar() {
+        let feed = DataFeed::new();
+        let mut agg = BarAggregator::new(feed.clone(), Some(5), false);
+        agg.set_session_resolver_arc(stock_resolver());
+        feed_ticks(
+            &mut agg,
+            "600000",
+            &[
+                (9, 25, 3, 10.0, 5.0),
+                (9, 31, 0, 10.2, 1.0),
+                (9, 35, 0, 10.4, 1.0),
+                (9, 35, 1, 10.6, 1.0),
+            ],
+        );
+        let bars = feed.drain_bars_for_test();
+        assert_eq!(bounds(&bars), vec![(sh(9, 35, 0), Some(sh(9, 30, 0)))]);
+        assert_eq!(
+            (bars[0].open, bars[0].close, bars[0].volume),
+            (dec!(10), dec!(10.4), dec!(7))
+        );
+    }
+
+    #[test]
+    fn session_resolver_keeps_opening_auction_as_own_one_minute_bar() {
+        // 1 分钟周期: 开盘集合竞价单独成一根终点 09:30 的 bar(行情服务 M1 同此)
+        let feed = DataFeed::new();
+        let mut agg = BarAggregator::new(feed.clone(), Some(1), false);
+        agg.set_session_resolver_arc(stock_resolver());
+        feed_ticks(
+            &mut agg,
+            "600000",
+            &[
+                (9, 20, 0, 9.9, 1.0),
+                (9, 25, 3, 10.0, 5.0),
+                (9, 30, 5, 10.2, 1.0),
+                (9, 31, 5, 10.4, 1.0),
+            ],
+        );
+        let bars = feed.drain_bars_for_test();
+        assert_eq!(
+            bounds(&bars),
+            vec![
+                (sh(9, 30, 0), Some(sh(9, 15, 0))),
+                (sh(9, 31, 0), Some(sh(9, 30, 0))),
+            ]
+        );
+        assert_eq!((bars[0].open, bars[0].volume), (dec!(9.9), dec!(6)));
+    }
+
+    #[test]
+    fn session_resolver_leaves_futures_on_clock_alignment() {
+        // 期货时段表不按时段起点起算: 股指期货 60 分钟仍是 10:00、11:00
+        let feed = DataFeed::new();
+        let mut agg = BarAggregator::new(feed.clone(), Some(60), false);
+        agg.set_session_resolver_arc(clamp_resolver(
+            vec![("if", "CN_FUTURES_CFFEX_STOCK_INDEX_DAY")],
+            vec![("IF2401", Some(AssetType::Futures))],
+        ));
+        feed_ticks(
+            &mut agg,
+            "IF2401",
+            &[
+                (9, 31, 0, 10.0, 1.0),
+                (10, 0, 5, 10.2, 1.0),
+                (11, 0, 5, 10.4, 1.0),
+            ],
+        );
+        assert_eq!(
+            bounds(&feed.drain_bars_for_test()),
+            vec![
+                (sh(10, 0, 0), Some(sh(9, 0, 0))),
+                (sh(11, 0, 0), Some(sh(10, 0, 0))),
+            ]
+        );
+    }
+
+    #[test]
+    fn session_clamp_also_buckets_by_session_and_clamps_the_closing_hour_bar() {
+        let feed = DataFeed::new();
+        let mut agg = BarAggregator::new(feed.clone(), Some(60), false);
+        agg.set_session_clamp_arc(stock_resolver(), GRACE).unwrap();
+        feed_ticks(
+            &mut agg,
+            "600000",
+            &[
+                (9, 31, 0, 9.8, 1.0),
+                (10, 30, 5, 9.9, 1.0),
+                (13, 30, 0, 10.0, 1.0),
+                (14, 0, 5, 10.2, 1.0),
+                (15, 0, 0, 10.4, 1.0),
+                (15, 0, 20, 10.6, 1.0),
+            ],
+        );
+        assert_eq!(
+            bounds(&feed.drain_bars_for_test()),
+            vec![
+                (sh(10, 30, 0), Some(sh(9, 30, 0))),
+                (sh(11, 30, 0), Some(sh(10, 30, 0))),
+                (sh(14, 0, 0), Some(sh(13, 0, 0))),
+            ]
+        );
+        // 收盘那根 (14:00, 15:00] 含宽限 tick, 推迟到 15:00:57 补发
+        assert_eq!(agg.flush_due(sh(15, 0, 57), FLUSH).unwrap(), 1);
+        let bars = feed.drain_bars_for_test();
+        assert_eq!(bounds(&bars), vec![(sh(15, 0, 0), Some(sh(14, 0, 0)))]);
+        assert_eq!((bars[0].close, bars[0].volume), (dec!(10.6), dec!(3)));
+        assert_eq!(bars[0].extra.get(BAR_CLOSE_PRICE_KEY), Some(&10.4));
     }
 
     #[test]

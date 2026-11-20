@@ -1512,8 +1512,10 @@ class LiveRunner:
         """
         metadata = getattr(bundle, "metadata", None) or {}
         dual_stream = normalize_dual_stream_declaration(metadata.get("dual_stream"))
+        tick_bar_resolver = getattr(self, "_tick_bar_resolver", None)
         for target in targets:
             setattr(target, "_framework_dual_stream", dual_stream)
+            setattr(target, "_framework_tick_bar_resolver", tick_bar_resolver)
         if dual_stream:
             logger.info(
                 "tick/bar 双流(%s): 基础周期指标只由 bar 推进",
@@ -3084,9 +3086,12 @@ class LiveRunner:
         """行情网关有 ``configure_session_clamp`` 钩子时开启收盘宽限钳制.
 
         钳制宽限 = ``day_close_delay`` − 5 秒(见 ``_SESSION_CLAMP_MARGIN_NS``),
-        ``day_close_delay`` 不足 5 秒时不开启。钩子失败只告警, 会话照常运行
-        (收盘后宽限期内的 tick 进下一根 bar, 与未开启时相同)。
+        ``day_close_delay`` 不足 5 秒时宽限为 0(不钳制)。钩子同时把时段解析器交给
+        网关的聚合器按交易时段分桶, 所以宽限为 0 时也调用; 同一个解析器记在
+        ``_tick_bar_resolver``, 供策略预测 intrabar 临时点的标签。钩子失败只告警,
+        会话照常运行(聚合器按绝对时间分桶, 收盘后宽限期内的 tick 进下一根 bar)。
         """
+        self._tick_bar_resolver = None
         gateway = getattr(bundle, "market_gateway", None)
         hook = getattr(gateway, "configure_session_clamp", None)
         if not callable(hook):
@@ -3094,10 +3099,10 @@ class LiveRunner:
         grace_ns = (
             int(getattr(self, "day_close_delay_ns", 0)) - _SESSION_CLAMP_MARGIN_NS
         )
-        if grace_ns < 0:
-            return
         try:
-            hook(self._session_clamp_resolver(), grace_ns)
+            resolver = self._session_clamp_resolver()
+            hook(resolver, max(grace_ns, 0))
+            self._tick_bar_resolver = resolver
         except Exception as exc:
             logger.warning(
                 "行情网关开启收盘钳制失败（%s），收盘后宽限期内的 tick 不计入当日"

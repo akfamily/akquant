@@ -38,6 +38,10 @@ pub struct SessionSchedule {
     pub name: String,
     pub segments: Vec<SessionSegment>,
     pub fallback_calendar: FallbackCalendar,
+    /// 日内 K 线是否从每个交易块的连续竞价起点起算（A 股 1h：10:30、11:30、14:00、
+    /// 15:00），开盘集合竞价并入首根。`false` 时按本地时钟取整（1h：10:00、11:00……）。
+    /// 只有内置的股票、基金、期权模板为 `true`。
+    pub anchor_bars_at_session_start: bool,
 }
 
 impl SessionSchedule {
@@ -114,6 +118,7 @@ impl SessionSchedule {
             name,
             segments,
             fallback_calendar,
+            anchor_bars_at_session_start: false,
         })
     }
 
@@ -391,7 +396,10 @@ pub fn template(name: &str) -> Option<SessionSchedule> {
         ),
         _ => return None,
     };
-    Some(SessionSchedule::new(upper, segments, fallback).expect("内置模板必须合法"))
+    let mut schedule = SessionSchedule::new(upper, segments, fallback).expect("内置模板必须合法");
+    schedule.anchor_bars_at_session_start =
+        matches!(schedule.name.as_str(), "CN_STOCK" | "CN_FUND" | "CN_OPTION");
+    Some(schedule)
 }
 
 #[cfg(test)]

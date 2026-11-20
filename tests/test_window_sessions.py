@@ -91,7 +91,7 @@ class _WinLog(Strategy):
 
 
 def test_intraday_window_splits_at_lunch_and_clamps_label() -> None:
-    """A 股 1h：11:01～11:30 的窗口标签 11:30（不是 12:00）、在 11:30 即时闭合.
+    """A 股 1h：10:31～11:30 的窗口在 11:30 即时闭合，不跨午休.
 
     13:01 开新窗口，起点为下午块起点 13:00。
     """
@@ -116,8 +116,7 @@ def test_intraday_window_splits_at_lunch_and_clamps_label() -> None:
     )
     assert r.strategy is not None
     assert [(w[1], w[2], w[5]) for w in r.strategy.windows] == [
-        ("01-02 11:00", "01-02 10:00", 1.0),
-        ("01-02 11:30", "01-02 11:00", 2.0),
+        ("01-02 11:30", "01-02 10:30", 3.0),
         ("01-02 14:00", "01-02 13:00", 2.0),
     ]
 
@@ -335,8 +334,7 @@ def test_bar_list_without_symbols_uses_stock_blocks() -> None:
     r = run_backtest(strategy=P, data=bars, initial_cash=1e5, show_progress=False)
     assert r.strategy is not None
     assert [w[1][-5:] for w in r.strategy.windows] == [
-        "10:00",
-        "11:00",
+        "10:30",
         "11:30",
         "14:00",
         "15:00",
@@ -349,7 +347,7 @@ def test_bar_generator_matches_engine_windows() -> None:
 
     times = [
         "2024-01-02 09:31",
-        "2024-01-02 10:00",
+        "2024-01-02 10:30",
         "2024-01-02 11:00",
         "2024-01-02 11:01",
         "2024-01-02 11:30",
@@ -427,7 +425,7 @@ def test_bar_generator_matches_engine_windows() -> None:
     assert got == engine_windows
     # 即时闭合与引擎同一时机: 11:30 窗口在 11:30 那根到达时闭合, 不等 13:01
     assert closed_at == r.strategy.closed_at
-    assert closed_at == ["01-02 10:00", "01-02 11:00", "01-02 11:30", "01-02 14:00"]
+    assert closed_at == ["01-02 10:30", "01-02 11:30", "01-02 14:00"]
 
 
 class _MemAdapter(aq.feed_adapter.BasePandasFeedAdapter):
@@ -444,7 +442,7 @@ class _MemAdapter(aq.feed_adapter.BasePandasFeedAdapter):
 def test_replay_session_alignment_matches_engine_windows() -> None:
     """离线 replay(align='session') 与引擎 subscribe_bars 产出相同的 1h 窗口.
 
-    含午休截断（11:30 标签）。
+    从 09:30 起算，上午末根止于午休（11:30 标签）。
     """
     times = [
         "2024-01-02 09:31",
@@ -481,8 +479,7 @@ def test_replay_session_alignment_matches_engine_windows() -> None:
     ]
     assert got == engine_windows
     assert [g[0] for g in got] == [
-        "01-02 10:00",
-        "01-02 11:00",
+        "01-02 10:30",
         "01-02 11:30",
         "01-02 14:00",
     ]
@@ -518,7 +515,7 @@ def test_replay_day_alignment_uses_trading_day_for_night_session() -> None:
 def test_replay_extra_agg_columns_follow_engine_windows() -> None:
     """额外的 agg 列按聚合器给每行分配的窗口分组（午休截断后的窗口同样适用）.
 
-    11:30 那根同时挤出未满的 11:00 窗口并让 11:30 窗口即时闭合。
+    上午两个窗口在 10:30、11:30 那根到达时即时闭合。
     """
     times = [
         "2024-01-02 09:31",
@@ -544,13 +541,12 @@ def test_replay_extra_agg_columns_follow_engine_windows() -> None:
         "symbol",
     ]
     assert [i.tz_convert(TZ).strftime("%H:%M") for i in out.index] == [
-        "10:00",
-        "11:00",
+        "10:30",
         "11:30",
         "14:00",
     ]
-    assert out["amount"].tolist() == [3.0, 3.0, 4.0, 11.0]
-    assert out["volume"].tolist() == [2.0, 1.0, 1.0, 2.0]
+    assert out["amount"].tolist() == [6.0, 4.0, 11.0]
+    assert out["volume"].tolist() == [3.0, 1.0, 2.0]
 
 
 def test_replay_emit_partial_false_drops_tail_of_each_trading_day() -> None:
