@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.94] - 2026-11-21
+
+> 规则版本仍为 2.5.0，回测结果不变。本版改动集中在经柜台交易的实盘读数：期货空头、锁仓的持仓读数会变（此前读错）。
+
 ### Fixed
 - **经柜台交易时，`get_account()` 在没有委托和成交期间一直是旧值**：框架按 `recovery_account_interval_sec`（默认 5 秒）向柜台查询账户，查到的快照此前只用于 `on_portfolio_update` 回调和权益曲线，没有写进 `get_account()` 读取的缓存；缓存只在委托或成交回报后才重查。于是持仓不动时，策略读到的权益、可用资金、持仓市值、浮动盈亏停在上一次成交时的值，不随行情变化，按它做的止损、仓位计算用的是过期数据。现在每次查询到的快照都会更新缓存。回测与 paper 模式不受影响。
 
