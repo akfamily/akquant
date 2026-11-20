@@ -1,6 +1,6 @@
 """实盘持仓同步: 成交叠 delta 同步准、防双计、可用重查不覆盖总持仓."""
 
-from akquant.gateway.broker_models import UnifiedPosition
+from akquant.gateway.broker_models import UnifiedAccount, UnifiedPosition
 from akquant.gateway.broker_state_cache import BrokerStateCache
 
 
@@ -113,3 +113,59 @@ def test_recovery_replay_of_same_trade_does_not_drift_position() -> None:
     wrapped("trade", dict(fill))  # 再一周期重放
     assert c.positions()["X"] == 1100.0  # 只叠一次, 不是 1300
     assert gw.pos_calls == 1
+
+
+class _AccountGw:
+    """只记账户查询次数的假网关."""
+
+    def __init__(self, equity: float) -> None:
+        self.equity = equity
+        self.account_calls = 0
+
+    def query_account(self) -> UnifiedAccount:
+        self.account_calls += 1
+        return UnifiedAccount("a", self.equity, 0.0, 0.0)
+
+
+def test_polled_account_event_replaces_cached_account() -> None:
+    """恢复轮询送来的账户快照要写进缓存: 没有委托/成交时 get_account 也是新值."""
+    from akquant.gateway.broker_strategy_api import wrap_state_invalidation
+
+    gw = _AccountGw(10000.0)
+    first, second = BrokerStateCache(gw), BrokerStateCache(gw)
+    assert first.account().equity == 10000.0  # 首次读, 查柜台 #1
+    wrapped = wrap_state_invalidation(lambda n, p: None, lambda: [first, second])
+
+    wrapped("account", UnifiedAccount("a", 10250.0, 0.0, 0.0))
+
+    # 多 slot 各一份缓存, 都镜像同一账户
+    assert first.account().equity == 10250.0
+    assert second.account().equity == 10250.0
+    assert gw.account_calls == 1  # 用的是事件里的快照, 没有再查柜台
+
+
+def test_order_event_after_polled_account_still_forces_requery() -> None:
+    """轮询快照写入后, 委托/成交照旧让资金失效重查(快照可能早于这笔回报)."""
+    from akquant.gateway.broker_strategy_api import wrap_state_invalidation
+
+    gw = _AccountGw(10000.0)
+    cache = BrokerStateCache(gw)
+    wrapped = wrap_state_invalidation(lambda n, p: None, lambda: [cache])
+    wrapped("account", UnifiedAccount("a", 10250.0, 0.0, 0.0))
+    gw.equity = 9900.0
+
+    wrapped("order", {"broker_order_id": "b1"})
+
+    assert cache.account().equity == 9900.0
+    assert gw.account_calls == 1
+
+
+def test_polled_account_event_without_payload_keeps_cache() -> None:
+    """空载荷不覆盖已有快照."""
+    from akquant.gateway.broker_strategy_api import wrap_state_invalidation
+
+    gw = _AccountGw(10000.0)
+    cache = BrokerStateCache(gw)
+    assert cache.account().equity == 10000.0
+    wrap_state_invalidation(lambda n, p: None, lambda: [cache])("account", None)
+    assert cache.account().equity == 10000.0

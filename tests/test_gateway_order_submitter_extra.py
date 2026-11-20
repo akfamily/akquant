@@ -216,3 +216,30 @@ def test_auto_reverse_no_split_when_fully_frozen() -> None:
         payload_field=_field,
     )
     assert legs == [("auto", 6.0)]
+
+
+def test_close_position_lookup_trusts_direction_over_positive_quantity() -> None:
+    """空头行数量给正数、方向写在 direction 里时, 卖单不能把它当成可平的多头.
+
+    中间件的空头行就是这个形状。只看数量正负的话, 卖出会匹配到空头行, 被拆成“平仓”腿,
+    实际上账户里没有多头可平。
+    """
+    from akquant.gateway.broker_models import UnifiedPosition
+    from akquant.gateway.order_submitter import find_live_close_position
+
+    def field(obj: object, name: str) -> object:
+        return getattr(obj, name, None)
+
+    short_row = UnifiedPosition(
+        symbol="IF2512", quantity=2.0, available_quantity=2.0, direction="short"
+    )
+    long_row = UnifiedPosition(
+        symbol="IF2512", quantity=3.0, available_quantity=3.0, direction="long"
+    )
+
+    assert find_live_close_position([short_row], "IF2512", "Sell", field) is None
+    assert find_live_close_position([short_row], "IF2512", "Buy", field) is short_row
+    assert (
+        find_live_close_position([short_row, long_row], "IF2512", "Sell", field)
+        is long_row
+    )

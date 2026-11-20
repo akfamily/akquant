@@ -353,16 +353,17 @@ class MyTraderGateway(TraderGatewayBase):
         ...  # 调用柜台撤单接口
 
     def query_order(self, broker_order_id: str) -> UnifiedOrderSnapshot | None:
-        ...  # 查询单笔委托并转换为 UnifiedOrderSnapshot
+        ...  # 查询单笔委托并转换为 UnifiedOrderSnapshot；柜台给出时填 side / quantity / price（委托方向、委托数量、委托价），给不了的留 None
 
     def query_trades(self, since: int | None = None) -> list[UnifiedTrade]:
-        ...  # 查询成交并转换为 UnifiedTrade 列表
+        ...  # 查询成交并转换为 UnifiedTrade 列表；柜台给出手续费时填 commission，给不了的留 None
 
     def query_account(self) -> UnifiedAccount | None:
-        ...  # 查询资金账户
+        ...  # 查询资金账户；柜台给出时填 market_value / frozen_cash / margin / unrealized_pnl，给不了的留 None
 
     def query_positions(self) -> list[UnifiedPosition]:
-        ...  # 查询持仓
+        ...  # 查询持仓：一个标的一个方向一行，direction 填 "long" / "short"（股票净持仓留空串），空头行的 quantity 正负均可；
+        # 柜台给出时填 frozen_quantity / market_value / unrealized_pnl / margin / last_price，给不了的留 None
 
     def _on_broker_push(self, event: str, data: dict[str, Any]) -> None:
         # 收到推送后：反查 client_order_id，再分发给策略层回调。

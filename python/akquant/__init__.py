@@ -52,6 +52,7 @@ from .config import (
     strategy_config,
 )
 from .data import DataLoader
+from .execution.base import PositionDetail, PositionLeg
 from .feed_adapter import (
     CSVFeedAdapter,
     DataFeedAdapter,
@@ -243,6 +244,8 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "build_param_grid_from_search_space",
         "OrderLeg",
         "OrderReceipt",
+        "PositionDetail",
+        "PositionLeg",
         "talib",
     ]
 else:
@@ -351,6 +354,8 @@ else:
         "build_param_grid_from_search_space",
         "OrderLeg",
         "OrderReceipt",
+        "PositionDetail",
+        "PositionLeg",
         "talib",
     ]
 

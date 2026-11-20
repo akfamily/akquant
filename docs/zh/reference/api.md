@@ -1057,7 +1057,8 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `self.position.avg_price -> float`: `entry_price` 的别名。
 *   `ctx.get_position_entry_price(symbol) -> float`: 获取指定标的当前持仓均价。
 *   `ctx.get_position_entry_prices() -> Dict[str, float]`: 获取所有标的当前持仓均价。
-*   `get_holding_bars(symbol) -> int`: 获取当前持仓持有的 Bar 数量。
+*   `get_position_detail(symbol) -> PositionDetail`: 获取持仓明细。`quantity`、`available` 带符号，与 `get_position()`、`get_available_position()` 相同；另有持仓成本 `avg_price`、`market_value`、`unrealized_pnl`、`margin`，以及多头、空头两边各自的 `detail.long`、`detail.short`（数量、可用、成本、今仓、昨仓、冻结量、最新价等，数量为非负数）。拿不到的项为 `None`：回测没有今昨仓、冻结量和逐标的保证金；实盘取决于柜台是否提供。
+*   `get_holding_bars(symbol) -> int`: 获取当前持仓持有的 Bar 数量。经柜台交易时按柜台持仓逐 Bar 累计，只统计本次会话收到的 Bar。
 *   `cash -> float`: 获取当前可用资金（只读属性）。
 *   `freq -> Optional[str]`: 数据周期（只读属性），取值为回测侧口径 `"1min"` / `"5min"` / `"1d"` 等。
     *   回测侧由 `run_backtest(freq=)` 注入（tick 聚合周期，或 bar 数据声明的周期）；实盘侧由行情网关声明（klinedata 把自己的 `period="M1"` 转换成 `"1min"`，`broker="replay"` 支持 `gateway_options={"freq": "1min"}`）。两侧统一到回测口径，故同一个策略在回测与实盘读到同一个值，无需按 broker 写兼容分支。

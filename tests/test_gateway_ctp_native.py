@@ -80,6 +80,11 @@ def test_ctp_native_query_account_returns_unified_payload(
                 AccountID="acct-001",
                 Balance=120000.5,
                 Available=98000.25,
+                CurrMargin=15000.0,
+                FrozenMargin=4000.0,
+                FrozenCash=500.0,
+                FrozenCommission=12.5,
+                PositionProfit=-320.0,
             ),
             SimpleNamespace(ErrorID=0, ErrorMsg=""),
             req_id,
@@ -96,6 +101,10 @@ def test_ctp_native_query_account_returns_unified_payload(
     assert account["equity"] == 120000.5
     assert account["cash"] == 120000.5
     assert account["available_cash"] == 98000.25
+    assert account["margin"] == 15000.0
+    # 挂单冻结 = 冻结保证金 + 冻结资金(期权权利金等) + 冻结手续费
+    assert account["frozen_cash"] == 4512.5
+    assert account["unrealized_pnl"] == -320.0
 
 
 def test_ctp_native_query_positions_aggregates_today_yesterday(
@@ -276,3 +285,51 @@ def test_ctp_native_market_logs_subscribe_failures_with_symbol(
     typed_record = cast(Any, record)
     assert typed_record.phase == "gateway"
     assert typed_record.symbol == "au2606"
+
+
+def test_ctp_native_position_rows_sum_margin_and_position_profit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """同一合约同一方向的今仓行、昨仓行: 占用保证金与持仓盈亏相加."""
+    gateway = _build_native_gateway(monkeypatch)
+    gateway._position_query_results = {}
+    for use_margin, profit in ((10000.0, -120.0), (15000.0, 300.0)):
+        gateway._accumulate_position_query_row(
+            SimpleNamespace(
+                InstrumentID="au2606",
+                PosiDirection="2",
+                Position=1,
+                UseMargin=use_margin,
+                PositionProfit=profit,
+            )
+        )
+
+    (row,) = gateway._position_query_results.values()
+    assert row["margin"] == 25000.0
+    assert row["unrealized_pnl"] == 180.0
+
+
+def test_ctp_native_order_return_carries_side_quantity_and_price(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """委托回报带上买卖方向、委托数量、委托价."""
+    gateway = _build_native_gateway(monkeypatch)
+    seen: list[dict[str, object]] = []
+    gateway.order_callback = seen.append
+    gateway.OnRtnOrder(
+        SimpleNamespace(
+            OrderRef="7",
+            InstrumentID="au2606",
+            OrderStatus="3",
+            Direction="1",
+            VolumeTotalOriginal=3,
+            LimitPrice=512.5,
+        )
+    )
+
+    (payload,) = seen
+    assert (payload["side"], payload["quantity"], payload["price"]) == (
+        "Sell",
+        3.0,
+        512.5,
+    )

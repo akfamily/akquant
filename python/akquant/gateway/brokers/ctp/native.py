@@ -557,6 +557,15 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
                 "available_cash": float(
                     getattr(pTradingAccount, "Available", 0.0) or 0.0
                 ),
+                "margin": float(getattr(pTradingAccount, "CurrMargin", 0.0) or 0.0),
+                # 挂单冻结: 冻结保证金 + 冻结资金(期权权利金等) + 冻结手续费
+                "frozen_cash": sum(
+                    float(getattr(pTradingAccount, name, 0.0) or 0.0)
+                    for name in ("FrozenMargin", "FrozenCash", "FrozenCommission")
+                ),
+                "unrealized_pnl": float(
+                    getattr(pTradingAccount, "PositionProfit", 0.0) or 0.0
+                ),
                 "timestamp_ns": time.time_ns(),
             }
         if bIsLast:
@@ -631,6 +640,16 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
                 getattr(pOrder, "CombOffsetFlag", "")
             ),
         }
+        # 委托本身的方向/数量/价格: 回报里有才带(策略读挂单时用), 0 价(市价单)不带。
+        direction = getattr(pOrder, "Direction", None)
+        if direction not in (None, ""):
+            payload["side"] = self._map_direction(direction)
+        volume = float(getattr(pOrder, "VolumeTotalOriginal", 0.0) or 0.0)
+        if volume > 0:
+            payload["quantity"] = volume
+        limit_price = float(getattr(pOrder, "LimitPrice", 0.0) or 0.0)
+        if limit_price > 0:
+            payload["price"] = limit_price
         if self.order_callback is not None:
             self.order_callback(payload)
 
@@ -864,6 +883,15 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
             if price_value > 0.0:
                 snapshot["avg_price"] = price_value
                 break
+
+        # 占用保证金、持仓盈亏: 行里有才累加(今仓行、昨仓行各报各的), 没有就不设键。
+        for field, attr in (
+            ("margin", "UseMargin"),
+            ("unrealized_pnl", "PositionProfit"),
+        ):
+            raw_value = getattr(position, attr, None)
+            if raw_value is not None:
+                snapshot[field] = float(snapshot.get(field, 0.0)) + float(raw_value)
 
         snapshot["timestamp_ns"] = time.time_ns()
         self._position_query_results[key] = snapshot

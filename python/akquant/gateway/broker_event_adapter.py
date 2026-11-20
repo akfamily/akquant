@@ -147,6 +147,18 @@ def _to_tif(value: Any) -> Optional[Any]:
     return mapping.get(text)
 
 
+def _request_or_snapshot(request: Any, snapshot: Any, name: str) -> Any:
+    """委托的方向/数量/价格: 有下单请求用请求里的, 否则用柜台快照里的."""
+    value = _get(request, name)
+    if value is None:
+        value = _get(snapshot, name)
+    return value
+
+
+def _optional_float(value: Any) -> Optional[float]:
+    return None if value is None else float(value)
+
+
 def map_order_snapshot(
     snapshot: Any,
     request: Any = None,
@@ -169,19 +181,11 @@ def map_order_snapshot(
         reject_reason=str(_get(snapshot, "reject_reason", "") or ""),
         updated_at=int(_get(snapshot, "timestamp_ns", 0) or 0),
         position_effect=_to_position_effect(_get(snapshot, "position_effect", "auto")),
-        side=_to_side(_get(request, "side")),
+        side=_to_side(_request_or_snapshot(request, snapshot, "side")),
         order_type=_to_order_type(_get(request, "order_type")),
         time_in_force=_to_tif(_get(request, "time_in_force")),
-        quantity=(
-            float(_get(request, "quantity"))
-            if _get(request, "quantity") is not None
-            else None
-        ),
-        price=(
-            float(_get(request, "price"))
-            if _get(request, "price") is not None
-            else None
-        ),
+        quantity=_optional_float(_request_or_snapshot(request, snapshot, "quantity")),
+        price=_optional_float(_request_or_snapshot(request, snapshot, "price")),
         trigger_price=None,
         reduce_only=bool(_get(request, "reduce_only", False)),
         tag="",
@@ -253,7 +257,7 @@ def map_trade(
         quantity=float(_get(trade, "quantity", 0.0) or 0.0),
         price=float(_get(trade, "price", 0.0) or 0.0),
         position_effect=_to_position_effect(_get(trade, "position_effect", "auto")),
-        commission=0.0,
+        commission=float(_get(trade, "commission") or 0.0),
         client_order_id=str(_get(trade, "client_order_id", "") or ""),
         broker_order_id=str(_get(trade, "broker_order_id", "") or ""),
         owner_strategy_id=owner_strategy_id,
