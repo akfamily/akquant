@@ -132,6 +132,10 @@ def wrap_state_invalidation(
                     continue
                 if symbol:
                     cache.apply_fill(str(symbol), signed)
+                cache.apply_pending_fill(
+                    str(_trade_field(payload, "broker_order_id") or ""),
+                    float(_trade_field(payload, "quantity") or 0.0),
+                )
                 cache.invalidate_available()
                 cache.invalidate_account()
                 cache.invalidate_open_orders()
@@ -156,6 +160,10 @@ def wrap_state_invalidation(
                     continue
                 cache.invalidate_open_orders()
                 cache.invalidate_account()
+                cache.release_pending_order(
+                    str(_trade_field(payload, "broker_order_id") or ""),
+                    _trade_field(payload, "status"),
+                )
         elif event_name == "account":
             # 恢复轮询定期查到的账户快照: 写进缓存, 否则 get_account() 只在委托/
             # 成交后才重查, 持仓不动时权益、市值、浮动盈亏一直是旧值。

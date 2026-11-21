@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from ..log import get_logger
@@ -14,6 +15,20 @@ logger = get_logger("gateway.live")
 
 
 _SHORT_DIRECTIONS = frozenset({"sell", "short"})
+
+
+_CLOSE_EFFECTS = frozenset({"close", "close_today", "close_yesterday"})
+_TERMINAL_STATUSES = frozenset({"filled", "cancelled", "rejected", "expired"})
+
+
+@dataclass
+class PendingOrder:
+    """本策略报出、尚未完结的一条委托腿(在途量投影用)."""
+
+    symbol: str
+    side: str  # "buy" / "sell"
+    remaining: float
+    reducing: bool  # 显式平仓语义或 reduce_only
 
 
 def is_short_row(row: Any) -> bool:
@@ -59,6 +74,9 @@ class BrokerStateCache:
         self._account: Any = None
         self._account_loaded = False
         self._open_orders: list[Any] = []
+        # 本策略报出的未完结委托 {broker_order_id: PendingOrder}。只记自己报的:
+        # 柜台挂单是账户级的, 含手工单和其他策略的单, 不能拿来投影本策略的仓位。
+        self._pending: dict[str, PendingOrder] = {}
         self._open_orders_loaded = False
 
     def invalidate(self) -> None:
@@ -89,6 +107,65 @@ class BrokerStateCache:
     def invalidate_open_orders(self) -> None:
         """Mark open-orders snapshot stale."""
         self._open_orders_loaded = False
+
+    def track_pending_order(
+        self,
+        broker_order_id: str,
+        symbol: str,
+        side: str,
+        quantity: float,
+        position_effect: str = "auto",
+        reduce_only: bool = False,
+    ) -> None:
+        """登记一条本策略刚报出的委托腿."""
+        effect = str(position_effect or "auto").strip().lower()
+        self._pending[str(broker_order_id)] = PendingOrder(
+            symbol=str(symbol),
+            side=str(side).strip().lower(),
+            remaining=float(quantity),
+            reducing=bool(reduce_only) or effect in _CLOSE_EFFECTS,
+        )
+
+    def apply_pending_fill(self, broker_order_id: str, quantity: float) -> None:
+        """一笔成交到达: 对应委托的在途量减去成交量, 减完即移除.
+
+        在途量只由成交扣减, 不看委托回报里的已成交量: 成交同时把数量加进持仓,
+        两者在同一次回调里完成, 投影持仓不会出现少算的瞬间(少算会导致重复下单)。
+        """
+        order = self._pending.get(str(broker_order_id))
+        if order is None:
+            return
+        order.remaining -= abs(float(quantity))
+        if order.remaining <= 1e-9:
+            del self._pending[str(broker_order_id)]
+
+    def release_pending_order(self, broker_order_id: str, status: Any) -> None:
+        """委托进入终态(成交完/撤单/拒单/过期)时移除其剩余在途量."""
+        text = str(getattr(status, "name", None) or getattr(status, "value", status))
+        if text.split(".")[-1].strip().lower() in _TERMINAL_STATUSES:
+            self._pending.pop(str(broker_order_id), None)
+
+    def projected_position(self, symbol: str, reducing_only: bool) -> float:
+        """持仓叠加本策略在途单的预期效果; 口径同回测 ``project_pending_position``.
+
+        ``reducing_only=True`` 只计平仓/减仓单(可平持仓); 否则全部计入(投影持仓)。
+        平仓单最多平到 0, 不会穿过 0 变成反向仓。
+        """
+        projected = self.positions().get(symbol, 0.0)
+        for order in self._pending.values():
+            if order.symbol != symbol or order.remaining <= 0:
+                continue
+            if reducing_only and not order.reducing:
+                continue
+            if not order.reducing:
+                projected += (
+                    order.remaining if order.side == "buy" else -order.remaining
+                )
+            elif order.side == "buy" and projected < 0:
+                projected += min(order.remaining, -projected)
+            elif order.side == "sell" and projected > 0:
+                projected -= min(order.remaining, projected)
+        return projected
 
     def apply_fill(self, symbol: str, signed_qty: float) -> None:
         """成交同步叠总持仓 delta(Buy +, Sell -).

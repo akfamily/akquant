@@ -112,26 +112,24 @@ class BrokerExecution:
         )
 
     def get_closable_position(self, symbol: str | None = None) -> float:
-        """获取可平持仓; broker_live 下降级为结算仓(理由同 get_projected_position)."""
-        return self.get_position(symbol)
+        """获取可平持仓: 柜台持仓扣掉本策略在途的平仓/减仓单."""
+        return self._cache.projected_position(
+            _resolve_symbol(self._s, symbol), reducing_only=True
+        )
 
     def get_projected_position(self, symbol: str | None = None) -> float:
-        """获取投影持仓; broker_live 下降级为结算仓.
+        """获取投影持仓: 柜台持仓叠加本策略全部在途单的预期效果.
 
-        回测侧该方法把同周期在途单计入,供 auto 拆腿与目标仓位算 delta(#361)。实盘
-        无法照做: 柜台挂单快照 ``UnifiedOrderSnapshot`` 只有 ``position_effect``
-        与 ``filled_quantity``, **没有** ``side`` 和 ``quantity``——
-        ``map_order_snapshot`` 的这两个字段取自 ``request``, 而 ``get_open_orders``
-        并不传 ``request``, 故算不出 ``remaining`` 也判不了方向。
+        与回测同口径, 供 ``order_target*`` / ``close_position`` 算 delta、auto 拆腿
+        判断开平: 同一根 bar 内连续下单不会按同一个持仓重复报单。
 
-        因此这里返回结算仓, 与 :meth:`get_position` 同值: 保持协议完整(不抛
-        AttributeError)且不用缺失数据伪造投影。实盘开平通常已由柜台/网关侧
-        转换(参见 vn.py ``OffsetConverter`` 的定位), 代价是实盘"先平后开"的
-        反手第二腿仍可能被标成平仓。要真正修实盘需给
-        ``UnifiedOrderSnapshot`` 补 ``side`` / ``quantity``, 会牵动各 broker 插件
-        的 mapper, 不在本次范围内。
+        只计**本策略经本会话报出**的委托(下单时登记, 成交时扣减, 终态时移除)。
+        柜台上的其他挂单(手工单、其他策略或会话的单)不计入; 本地止损单未报到
+        柜台, 也不计入。下单结果不可知(超时)的委托没有回执, 同样不计入。
         """
-        return self.get_position(symbol)
+        return self._cache.projected_position(
+            _resolve_symbol(self._s, symbol), reducing_only=False
+        )
 
     def get_positions(self) -> dict[str, float]:
         """获取所有持仓信息."""
@@ -256,7 +254,32 @@ class BrokerExecution:
             )
         if kwargs.get("time_in_force") is None:
             kwargs.pop("time_in_force", None)
-        return cast(OrderReceipt, self._submitter.submit_order(**kwargs))
+        receipt = cast(OrderReceipt, self._submitter.submit_order(**kwargs))
+        self._track_pending_legs(receipt, kwargs)
+        return receipt
+
+    def _track_pending_legs(self, receipt: Any, kwargs: dict[str, Any]) -> None:
+        """把刚报出的每条腿登记为在途单(在途量投影用); 登记出错不影响下单结果."""
+        try:
+            legs = getattr(receipt, "legs", None) or ()
+            if not legs:
+                return
+            symbol = _resolve_symbol(self._s, kwargs.get("symbol"))
+            side = kwargs.get("side", "Buy")
+            side_text = str(getattr(side, "name", side)).split(".")[-1]
+            for leg in legs:
+                self._cache.track_pending_order(
+                    leg.broker_order_id,
+                    symbol,
+                    side_text,
+                    leg.quantity,
+                    position_effect=leg.position_effect,
+                    reduce_only=bool(kwargs.get("reduce_only", False)),
+                )
+        except Exception:  # noqa: BLE001 单已报出, 不能因登记失败向策略抛错
+            logger.warning(
+                "broker_live 在途单登记失败, 投影持仓可能偏小", exc_info=True
+            )
 
     def _next_local_stop_id(self) -> str:
         self._stop_seq += 1
