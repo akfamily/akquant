@@ -4322,6 +4322,15 @@ def run_backtest(
             dual_stream = normalize_dual_stream_declaration(dual_symbols)
             for current_strategy in all_strategy_instances:
                 setattr(current_strategy, "_framework_dual_stream", dual_stream)
+            # 与纯 Bar 列表分支同一判据: 未显式限定标的时, 数据里的标的并入
+            # symbols 并登记合约(否则只登记 BENCHMARK, 对这些标的下单因合约
+            # 未登记被拒)。
+            if not symbols or "BENCHMARK" in symbols:
+                for one_symbol in [b.symbol for b in bars_part] + [
+                    t.symbol for t in ticks_part
+                ]:
+                    if one_symbol not in symbols:
+                        symbols.append(one_symbol)
             tick_feed.sort()
             data = tick_feed
         if isinstance(data, DataFeed):

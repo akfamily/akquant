@@ -6,6 +6,7 @@
 
 from typing import Any, List
 
+import pandas as pd
 import pytest
 from akquant import Strategy, run_backtest
 from akquant.akquant import Bar, Tick
@@ -110,3 +111,26 @@ def test_foreign_element_raises_type_error() -> None:
         _run([_bar(1), 42])
 
     assert "1" in str(exc_info.value)
+
+
+class _BuyOnce(Strategy):
+    """首个 tick 买入 1 股."""
+
+    def on_tick(self, tick: Any) -> None:
+        """未持仓且无挂单时买入."""
+        if not self.get_position(SYMBOL) and not self.get_open_orders(SYMBOL):
+            self.buy(SYMBOL, 1)
+
+
+def test_tick_list_without_symbols_registers_instruments() -> None:
+    """不传 symbols 时 tick 列表里的标的登记为合约, 下单可成交(此前下单被拒)."""
+    start = pd.Timestamp("2024-01-02 10:00", tz="Asia/Shanghai").value
+    ticks = [
+        Tick(timestamp=start + i * _MINUTE_NS, price=10.0, volume=100.0, symbol=SYMBOL)
+        for i in range(3)
+    ]
+    result = run_backtest(
+        data=ticks, strategy=_BuyOnce(), initial_cash=100_000.0, show_progress=False
+    )
+
+    assert result.orders_df["status"].tolist() == ["filled"]

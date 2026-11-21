@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`run_backtest(data=[...])` 传含 `Tick` 的列表、未传 `symbols` 时，数据里的标的登记为合约**：此前只登记 `BENCHMARK`，策略对这些标的下单因合约未登记被拒；现与纯 `Bar` 列表、DataFrame 输入一致。
+
 ## [0.3.95] - 2026-11-21
 
 > 规则版本仍为 2.5.0，回测结果不变。
