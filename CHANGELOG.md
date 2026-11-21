@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **期权定价模块 `akquant.option`**：Black-76 欧式定价与 Greeks、美式期货期权的 BAW 近似、隐含波动率、按认购-认沽平价反推远期，以及期货交易所期权代码解析（覆盖大商所、郑商所、上期所、能源中心、广期所、中金所的代码格式，含大商所、郑商所月度期权）。Black-76 部分在 Rust 中批量计算、长数组多线程，6 核机器上 5 万个合约求隐含波动率约 10 毫秒；隐含波动率按波动率步长收敛，深度实值、深度虚值等 vega 极小的合约也能解到 1e-6 以内。顶层导出，可直接用 `aq.option`。
 - **`Tick` 增加一档盘口 `bid_price` / `ask_price` / `bid_volume` / `ask_volume`**：构造时以关键字参数传入，不传为 `None`，原有构造方式不变；旧版本 pickle / 存档中的 `Tick` 还原为无报价。CTP 网关按 `BidPrice1` / `AskPrice1` / `BidVolume1` / `AskVolume1` 填充，CTP 表示无报价的 DBL_MAX 或 0 转为 `None`。
 
 ## [0.3.95] - 2026-11-21

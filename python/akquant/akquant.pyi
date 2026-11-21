@@ -3721,3 +3721,34 @@ def vec_zscore(values: numpy.ndarray, period: int) -> numpy.ndarray: ...
 def vec_returns(values: numpy.ndarray) -> numpy.ndarray: ...
 def vec_log_returns(values: numpy.ndarray) -> numpy.ndarray: ...
 def vec_cumsum(values: numpy.ndarray) -> numpy.ndarray: ...
+def _option_black76_price(
+    forward: numpy.ndarray,
+    strike: numpy.ndarray,
+    t: numpy.ndarray,
+    rate: numpy.ndarray,
+    sigma: numpy.ndarray,
+    is_call: numpy.ndarray,
+) -> numpy.ndarray: ...
+def _option_black76_greeks(
+    forward: numpy.ndarray,
+    strike: numpy.ndarray,
+    t: numpy.ndarray,
+    rate: numpy.ndarray,
+    sigma: numpy.ndarray,
+    is_call: numpy.ndarray,
+) -> tuple[
+    numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray
+]: ...
+def _option_black76_implied_vol(
+    price_: numpy.ndarray,
+    forward: numpy.ndarray,
+    strike: numpy.ndarray,
+    t: numpy.ndarray,
+    rate: numpy.ndarray,
+    is_call: numpy.ndarray,
+    price_tol: float,
+    sigma_tol: float,
+    sigma_low: float,
+    sigma_high: float,
+    max_iter: int,
+) -> numpy.ndarray: ...
