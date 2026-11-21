@@ -1029,6 +1029,35 @@ Notes:
 *   These APIs are available in `on_start` (snapshots are injected before start callbacks).
 *   Prefer these APIs for static metadata access instead of relying on `bar.extra`.
 
+**Options (chain, contract selection, Greeks, delta hedging):**
+
+The option methods work on registered option contracts (`option_type`, `strike_price`, `expiry_date`, `underlying_symbol` of `InstrumentConfig`) and each contract's latest price. `underlying` is the option's registered `underlying_symbol`: the underlying futures contract for commodity options (e.g. `m2701`); index options may register the index code.
+
+*   `option_rate: float`: class attribute, default `0.0`; risk-free rate (continuously compounded, annualized) used when a method is not given `rate`.
+*   `option_price_source: Literal["last", "mid"]`: class attribute, default `"last"`; how the option chain prices each contract. `"last"` uses the last price (the only price in bar backtests); `"mid"` follows the Cboe VIX pricing rule and uses the bid/ask midpoint only when both sides are quoted, positive, and bid does not exceed ask; otherwise the contract gets no implied volatility and `get_greeks` / `portfolio_greeks` state the exact cause (e.g. "only an ask, no bid"). Quotes come from the tick's `bid_price` / `ask_price`. The underlying futures always use the last price.
+*   `get_expiries(underlying) -> List[int]`: unexpired expiry dates (YYYYMMDD), nearest first. One underlying may have several expiries (e.g. DCE serial monthly options).
+*   `option_chain(underlying, expiry=None, rate=None, model="black76") -> pd.DataFrame`: option chain with columns `symbol`, `option_type`, `strike`, `expiry_date`, `t`, `bid`, `ask`, `price`, `forward`, `iv`, `delta`, `gamma`, `vega`, `theta`.
+    *   Forward: the futures price when the underlying is registered as futures; otherwise implied from call/put prices of the same expiry via put-call parity (absorbing the basis for index options), falling back to the underlying price grown at the rate when quotes are missing.
+    *   Expiry time is 15:00 on the expiry date; time to expiry uses 365 calendar days.
+    *   `model` selects the implied volatility model: `"black76"` (default) or `"baw"` (American approximation). Greeks always use Black-76 at that implied volatility. Contracts without a latest price get NaN `iv` and Greeks.
+*   `select_option(underlying, option_type, expiry=None, strike_offset=0, delta=None, rate=None, model="black76") -> Optional[str]`: pick one contract. With `delta`, the contract whose |delta| is closest to `abs(delta)`; otherwise the strike nearest the forward is at-the-money and `strike_offset` shifts by strike steps (positive = higher). `expiry` defaults to the nearest; returns `None` when nothing matches.
+*   `get_greeks(symbol, rate=None, model="black76") -> Dict[str, float]`: per-unit `price`, `forward`, `t`, `iv`, `delta`, `gamma`, `vega`, `theta` of one contract. Raises `ValueError` stating the exact cause when Greeks cannot be computed: no market time, expired, no latest price, no underlying price, price not above intrinsic value, price at or above the theoretical value at 500% volatility, etc.
+*   `portfolio_greeks(underlying, include=(), rate=None, model="black76") -> Dict[str, float]`: summed `delta`, `gamma`, `vega`, `theta`, `cash_delta` over all option positions on the underlying, the underlying position itself, and linear instruments in `include` (delta 1), scaled by quantity and multiplier. `cash_delta` = Σ qty × multiplier × delta × forward, additive across expiries and hedge instruments. Raises `ValueError` listing each position and its exact cause when Greeks cannot be computed (including a held linear instrument without a latest price), instead of counting it as 0.
+*   `hedge_delta(underlying, hedge_symbol=None, band=0.0, rate=None, model="black76", **kwargs) -> Optional[str]`: bring `cash_delta` back to 0 with a linear instrument, rounded to its `lot_size`; no order when the change is within `band`. `hedge_symbol` defaults to the underlying (the futures contract for commodity options); pass the index future (e.g. `IF2612`) for index options. `kwargs` go to `order_target`.
+
+Greeks are raw partial derivatives: `vega` per 1.0 change in volatility (divide by 100 for 1%), `theta` per year (divide by 365 for per day).
+
+**`akquant.option` functions:** scalar or broadcastable array inputs, priced on the forward. Black-76 prices, Greeks and implied volatilities are computed in batches in Rust, multi-threaded for long arrays (about 10 ms for 50,000 implied volatilities on a 6-core machine); BAW runs contract by contract in Python and is much slower.
+
+*   `black76_price(forward, strike, t, rate, sigma, option_type)` / `black76_greeks(...)`: Black-76 European price and Greeks (`delta`, `gamma`, `vega`, `theta`, `rho`).
+*   `baw_price(forward, strike, t, rate, sigma, option_type)`: Barone-Adesi-Whaley approximation for American futures options.
+*   `implied_vol(price, forward, strike, t, rate, option_type, model="black76")`: implied volatility, converged when the volatility step is below 1e-10; NaN at expiry, when the time value does not exceed the 1e-8 price tolerance, when the price is at or above the theoretical value at 500% volatility, or when it fails to converge.
+*   `implied_forward(strikes, call_prices, put_prices, t, rate) -> float`: forward implied by put-call parity.
+*   `year_fraction(start, end) -> float`: year fraction on a 365-calendar-day basis.
+*   `parse_option_symbol(symbol) -> Optional[OptionSymbol]`: parse futures-exchange option codes (`m2701-C-3100`, `m2703-MS-C-3300`, `SR701C5700`, `cu2612P94000`, `IO2612-C-4000`) into `underlying`, `option_type`, `strike`; codes carry no expiry, and numeric ETF option codes return `None`.
+
+Current limits: margin, exercise and expiry settlement still follow the engine's existing rules (single-leg margin models, cash settlement of intrinsic value at expiry); see [Chapter 8](../textbook/08_options.md).
+
 **Strategy Drawings and Runtime Stats:**
 
 *   `draw`: The drawing entry bound to the strategy (`DrawingApi`), with `line` / `box` / `label` / `polyline` / `fib` / `table` / `delete` / `clear`. The first argument is a non-empty `id`; calling again with the same `(owner, symbol, id)` overwrites the whole object and emits nothing if the content is unchanged; a kind cannot reuse another kind's id (`ValueError`); colors accept only `#RRGGBB` / `#RRGGBBAA`. `aq.Indicator` inherits the same entry. See the [visualization guide](../guide/visualization.md#strategy-drawings-and-stats-tables) for parameters and limits.

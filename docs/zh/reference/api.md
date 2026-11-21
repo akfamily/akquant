@@ -1096,6 +1096,35 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   这些接口在 `on_start` 即可使用（启动阶段已注入快照）。
 *   推荐优先使用这些接口读取静态属性，而不是依赖 `bar.extra`。
 
+**期权（链、选合约、Greeks、Delta 对冲）:**
+
+期权方法基于已登记的期权合约（`InstrumentConfig` 的 `option_type`、`strike_price`、`expiry_date`、`underlying_symbol`）和各合约的最新价。`underlying` 指期权登记的 `underlying_symbol`：商品期权是标的期货（如 `m2701`），股指期权可登记为指数代码。
+
+*   `option_rate: float`: 类属性，默认 `0.0`；期权定价用的无风险利率（连续复利、年化），各方法未显式传 `rate` 时使用。
+*   `option_price_source: Literal["last", "mid"]`: 类属性，默认 `"last"`；期权链的取价方式。`"last"` 取最新价（K 线回测只有这一种价格）；`"mid"` 按 Cboe VIX 的取价规则取买一、卖一的中间价，仅当两侧都有报价、都为正且买价不高于卖价，否则该合约不计算隐含波动率，`get_greeks` / `portfolio_greeks` 报出具体原因（如“只有卖一价 X, 没有买一价”）。报价来自 tick 的 `bid_price` / `ask_price`。标的期货始终取最新价。
+*   `get_expiries(underlying) -> List[int]`: 未到期的到期日（YYYYMMDD），由近到远。同一标的可能有多个到期（如大商所月度期权）。
+*   `option_chain(underlying, expiry=None, rate=None, model="black76") -> pd.DataFrame`: 期权链，列为 `symbol`、`option_type`、`strike`、`expiry_date`、`t`、`bid`、`ask`、`price`、`forward`、`iv`、`delta`、`gamma`、`vega`、`theta`。
+    *   远期价格：标的登记为期货时取期货最新价；否则用同一到期的认购、认沽价格按平价关系反推（股指期权由此吸收基差），缺报价时退回标的最新价按利率前推。
+    *   到期时刻取到期日 15:00，期限按自然日 365 天计。
+    *   `model` 决定隐含波动率的求解模型：`"black76"`（默认）或 `"baw"`（美式近似）。Greeks 一律按 Black-76 以该隐含波动率计算。没有最新价的合约 `iv` 与 Greeks 为 NaN。
+*   `select_option(underlying, option_type, expiry=None, strike_offset=0, delta=None, rate=None, model="black76") -> Optional[str]`: 选出一个合约代码。给 `delta` 时选 |Delta| 最接近 `abs(delta)` 的合约；否则以最接近远期价的行权价为平值，按 `strike_offset` 偏移档位（正数向上）。`expiry` 不填取最近到期；选不到返回 `None`。
+*   `get_greeks(symbol, rate=None, model="black76") -> Dict[str, float]`: 单个合约每单位标的的 `price`、`forward`、`t`、`iv`、`delta`、`gamma`、`vega`、`theta`。算不出时抛 `ValueError`，信息写明具体原因：没有行情时间、已到期、没有最新价、标的没有最新价、最新价不高于内在价值、最新价超出波动率 500% 时的理论价等。
+*   `portfolio_greeks(underlying, include=(), rate=None, model="black76") -> Dict[str, float]`: 该标的全部期权持仓、标的本身持仓、以及 `include` 中线性品种（Delta 记为 1）的合计 `delta`、`gamma`、`vega`、`theta`、`cash_delta`，已乘持仓数量与合约乘数。`cash_delta` = Σ 数量×乘数×Delta×远期价，用于跨到期、跨对冲品种相加。有持仓算不出 Greeks（含线性持仓没有最新价）时抛 `ValueError`，逐个列出合约与具体原因，不按 0 计。
+*   `hedge_delta(underlying, hedge_symbol=None, band=0.0, rate=None, model="black76", **kwargs) -> Optional[str]`: 用线性品种把 `cash_delta` 调回 0，数量按对冲品种的 `lot_size` 取整，调整量不超过 `band` 时不下单；`hedge_symbol` 不填即用标的本身（商品期权的标的期货），股指期权传对应的股指期货（如 `IF2612`）。`kwargs` 透传给 `order_target`。
+
+Greeks 单位为原始偏导数：`vega` 对应波动率变化 1.0（按 1% 计除以 100），`theta` 为每年（按天计除以 365）。
+
+**`akquant.option` 函数:** 均支持标量或可广播数组，以远期价格为输入。Black-76 的定价、Greeks 与隐含波动率在 Rust 中批量计算，数组较长时多线程（实测 6 核机器上 5 万个合约求隐含波动率约 10 毫秒）；BAW 逐个合约在 Python 中计算，慢得多。
+
+*   `black76_price(forward, strike, t, rate, sigma, option_type)` / `black76_greeks(...)`: Black-76 欧式定价与 Greeks（`delta`、`gamma`、`vega`、`theta`、`rho`）。
+*   `baw_price(forward, strike, t, rate, sigma, option_type)`: 美式期货期权的 Barone-Adesi-Whaley 近似。
+*   `implied_vol(price, forward, strike, t, rate, option_type, model="black76")`: 隐含波动率，波动率步长小于 1e-10 即收敛；已到期、时间价值不超过价格容差 1e-8、价格不低于波动率 500% 时的理论价、迭代不收敛时为 NaN。
+*   `implied_forward(strikes, call_prices, put_prices, t, rate) -> float`: 按认购-认沽平价反推远期。
+*   `year_fraction(start, end) -> float`: 按自然日 365 天计的年化期限。
+*   `parse_option_symbol(symbol) -> Optional[OptionSymbol]`: 解析期货交易所期权代码（`m2701-C-3100`、`m2703-MS-C-3300`、`SR701C5700`、`cu2612P94000`、`IO2612-C-4000`），得到 `underlying`、`option_type`、`strike`；代码不含到期日，ETF 期权数字代码返回 `None`。
+
+当前限制：保证金、行权与到期结算仍按引擎现有规则（单腿保证金模型、到期按内在价值现金结算），见[第 8 章](../textbook/08_options.md)。
+
 **策略绘图与运行时统计:**
 
 *   `draw`: 绑定到当前策略的绘图入口（`DrawingApi`），提供 `line` / `box` / `label` / `polyline` / `fib` / `table` / `delete` / `clear`。第一个参数是非空 `id`，同一 `(owner, symbol, id)` 再次调用整体覆盖，内容不变不发事件；不同 kind 不能共用 id（`ValueError`）；颜色只接受 `#RRGGBB` / `#RRGGBBAA`。`aq.Indicator` 继承同一入口。参数与上限见[可视化指南](../guide/visualization.md#策略绘图与统计表)。
