@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -437,7 +438,9 @@ def test_ctp_configure_session_clamp_merges_grace_tick_into_close_bar(
         return int(pd.Timestamp(f"2024-01-02 {text}", tz="Asia/Shanghai").value)
 
     clock = iter([at("14:59:30"), at("15:00:20")])
-    monkeypatch.setattr(ctp_native.time, "time_ns", lambda: next(clock))
+    monkeypatch.setattr(
+        ctp_native, "time", SimpleNamespace(time_ns=lambda: next(clock))
+    )
     feed = DataFeed()
     bundle = _build_ctp(
         feed=feed, symbols=["rb2401"], use_aggregator=True, md_front="tcp://test"
