@@ -28,7 +28,8 @@
 
 *   **Rust 引擎，Python 策略**：事件驱动的撮合、结算与风控在 Rust 中完成，NumPy 数组可零拷贝导入引擎；策略侧只需继承 `Strategy` 并实现 `on_bar` 等回调。实际速度取决于策略逻辑、数据规模与回调频率。
 *   **回测与实盘同一套策略**：`run_backtest` 回测，`run_live` 做仿真或实盘；内置 CTP 期货接口，其他柜台可以注册自定义券商接口接入。
-*   **贴近 A 股规则**：T+1、涨跌停、佣金/印花税/过户费、期货保证金、期权希腊值，以及中国时区内置的交易所日历。
+*   **贴近 A 股规则**：T+1、涨跌停、佣金/印花税/过户费、期货保证金、期权按张计费与到期结算，以及中国时区内置的交易所日历。
+*   **期权工具**：`akquant.option` 提供 Black-76 / BAW 定价、隐含波动率与 Greeks；策略内可取期权链、按平值档位或 Delta 选合约、汇总组合 Greeks，并用标的期货做 Delta 对冲。
 *   **指标与因子**：`akquant.talib` 提供 104 个 TA-Lib 兼容指标（`python`/`rust` 双后端）；`self.I()` 声明式指标支持多周期；Polars 驱动的因子表达式引擎支持 `Rank(Ts_Mean(Close, 5))` 这类 Alpha101 风格公式。
 *   **订单与风控**：市价、限价、止损单，OCO 与 Bracket 组合订单，下单前的风控检查。
 *   **参数优化与机器学习**：多进程网格搜索；内置 Walk-forward（滚动训练）框架，可接入 PyTorch、scikit-learn 模型。
@@ -278,7 +279,7 @@ executions_by_strategy = result.executions_by_strategy() # 按策略归属聚合
 
 ## 开发与测试
 
-回测引擎的正确性由 Rust 与 Python 两侧的单元测试，以及黄金测试（Golden Tests）保证：后者用合成数据验证 T+1、涨跌停、保证金、期权希腊值等关键规则，并与锁定的基线结果比对。
+回测引擎的正确性由 Rust 与 Python 两侧的单元测试，以及黄金测试（Golden Tests）保证：后者用合成数据验证 T+1、涨跌停、保证金、期权交易盈亏等关键规则，并与锁定的基线结果比对。
 
 从源码构建、运行测试和提交代码的步骤见[贡献指南](https://github.com/akfamily/akquant/blob/main/CONTRIBUTING.md)。
 

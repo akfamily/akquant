@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **策略期权方法**：`option_chain()`、`get_expiries()`、`select_option()`（按平值档位或目标 Delta 选合约）、`get_greeks()`、`portfolio_greeks()`（合计持仓 Greeks 与现金 Delta）、`hedge_delta()`（用标的期货或股指期货对冲到 Delta 中性），以及类属性 `option_rate`、`option_price_source`。远期价格：期货标的取期货价，其余按平价反推。`option_price_source="mid"` 时按 Cboe VIX 的规则取买一、卖一中间价，单边或无报价的合约不计算。算不出 Greeks 时报错写明每个合约的具体原因（如已到期、没有最新价、只有卖一价、价格不高于内在价值），不按 0 计。
 - **`Tick` 增加一档盘口 `bid_price` / `ask_price` / `bid_volume` / `ask_volume`**：构造时以关键字参数传入，不传为 `None`，原有构造方式不变；旧版本 pickle / 存档中的 `Tick` 还原为无报价。CTP 网关按 `BidPrice1` / `AskPrice1` / `BidVolume1` / `AskVolume1` 填充，CTP 表示无报价的 DBL_MAX 或 0 转为 `None`。
 
+### Fixed
+- **README 不再宣称引擎内置期权希腊值、黄金测试验证期权希腊值**：此前两处表述与实际不符。
+
 ## [0.3.95] - 2026-11-21
 
 > 规则版本仍为 2.5.0，回测结果不变。
