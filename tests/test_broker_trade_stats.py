@@ -266,6 +266,9 @@ def test_stats_error_does_not_break_state_sync(
         def invalidate_open_orders(self) -> None:
             pass
 
+        def apply_pending_fill(self, broker_order_id: str, quantity: float) -> None:
+            pass
+
     def _boom(_payload: Any) -> None:
         raise RuntimeError("boom")
 

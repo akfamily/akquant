@@ -30,6 +30,12 @@ class _Cache:
     def invalidate(self) -> None:
         self.inv_all += 1
 
+    def apply_pending_fill(self, broker_order_id: str, quantity: float) -> None:
+        """在途量投影的入口, 本文件不关心."""
+
+    def release_pending_order(self, broker_order_id: str, status: object) -> None:
+        """在途量投影的入口, 本文件不关心."""
+
 
 def _wrap(
     cache: _Cache, calls: list[tuple[str, Any]]
