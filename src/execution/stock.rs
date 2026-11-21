@@ -84,6 +84,7 @@ mod tests {
             price,
             volume: dec!(100),
             symbol: "AAPL".to_string(),
+            book: Default::default(),
         }
     }
 

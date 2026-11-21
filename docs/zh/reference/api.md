@@ -1194,6 +1194,7 @@ Tick 数据对象。
     *   与之相对，网关内部用于 `freq` 聚合（tick 合成 bar）的 `BarAggregator` 吃的是**原始累计量**（构造时声明 `volume_is_cumulative=True`，由聚合器自己差分求和）——这是刻意的分工，不要把它当成 bug "修" 成单笔量，否则聚合量会被腰斩。
     *   **已知代价**：进程盘中启动时，某 symbol 收到的第一帧行情因为没有上一次累计量可比对，换算不出真实单笔量，此时 `Tick.volume` 记为 `0`（表示"未知"，而非误用累计量冒充单笔量）。若策略里有「`volume == 0` 就跳过」之类的防御逻辑，会连带跳过每个 symbol 的第一笔行情。
 *   `symbol`: 标的代码。
+*   `bid_price` / `ask_price` / `bid_volume` / `ask_volume`: 一档盘口（买一价、卖一价及挂单量），无报价的一侧为 `None`；构造时以同名关键字参数传入，不传即无报价。CTP 网关按 `BidPrice1` / `AskPrice1` / `BidVolume1` / `AskVolume1` 填充，CTP 以 DBL_MAX 或 0 表示无报价，与最新价同一判定（大于 1e7 或不为正）转为 `None`。其他网关目前不填。
 
 ### `akquant.run_live`（选择 broker 与连接参数） {: #live-broker-options }
 

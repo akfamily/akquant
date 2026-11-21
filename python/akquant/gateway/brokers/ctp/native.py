@@ -43,6 +43,17 @@ except ImportError:
 logger = get_logger("gateway.ctp_native")
 
 
+def _book_side(price: Any, volume: Any) -> tuple[float | None, float | None]:
+    """CTP 一档盘口的一侧 (价格, 挂单量); 无报价时为 (None, None).
+
+    CTP 以 DBL_MAX 或 0 表示该侧无报价, 判定与 ``LastPrice`` 相同: 大于 1e7 或不为正。
+    """
+    value = float(price)
+    if value > 1e7 or value <= 0:
+        return None, None
+    return value, float(volume)
+
+
 class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
     """
     CTP Trading Gateway.
@@ -1335,6 +1346,22 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         # 故意不同, 别为了"统一"把这里也改回累计量。
         if self.emit_ticks:
             delta_volume = self._cumulative_volume_to_delta(symbol, float(volume))
+            md = pDepthMarketData
+            bid, bid_volume = _book_side(
+                getattr(md, "BidPrice1", 0.0), getattr(md, "BidVolume1", 0)
+            )
+            ask, ask_volume = _book_side(
+                getattr(md, "AskPrice1", 0.0), getattr(md, "AskVolume1", 0)
+            )
             self.feed.add_tick(
-                Tick(timestamp=now_ns, symbol=symbol, price=price, volume=delta_volume)
+                Tick(
+                    timestamp=now_ns,
+                    symbol=symbol,
+                    price=price,
+                    volume=delta_volume,
+                    bid_price=bid,
+                    ask_price=ask,
+                    bid_volume=bid_volume,
+                    ask_volume=ask_volume,
+                )
             )

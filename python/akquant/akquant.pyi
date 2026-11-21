@@ -3440,15 +3440,31 @@ class Tick:
     :ivar price: 最新价
     :ivar volume: 成交量
     :ivar symbol: 标的代码
+    :ivar bid_price: 买一价, 无报价为 None
+    :ivar ask_price: 卖一价, 无报价为 None
+    :ivar bid_volume: 买一量, 无报价为 None
+    :ivar ask_volume: 卖一量, 无报价为 None
     """
 
     timestamp: int
     symbol: str
     price: float
     volume: float
+    bid_price: typing.Optional[float]
+    ask_price: typing.Optional[float]
+    bid_volume: typing.Optional[float]
+    ask_volume: typing.Optional[float]
     timestamp_iso: str
     def __new__(
-        cls, timestamp: typing.Any, price: typing.Any, volume: typing.Any, symbol: str
+        cls,
+        timestamp: typing.Any,
+        price: typing.Any,
+        volume: typing.Any,
+        symbol: str,
+        bid_price: typing.Optional[typing.Any] = None,
+        ask_price: typing.Optional[typing.Any] = None,
+        bid_volume: typing.Optional[typing.Any] = None,
+        ask_volume: typing.Optional[typing.Any] = None,
     ) -> "Tick": ...
     def set_price(self, value: typing.Any) -> None: ...
     def set_volume(self, value: typing.Any) -> None: ...

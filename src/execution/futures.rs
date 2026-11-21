@@ -186,6 +186,7 @@ mod tests {
             price: dec!(3500.0),
             volume: dec!(10),
             symbol: "RB2310".to_string(),
+            book: Default::default(),
         };
         let event = Event::Tick(tick);
         let ctx = create_context(&event, &instrument);
@@ -242,6 +243,7 @@ mod tests {
             price: dec!(3500.0),
             volume: dec!(10),
             symbol: "RB2310".to_string(),
+            book: Default::default(),
         };
         let event = Event::Tick(tick);
         let ctx = create_context(&event, &instrument);
@@ -297,6 +299,7 @@ mod tests {
             price: dec!(3500.0),
             volume: dec!(10),
             symbol: "RB2310".to_string(),
+            book: Default::default(),
         };
         let event = Event::Tick(tick);
         let ctx = create_context(&event, &instrument);

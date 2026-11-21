@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`Tick` 增加一档盘口 `bid_price` / `ask_price` / `bid_volume` / `ask_volume`**：构造时以关键字参数传入，不传为 `None`，原有构造方式不变；旧版本 pickle / 存档中的 `Tick` 还原为无报价。CTP 网关按 `BidPrice1` / `AskPrice1` / `BidVolume1` / `AskVolume1` 填充，CTP 表示无报价的 DBL_MAX 或 0 转为 `None`。
+
 ## [0.3.95] - 2026-11-21
 
 > 规则版本仍为 2.5.0，回测结果不变。

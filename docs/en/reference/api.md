@@ -1127,6 +1127,7 @@ Tick data object.
     *   In contrast, the `BarAggregator` the gateway uses internally for `freq` aggregation (synthesizing bars from ticks) consumes the **raw cumulative volume** (constructed with `volume_is_cumulative=True`, and the aggregator does its own diff-and-sum). This split is intentional — don't "fix" it into per-trade volume, or the aggregated volume will be cut in half.
     *   **Known trade-off**: when a process starts mid-session, the first frame received for a symbol has no prior cumulative value to diff against, so the real per-trade volume can't be derived; `Tick.volume` is recorded as `0` in that case (meaning "unknown", not the cumulative value masquerading as per-trade). If a strategy has defensive logic like "skip if `volume == 0`", it will also skip each symbol's very first tick.
 *   `symbol`: Instrument symbol.
+*   `bid_price` / `ask_price` / `bid_volume` / `ask_volume`: top of book (best bid/ask price and size); `None` on a side without a quote. Pass them as keyword arguments of the same names when constructing; omitted means no quote. The CTP gateway fills them from `BidPrice1` / `AskPrice1` / `BidVolume1` / `AskVolume1`; CTP marks a missing quote with DBL_MAX or 0, which becomes `None` under the same rule as the last price (above 1e7 or not positive). Other gateways do not fill them yet.
 
 ### `akquant.run_live` (choosing a broker and its connection settings) {: #live-broker-options }
 

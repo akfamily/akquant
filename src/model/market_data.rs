@@ -207,6 +207,10 @@ impl Bar {
 /// :ivar price: 最新价
 /// :ivar volume: 成交量
 /// :ivar symbol: 标的代码
+/// :ivar bid_price: 买一价, 无报价为 None
+/// :ivar ask_price: 卖一价, 无报价为 None
+/// :ivar bid_volume: 买一量, 无报价为 None
+/// :ivar ask_volume: 卖一量, 无报价为 None
 pub struct Tick {
     #[pyo3(get, set)]
     pub timestamp: i64,
@@ -214,6 +218,29 @@ pub struct Tick {
     pub volume: Decimal,
     #[pyo3(get, set)]
     pub symbol: String,
+    /// 一档盘口; 旧版序列化数据没有该字段, 还原为无报价
+    #[serde(default)]
+    pub book: TopOfBook,
+}
+
+/// 一档盘口: 买一、卖一的价格与挂单量, 无报价的一侧为 None.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TopOfBook {
+    pub bid_price: Option<Decimal>,
+    pub ask_price: Option<Decimal>,
+    pub bid_volume: Option<Decimal>,
+    pub ask_volume: Option<Decimal>,
+}
+
+fn optional_decimal(value: Option<&Bound<'_, PyAny>>) -> PyResult<Option<Decimal>> {
+    match value {
+        Some(v) if !v.is_none() => extract_decimal(v).map(Some),
+        _ => Ok(None),
+    }
+}
+
+fn optional_f64(value: Option<Decimal>) -> Option<f64> {
+    value.and_then(|v| v.to_f64())
 }
 
 /// pickle 还原函数: 由 `Tick.__reduce__` 引用.
@@ -243,12 +270,22 @@ impl Tick {
     /// :param price: 最新价
     /// :param volume: 成交量
     /// :param symbol: 标的代码
+    /// :param bid_price: 买一价 (可选, 无报价不传或传 None)
+    /// :param ask_price: 卖一价 (可选)
+    /// :param bid_volume: 买一量 (可选)
+    /// :param ask_volume: 卖一量 (可选)
     #[new]
+    #[pyo3(signature = (timestamp, price, volume, symbol, bid_price=None, ask_price=None, bid_volume=None, ask_volume=None))]
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         timestamp: &Bound<'_, PyAny>,
         price: &Bound<'_, PyAny>,
         volume: &Bound<'_, PyAny>,
         symbol: String,
+        bid_price: Option<&Bound<'_, PyAny>>,
+        ask_price: Option<&Bound<'_, PyAny>>,
+        bid_volume: Option<&Bound<'_, PyAny>>,
+        ask_volume: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
         let ts_val = extract_timestamp(timestamp)?;
         let price_val = extract_decimal(price)?;
@@ -259,6 +296,12 @@ impl Tick {
             price: price_val,
             volume: volume_val,
             symbol,
+            book: TopOfBook {
+                bid_price: optional_decimal(bid_price)?,
+                ask_price: optional_decimal(ask_price)?,
+                bid_volume: optional_decimal(bid_volume)?,
+                ask_volume: optional_decimal(ask_volume)?,
+            },
         })
     }
 
@@ -288,6 +331,54 @@ impl Tick {
     #[getter]
     pub fn timestamp_iso(&self) -> String {
         format_timestamp_iso(self.timestamp)
+    }
+
+    /// 买一价, 无报价为 None.
+    #[getter]
+    fn get_bid_price(&self) -> Option<f64> {
+        optional_f64(self.book.bid_price)
+    }
+
+    #[setter]
+    fn set_bid_price(&mut self, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        self.book.bid_price = optional_decimal(value)?;
+        Ok(())
+    }
+
+    /// 卖一价, 无报价为 None.
+    #[getter]
+    fn get_ask_price(&self) -> Option<f64> {
+        optional_f64(self.book.ask_price)
+    }
+
+    #[setter]
+    fn set_ask_price(&mut self, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        self.book.ask_price = optional_decimal(value)?;
+        Ok(())
+    }
+
+    /// 买一量, 无报价为 None.
+    #[getter]
+    fn get_bid_volume(&self) -> Option<f64> {
+        optional_f64(self.book.bid_volume)
+    }
+
+    #[setter]
+    fn set_bid_volume(&mut self, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        self.book.bid_volume = optional_decimal(value)?;
+        Ok(())
+    }
+
+    /// 卖一量, 无报价为 None.
+    #[getter]
+    fn get_ask_volume(&self) -> Option<f64> {
+        optional_f64(self.book.ask_volume)
+    }
+
+    #[setter]
+    fn set_ask_volume(&mut self, value: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
+        self.book.ask_volume = optional_decimal(value)?;
+        Ok(())
     }
 
     pub fn __repr__(&self) -> String {
@@ -342,5 +433,33 @@ pub fn extract_decimal(value: &Bound<'_, PyAny>) -> PyResult<Decimal> {
         Ok(Decimal::from(i))
     } else {
         Err(PyTypeError::new_err("Value must be float, str or int"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 加入一档盘口之前的 Tick 序列化格式.
+    #[derive(Serialize)]
+    struct TickBeforeBook {
+        timestamp: i64,
+        price: Decimal,
+        volume: Decimal,
+        symbol: String,
+    }
+
+    #[test]
+    fn tick_serialized_before_book_restores_without_quotes() {
+        let old = TickBeforeBook {
+            timestamp: 1,
+            price: Decimal::from(10),
+            volume: Decimal::from(2),
+            symbol: "X".to_string(),
+        };
+        let bytes = rmp_serde::to_vec_named(&old).unwrap();
+        let tick: Tick = rmp_serde::from_slice(&bytes).unwrap();
+        assert_eq!(tick.price, Decimal::from(10));
+        assert_eq!(tick.book, TopOfBook::default());
     }
 }

@@ -349,6 +349,8 @@ class Strategy:
     _live_market_data_owner: bool
     _warned_live_subscriptions: set[str]
     _last_prices: Dict[str, float]
+    #: 各标的最近一笔 tick 的 (买一价, 卖一价), 无报价的一侧为 None
+    _last_quotes: Dict[str, Tuple[Optional[float], Optional[float]]]
     _rolling_train_window: int
     _rolling_step: int
     # 全局 bar 事件计数(不分 symbol), 供 ML 滚动训练节奏使用(见 strategy_ml.py)。
@@ -584,6 +586,7 @@ class Strategy:
         instance._live_market_data_owner = False
         instance._warned_live_subscriptions = set()
         instance._last_prices = {}
+        instance._last_quotes = {}
         # 撤单意图: 必须在此初始化。三处使用点都写作
         # ``getattr(strategy, "_pending_canceled_order_ids", set())``, 该惯用法在
         # 属性缺失时返回一个**临时** set, 其后的 isinstance 检查恒真 ⇒ setattr 永不
