@@ -109,11 +109,11 @@ def test_active_orders_and_self_trade() -> None:
 
 def test_daily_loss_locks_opening_for_the_day() -> None:
     """当日亏损超限后本交易日只允许平仓, 权益回升也不解除, 换日解除."""
-    guard = LiveRiskGuard(LiveRiskConfig(max_daily_loss=4000))
+    guard = LiveRiskGuard(LiveRiskConfig(max_daily_loss=0.04))
     account = SimpleNamespace(equity=95_000.0, day_start_equity=100_000.0)
     assert _check(guard, account=lambda: account) == (
         "账户当日亏损超限后只允许平仓: 当日初始权益 100000.00, 当前权益 95000.00, "
-        "亏损 5000.00, 上限 4000"
+        "亏损 5000.00(5.00%), 上限 4.00%"
     )
     assert _check(guard, legs=CLOSE, account=lambda: account) is None
     account.equity = 99_000.0
@@ -123,16 +123,20 @@ def test_daily_loss_locks_opening_for_the_day() -> None:
     assert _check(guard, account=lambda: missing) == (
         "柜台账户快照没有当日初始权益(day_start_equity), 无法校验 max_daily_loss"
     )
+    zero = SimpleNamespace(equity=95_000.0, day_start_equity=0.0)
+    assert _check(guard, trading_day=DAY2, account=lambda: zero) == (
+        "柜台账户快照的当日初始权益 0.00 不为正, 无法按比例校验 max_daily_loss"
+    )
 
 
 def test_drawdown_locks_opening_for_the_run() -> None:
     """回撤按观察到的权益峰值计算, 超限后锁定到进程结束."""
-    guard = LiveRiskGuard(LiveRiskConfig(max_drawdown=5000))
+    guard = LiveRiskGuard(LiveRiskConfig(max_account_drawdown=0.05))
     guard.observe_equity(110_000.0)
     account = SimpleNamespace(equity=104_000.0, day_start_equity=100_000.0)
     assert _check(guard, account=lambda: account) == (
         "账户回撤超限后只允许平仓: 权益峰值 110000.00, 当前权益 104000.00, "
-        "回撤 6000.00, 上限 5000"
+        "回撤 6000.00(5.45%), 上限 5.00%"
     )
     account.equity = 109_000.0
     assert _check(guard, trading_day=DAY2, account=lambda: account) is not None
@@ -144,6 +148,12 @@ def test_config_rejects_non_positive_limits() -> None:
     with pytest.raises(ValueError) as exc:
         LiveRiskConfig(cancel_limit=0)
     assert str(exc.value) == "LiveRiskConfig.cancel_limit 须为正数, 实际: 0"
+    with pytest.raises(ValueError) as exc:
+        LiveRiskConfig(max_daily_loss=50_000)
+    assert str(exc.value) == (
+        "LiveRiskConfig.max_daily_loss 是比例(如 0.05 表示 5%), 须在 0 与 1 之间, "
+        "实际: 50000"
+    )
 
 
 def test_submitter_applies_live_risk_after_leg_split() -> None:
@@ -292,8 +302,8 @@ def test_circuit_trip_logs_once_with_alert_mark(
     account = SimpleNamespace(equity=95_000.0, day_start_equity=100_000.0)
     with caplog.at_level("WARNING", logger="akquant.gateway.live_risk"):
         for config in (
-            LiveRiskConfig(max_daily_loss=4000),
-            LiveRiskConfig(max_drawdown=3000),
+            LiveRiskConfig(max_daily_loss=0.04),
+            LiveRiskConfig(max_account_drawdown=0.03),
         ):
             guard = LiveRiskGuard(config)
             _check(guard, account=lambda: account)

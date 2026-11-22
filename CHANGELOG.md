@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **实盘前置风控 `run_live(live_risk=LiveRiskConfig(...))`**：`broker_live` 下在拆完开平腿之后、向柜台报单之前检查，超限作为前置拒单回吐给 `on_reject` 并写明计数与限额，规则默认关闭。委托合规：委托流速（滚动窗口内报单笔数）、未完成委托数、单合约本交易日撤单次数（达到后拒绝该合约新委托，不限制撤单）、单合约本交易日开仓笔数 / 手数、自成交（同合约本账户反向可成交挂单）。账户级盈亏熔断：按柜台账户快照的当日亏损（当日初始权益 − 当前权益）与回撤（运行期权益峰值 − 当前权益），超限后只允许平仓、不自动平仓，触发时记一条 WARNING 日志（带提醒标记 `alert`）。此前 `broker_live` 下引擎的每日亏损、回撤限额不生效。CTP 账户快照新增当日初始（静态）权益 `day_start_equity`。
+- **实盘前置风控 `run_live(live_risk=LiveRiskConfig(...))`**：`broker_live` 下在拆完开平腿之后、向柜台报单之前检查，超限作为前置拒单回吐给 `on_reject` 并写明计数与限额，规则默认关闭。委托合规：委托流速（滚动窗口内报单笔数）、未完成委托数、单合约本交易日撤单次数（达到后拒绝该合约新委托，不限制撤单）、单合约本交易日开仓笔数 / 手数、自成交（同合约本账户反向可成交挂单）。账户级盈亏熔断：按柜台账户快照的当日亏损比例 `max_daily_loss`（相对当日初始权益）与回撤比例 `max_account_drawdown`（相对运行期权益峰值），名称与单位同回测的 `RiskConfig`，超限后只允许平仓、不自动平仓，触发时记一条 WARNING 日志（带提醒标记 `alert`）。此前 `broker_live` 下引擎的每日亏损、回撤限额不生效。CTP 账户快照新增当日初始（静态）权益 `day_start_equity`。
 
 ### Fixed
 - **CTP 实盘下单修正**：

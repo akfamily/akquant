@@ -15,11 +15,13 @@
 - ``self_trade_check``: 同一合约本账户有方向相反、价格可成交的未完成委托时拒绝
   (新委托为市价单、或对方是市价单都视为可成交)。
 
-账户级盈亏熔断(按柜台账户快照, 已含手续费与逐日盯市):
+账户级盈亏熔断(按柜台账户快照, 已含手续费与逐日盯市), 限额为比例, 名称与单位同
+回测的 ``RiskConfig.max_daily_loss`` / ``RiskConfig.max_account_drawdown``:
 
-- ``max_daily_loss``: 当日亏损 = 当日初始权益(静态权益) − 当前动态权益;
-- ``max_drawdown``: 回撤 = 本次运行观察到的权益峰值(含当日初始权益) − 当前权益,
-  进程重启后峰值重新计起。
+- ``max_daily_loss``: 当日亏损比例 = (当日初始权益(静态权益) − 当前动态权益) /
+  当日初始权益;
+- ``max_account_drawdown``: 回撤比例 = (本次运行观察到的权益峰值(含当日初始权益)
+  − 当前权益) / 权益峰值, 进程重启后峰值重新计起。
 - 超限后锁定: 日亏损锁定到本交易日结束, 回撤锁定到进程结束; 锁定期间含开仓腿的
   委托一律拒绝, 纯平仓委托照常放行, 不自动平仓。
 
@@ -54,22 +56,27 @@ class LiveRiskConfig:
     open_volume_limit: float | None = None
     self_trade_check: bool = False
     max_daily_loss: float | None = None
-    max_drawdown: float | None = None
+    max_account_drawdown: float | None = None
 
     def __post_init__(self) -> None:
-        """校验各限额为正数."""
+        """校验各限额为正数, 盈亏熔断比例在 (0, 1) 之间."""
         for name in (
             "order_flow_limit",
             "active_order_limit",
             "cancel_limit",
             "open_count_limit",
             "open_volume_limit",
-            "max_daily_loss",
-            "max_drawdown",
         ):
             value = getattr(self, name)
             if value is not None and not value > 0:
                 raise ValueError(f"LiveRiskConfig.{name} 须为正数, 实际: {value}")
+        for name in ("max_daily_loss", "max_account_drawdown"):
+            value = getattr(self, name)
+            if value is not None and not 0 < value < 1:
+                raise ValueError(
+                    f"LiveRiskConfig.{name} 是比例(如 0.05 表示 5%), 须在 0 与 1 "
+                    f"之间, 实际: {value}"
+                )
         if not self.order_flow_window > 0:
             raise ValueError(
                 "LiveRiskConfig.order_flow_window 须为正数, 实际: "
@@ -217,7 +224,7 @@ class LiveRiskGuard:
                             f"{symbol} 自成交风险: 本笔 {side} {own} 可与本账户未完成"
                             f"的 {other_side} 委托 {order_id}({other}) 成交"
                         )
-        if cfg.max_daily_loss is not None or cfg.max_drawdown is not None:
+        if cfg.max_daily_loss is not None or cfg.max_account_drawdown is not None:
             reason = self._check_account(account, trading_day, bool(open_legs))
             if reason is not None:
                 return reason
@@ -246,44 +253,52 @@ class LiveRiskGuard:
                         "柜台账户快照没有当日初始权益(day_start_equity), "
                         "无法校验 max_daily_loss"
                     )
-                loss = float(day_start) - equity
-                if loss > cfg.max_daily_loss and self._daily_loss_day != day:
+                start = float(day_start)
+                if start <= 0:
+                    return (
+                        f"柜台账户快照的当日初始权益 {start:.2f} 不为正, "
+                        "无法按比例校验 max_daily_loss"
+                    )
+                loss = start - equity
+                detail = (
+                    f"当日初始权益 {start:.2f}, 当前权益 {equity:.2f}, 亏损 "
+                    f"{loss:.2f}({loss / start:.2%}), 上限 {cfg.max_daily_loss:.2%}"
+                )
+                if loss / start > cfg.max_daily_loss and self._daily_loss_day != day:
                     self._daily_loss_day = day
                     # 熔断只在触发时记一次, 带提醒标记(见 akquant.live.alerts)
                     logger.warning(
-                        "账户当日亏损超限, 当日只允许平仓: 当日初始权益 %.2f, "
-                        "当前权益 %.2f, 亏损 %.2f, 上限 %g",
-                        float(day_start),
-                        equity,
-                        loss,
-                        cfg.max_daily_loss,
+                        "账户当日亏损超限, 当日只允许平仓: %s",
+                        detail,
                         extra={**build_log_extra(phase="gateway"), "alert": "风控熔断"},
                     )
                 if self._daily_loss_day == day and opening:
-                    return (
-                        f"账户当日亏损超限后只允许平仓: 当日初始权益 "
-                        f"{float(day_start):.2f}, 当前权益 {equity:.2f}, 亏损 "
-                        f"{loss:.2f}, 上限 {cfg.max_daily_loss:g}"
-                    )
-            if cfg.max_drawdown is not None:
+                    return f"账户当日亏损超限后只允许平仓: {detail}"
+            if cfg.max_account_drawdown is not None:
                 peak = self._peak_equity if self._peak_equity is not None else equity
+                if peak <= 0:
+                    return (
+                        f"账户权益峰值 {peak:.2f} 不为正, 无法按比例校验 "
+                        "max_account_drawdown"
+                    )
                 drawdown = peak - equity
-                if drawdown > cfg.max_drawdown and not self._drawdown_locked:
+                detail = (
+                    f"权益峰值 {peak:.2f}, 当前权益 {equity:.2f}, 回撤 "
+                    f"{drawdown:.2f}({drawdown / peak:.2%}), 上限 "
+                    f"{cfg.max_account_drawdown:.2%}"
+                )
+                if (
+                    drawdown / peak > cfg.max_account_drawdown
+                    and not self._drawdown_locked
+                ):
                     self._drawdown_locked = True
                     logger.warning(
-                        "账户回撤超限, 此后只允许平仓: 权益峰值 %.2f, 当前权益 %.2f, "
-                        "回撤 %.2f, 上限 %g",
-                        peak,
-                        equity,
-                        drawdown,
-                        cfg.max_drawdown,
+                        "账户回撤超限, 此后只允许平仓: %s",
+                        detail,
                         extra={**build_log_extra(phase="gateway"), "alert": "风控熔断"},
                     )
                 if self._drawdown_locked and opening:
-                    return (
-                        f"账户回撤超限后只允许平仓: 权益峰值 {peak:.2f}, 当前权益 "
-                        f"{equity:.2f}, 回撤 {drawdown:.2f}, 上限 {cfg.max_drawdown:g}"
-                    )
+                    return f"账户回撤超限后只允许平仓: {detail}"
         return None
 
     def record_sent(

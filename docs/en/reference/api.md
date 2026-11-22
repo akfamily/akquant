@@ -1209,8 +1209,8 @@ run_live(
         cancel_limit=400,            # stop new orders on a contract after 400 cancels today
         open_count_limit=200,        # at most 200 opening orders per contract today
         self_trade_check=True,
-        max_daily_loss=50_000,       # close-only once the account loses 50k today
-        max_drawdown=100_000,
+        max_daily_loss=0.05,         # close-only once the account loses 5% today
+        max_account_drawdown=0.10,
     ),
 )
 ```
@@ -1222,8 +1222,10 @@ run_live(
 | `cancel_limit` | Once a contract has this many cancelled orders in the trading day, new orders on it are rejected; cancels themselves are never blocked. Counted from order returns with a cancelled status (successful cancels, FAK/FOK remainders, manual cancels in a terminal; CTP also reports rejected orders as cancelled, so they count too), each order once |
 | `open_count_limit` / `open_volume_limit` | Max opening orders / lots sent per contract in the trading day |
 | `self_trade_check` | Reject when the account has a working order on the same contract on the opposite side at a crossing price (a market order on either side counts as crossing) |
-| `max_daily_loss` | Account daily loss = day-start equity − current equity; once exceeded, close-only for the rest of the trading day |
-| `max_drawdown` | Account drawdown = peak equity seen in this run (including day-start equity) − current equity; once exceeded, close-only until the process ends; the peak restarts with the process |
+| `max_daily_loss` | Account daily loss ratio = (day-start equity − current equity) / day-start equity; once exceeded, close-only for the rest of the trading day |
+| `max_account_drawdown` | Account drawdown ratio = (peak equity seen in this run, including day-start equity − current equity) / peak equity; once exceeded, close-only until the process ends; the peak restarts with the process |
+
+*   The two loss limits are ratios (`0.05` means 5%) between 0 and 1, with the same names and units as the backtest `RiskConfig.max_daily_loss` / `RiskConfig.max_account_drawdown`, so backtest values carry over to live trading unchanged; an amount such as `50_000` raises an error.
 
 *   The loss checks use the broker's account snapshot, which already includes commissions and mark-to-market. For CTP the day-start equity is the static equity = previous balance − previous credit − previous mortgage + mortgage − withdrawal + deposit (checked on SimNow: static equity + close profit + position profit − commission + premium cash flow equals the dynamic equity `Balance`). The snapshot is refreshed after orders and fills and by the recovery poll. When the broker gives no day-start equity, orders are rejected with that reason if `max_daily_loss` is set.
 *   After a trip, any order with an opening leg is rejected; pure closing orders pass. Nothing is closed automatically. A trip logs one WARNING (`akquant.gateway.live_risk`, carrying the `alert` mark, pushed when live alerts are configured).
