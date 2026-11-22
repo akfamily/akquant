@@ -13,7 +13,14 @@ pub struct ChannelProcessor;
 fn process_order_request(engine: &mut Engine, py: Python<'_>, mut order: Order) {
     let current_time = engine.context_timestamp();
     engine.maybe_reset_risk_budget_usage(current_time);
-    let mut strategy_limit_err = engine.check_strategy_risk_cooldown_mode(&order);
+    // 策略侧风控(只能在 Python 判定的规则, 如期权 Greeks 限额)已拒的委托带着
+    // 拒单原因提交(`StrategyContext.reject_order`): 直接按风控拒单处理, 不再跑
+    // 其他限额(免得触发冷却/只减仓等联动)。
+    let mut strategy_limit_err = if order.reject_reason.is_empty() {
+        engine.check_strategy_risk_cooldown_mode(&order)
+    } else {
+        Some(std::mem::take(&mut order.reject_reason))
+    };
     let mut triggers_risk_fallback = false;
     if strategy_limit_err.is_none() {
         strategy_limit_err = engine.check_strategy_reduce_only_mode(&order);
@@ -496,6 +503,30 @@ mod tests {
 
     fn market_buy(id: &str) -> Order {
         Order::test_new(id, "600000.SH", OrderSide::Buy, OrderType::Market, dec!(100))
+    }
+
+    #[test]
+    fn order_request_with_reject_reason_is_rejected_by_risk() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let (mut engine, _cancels, _events) = instrumented_engine(py);
+            let mut order = market_buy("pre");
+            order.reject_reason = "期权 Greeks 限额(标的 m2401): delta 超限".to_string();
+            engine
+                .event_manager
+                .send(Event::OrderRequest(order))
+                .unwrap();
+
+            run_channel(&mut engine, py);
+
+            let rejected = &engine.state.order_manager.current_step_rejected_orders;
+            assert_eq!(rejected.len(), 1);
+            assert_eq!(rejected[0].status, OrderStatus::Rejected);
+            assert_eq!(
+                rejected[0].reject_reason,
+                "Order error: 期权 Greeks 限额(标的 m2401): delta 超限"
+            );
+        });
     }
 
     #[test]

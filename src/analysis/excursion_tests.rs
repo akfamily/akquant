@@ -35,6 +35,7 @@ fn tick(timestamp: i64, price: f64) -> Tick {
         price: Decimal::from_f64(price).unwrap(),
         volume: Decimal::from(10),
         symbol: "X".to_string(),
+        book: Default::default(),
     }
 }
 

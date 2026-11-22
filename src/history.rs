@@ -644,6 +644,7 @@ mod tests {
             price: Decimal::from(price),
             volume: Decimal::from(500),
             symbol: "TEST".to_string(),
+            book: Default::default(),
         }
     }
 

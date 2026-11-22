@@ -18,6 +18,7 @@ from typing import (
     Literal,
     Mapping,
     Optional,
+    Sequence,
     Tuple,
     Type,
     Union,
@@ -88,6 +89,14 @@ from .strategy_ml import auto_configure_model as _auto_configure_model_impl
 from .strategy_ml import current_validation_window as _current_validation_window_impl
 from .strategy_ml import is_model_ready as _is_model_ready_impl
 from .strategy_ml import on_train_signal as _on_train_signal_impl
+from .strategy_option import OptionModel
+from .strategy_option import get_expiries as _get_expiries_impl
+from .strategy_option import get_greeks as _get_greeks_impl
+from .strategy_option import hedge_delta as _hedge_delta_impl
+from .strategy_option import option_chain as _option_chain_impl
+from .strategy_option import option_chains as _option_chains_impl
+from .strategy_option import portfolio_greeks as _portfolio_greeks_impl
+from .strategy_option import select_option as _select_option_impl
 from .strategy_order_events import (
     check_order_events as _check_order_events_impl,
 )
@@ -349,6 +358,11 @@ class Strategy:
     _live_market_data_owner: bool
     _warned_live_subscriptions: set[str]
     _last_prices: Dict[str, float]
+    #: 各标的最近一笔 tick 的 (买一价, 卖一价), 无报价的一侧为 None
+    _last_quotes: Dict[str, Tuple[Optional[float], Optional[float]]]
+    #: 期权链整批计算结果, 键为 (取价方式, 利率, 模型), 值为
+    #: (计算时的行情时间, 全部链, 按标的拆分的链), 见 strategy_option._chains
+    _option_chains_cache: Dict[Tuple[str, float, str], Tuple[Any, Any, Any]]
     _rolling_train_window: int
     _rolling_step: int
     # 全局 bar 事件计数(不分 symbol), 供 ML 滚动训练节奏使用(见 strategy_ml.py)。
@@ -388,6 +402,22 @@ class Strategy:
     #: 实盘 ``on_bars`` 的截止时间（秒）：时间片时刻之后最多等这么久，未到齐也派发。
     #: 须大于行情源自身的补发窗口；回测不使用（按时间片边界派发）。
     bars_deadline_seconds: float = 5.0
+    #: 期权定价用的无风险利率(连续复利, 年化), 期权方法未显式传 ``rate`` 时使用
+    option_rate: float = 0.0
+    #: 期权链取价方式: ``"last"`` 最新价; ``"mid"`` 买一、卖一的中间价,
+    #: 单边报价或无报价的合约不计算隐含波动率
+    option_price_source: Literal["last", "mid"] = "last"
+    #: 期权链整批计算的刷新间隔(秒, 按行情时间): 间隔内第一次调用期权方法时一次
+    #: 算出全部已登记标的的期权链, 间隔内的后续调用复用该结果。设为 0 则每次调用
+    #: 都按当前报价只算所需标的的链。同一时刻逐个标的派发的 ``on_bar`` 中, 第一次调用
+    #: 之后才到达的价格不进入本时刻结果, 需要全部价格时在 ``on_bars`` 中调用
+    option_refresh_interval: float = 1.0
+    #: 期权 Greeks 限额 ``{标的: {Greek: 上限}}``, Greek 取 ``delta`` / ``gamma`` /
+    #: ``vega`` / ``theta`` / ``cash_delta``(口径同 ``portfolio_greeks``, 已乘持仓
+    #: 数量与合约乘数)。下单前按"当前组合 + 在途委托 + 本笔"投影, 绝对值超过上限且
+    #: 大于下单前的委托作为风控拒单(``on_reject``), 减小暴露的委托放行; 无法计算
+    #: Greeks 时同样拒单并写明原因。回测与实盘一致。
+    option_greek_limits: Optional[Dict[str, Dict[str, float]]] = None
     _runtime_config: StrategyRuntimeConfig
     _last_event_type: str = ""  # "bar" or "tick"
     _hold_bars: "defaultdict[str, int]"
@@ -584,6 +614,8 @@ class Strategy:
         instance._live_market_data_owner = False
         instance._warned_live_subscriptions = set()
         instance._last_prices = {}
+        instance._last_quotes = {}
+        instance._option_chains_cache = {}
         # 撤单意图: 必须在此初始化。三处使用点都写作
         # ``getattr(strategy, "_pending_canceled_order_ids", set())``, 该惯用法在
         # 属性缺失时返回一个**临时** set, 其后的 isinstance 检查恒真 ⇒ setattr 永不
@@ -3229,6 +3261,159 @@ class Strategy:
         if field in snapshot.static_attrs:
             return snapshot.static_attrs[field]
         raise KeyError(f"Field '{field}' not found for instrument: {symbol}")
+
+    def get_expiries(self, underlying: str) -> List[int]:
+        """
+        返回标的下尚未到期的期权到期日, 由近到远.
+
+        :param underlying: 期权登记的标的代码(``InstrumentConfig.underlying_symbol``)
+        :return: 到期日列表(YYYYMMDD)
+        """
+        return _get_expiries_impl(self, underlying)
+
+    def option_chain(
+        self,
+        underlying: str,
+        expiry: Optional[int] = None,
+        rate: Optional[float] = None,
+        model: OptionModel = "black76",
+    ) -> pd.DataFrame:
+        """
+        返回标的的期权链(只含已登记、未到期的合约).
+
+        远期价格: 标的是期货时取期货最新价; 否则按同一到期的认购、认沽价格平价反推,
+        缺报价时退回标的最新价按利率前推。到期时刻取到期日 15:00, 期限按自然日计。
+        隐含波动率由 ``model`` 求解, Greeks 一律按 Black-76 以该隐含波动率计算,
+        单位见 :func:`akquant.option.black76_greeks`。没有最新价的合约 iv 与 Greeks
+        为 NaN。
+
+        计算节奏由 ``option_refresh_interval`` 控制: 默认 1 秒内复用同一批结果,
+        本方法与 ``select_option``、``get_greeks``、``portfolio_greeks``、
+        ``hedge_delta`` 共用。
+
+        :param underlying: 期权登记的标的代码
+        :param expiry: 只返回该到期日(YYYYMMDD); 不填返回全部到期
+        :param rate: 无风险利率; 不填使用 ``self.option_rate``
+        :param model: 隐含波动率模型, ``"black76"`` (默认) 或 ``"baw"`` (美式)
+        :return: 列为 symbol, option_type, strike, expiry_date, t, bid, ask, price,
+            forward, iv, delta, gamma, vega, theta
+        """
+        return _option_chain_impl(self, underlying, expiry, rate, model)
+
+    def option_chains(
+        self,
+        underlyings: Optional[Sequence[str]] = None,
+        rate: Optional[float] = None,
+        model: OptionModel = "black76",
+    ) -> pd.DataFrame:
+        """
+        返回多个标的的期权链, 合并为一张表(同时盯多条链时使用).
+
+        全部已登记标的的期权链一次批量计算, 节奏与缓存同 :meth:`option_chain`。
+
+        :param underlyings: 只返回这些标的; 不填返回全部
+        :param rate: 无风险利率; 不填使用 ``self.option_rate``
+        :param model: 隐含波动率模型
+        :return: 首列为 underlying, 其余列同 :meth:`option_chain`; 按标的、到期日、
+            行权价、类型排序
+        """
+        return _option_chains_impl(self, underlyings, rate, model)
+
+    def select_option(
+        self,
+        underlying: str,
+        option_type: str,
+        expiry: Optional[int] = None,
+        strike_offset: int = 0,
+        delta: Optional[float] = None,
+        rate: Optional[float] = None,
+        model: OptionModel = "black76",
+    ) -> Optional[str]:
+        """
+        按规则选出一个期权合约.
+
+        给出 ``delta`` 时选 |Delta| 最接近 ``abs(delta)`` 的合约; 否则以最接近远期价
+        的行权价为平值, 按 ``strike_offset`` 向上(正)或向下(负)偏移若干档。
+
+        :param underlying: 期权登记的标的代码
+        :param option_type: CALL / PUT
+        :param expiry: 到期日(YYYYMMDD); 不填取最近到期
+        :param strike_offset: 相对平值的行权价档位偏移
+        :param delta: 目标 Delta(如 0.25)
+        :param rate: 无风险利率; 不填使用 ``self.option_rate``
+        :param model: 隐含波动率模型
+        :return: 合约代码; 选不到返回 None
+        """
+        return _select_option_impl(
+            self, underlying, option_type, expiry, strike_offset, delta, rate, model
+        )
+
+    def get_greeks(
+        self,
+        symbol: str,
+        rate: Optional[float] = None,
+        model: OptionModel = "black76",
+    ) -> Dict[str, float]:
+        """
+        返回单个期权合约每单位标的的定价结果.
+
+        :param symbol: 期权合约代码
+        :param rate: 无风险利率; 不填使用 ``self.option_rate``
+        :param model: 隐含波动率模型
+        :return: ``{"price", "forward", "t", "iv", "delta", "gamma", "vega", "theta"}``
+        :raises ValueError: 不是期权合约; 或算不出 Greeks, 信息中写明具体原因
+        """
+        return _get_greeks_impl(self, symbol, rate, model)
+
+    def portfolio_greeks(
+        self,
+        underlying: str,
+        include: Sequence[str] = (),
+        rate: Optional[float] = None,
+        model: OptionModel = "black76",
+    ) -> Dict[str, float]:
+        """
+        返回某标的相关持仓的合计 Greeks(已乘持仓数量与合约乘数).
+
+        计入该标的的全部期权持仓、标的本身的持仓, 以及 ``include`` 中的线性品种
+        (如股指期权用来对冲的股指期货, Delta 记为 1)。``cash_delta`` 为
+        Σ 数量×乘数×Delta×远期价, 不同到期、不同对冲品种之间可直接相加。
+
+        :param underlying: 期权登记的标的代码
+        :param include: 额外计入的线性品种代码
+        :param rate: 无风险利率; 不填使用 ``self.option_rate``
+        :param model: 隐含波动率模型
+        :return: ``{"delta", "gamma", "vega", "theta", "cash_delta"}``
+        :raises ValueError: 有持仓算不出 Greeks, 信息中逐个列出合约与具体原因
+        """
+        return _portfolio_greeks_impl(self, underlying, include, rate, model)
+
+    def hedge_delta(
+        self,
+        underlying: str,
+        hedge_symbol: Optional[str] = None,
+        band: float = 0.0,
+        rate: Optional[float] = None,
+        model: OptionModel = "black76",
+        **kwargs: Any,
+    ) -> Optional[str]:
+        """
+        用线性品种把标的相关持仓的现金 Delta 对冲到 0.
+
+        对冲数量 = -现金 Delta / (对冲品种价格 × 乘数), 按对冲品种的 ``lot_size``
+        取整; 调整量不超过 ``band`` 时不下单。
+
+        :param underlying: 期权登记的标的代码
+        :param hedge_symbol: 对冲品种; 不填用标的本身(商品期权即标的期货)
+        :param band: 免调整区间(按对冲品种数量计)
+        :param rate: 无风险利率; 不填使用 ``self.option_rate``
+        :param model: 隐含波动率模型
+        :param kwargs: 透传给 ``order_target`` 的下单参数
+        :return: 对冲订单 ID; 无需调整时返回 None
+        """
+        return _hedge_delta_impl(
+            self, underlying, hedge_symbol, band, rate, model, **kwargs
+        )
 
     def get_instrument_config(
         self, symbol: str, fields: Union[str, List[str], None] = None

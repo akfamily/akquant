@@ -10,6 +10,7 @@ from .execution.base import PositionDetail, PositionLeg
 from .gateway.broker_models import normalize_asset_type
 from .gateway.order_receipt import OrderLeg, OrderReceipt
 from .log import get_logger
+from .strategy_option_risk import greek_limit_reject
 
 logger = get_logger("trading")
 
@@ -398,6 +399,7 @@ def _submit_buy_side_orders(
     position_effect: str = "auto",
     reduce_only: bool = False,
     allow_quantity_auto_resize: Optional[bool] = None,
+    check_greek_limits: bool = True,
 ) -> List[str]:
     if strategy.ctx is None:
         raise RuntimeError("Context not ready")
@@ -420,6 +422,11 @@ def _submit_buy_side_orders(
         )
     if quantity <= 0:
         return []
+
+    if check_greek_limits:
+        rejected = greek_limit_reject(strategy, symbol, "Buy", quantity, price, tag)
+        if rejected is not None:
+            return rejected
 
     if position_effect == "auto":
         # 用可平持仓而非结算仓：同一 on_bar 内已提交未成交的平仓单必须扣除，
@@ -455,6 +462,7 @@ def _submit_buy_side_orders(
                     allow_quantity_auto_resize=(
                         allow_quantity_auto_resize and leg_effect == "open"
                     ),
+                    check_greek_limits=False,
                 )
             )
         return order_ids
@@ -582,6 +590,7 @@ def _submit_sell_side_orders(
     commission: Optional[OrderCommission] = None,
     position_effect: str = "auto",
     reduce_only: bool = False,
+    check_greek_limits: bool = True,
 ) -> List[str]:
     if strategy.ctx is None:
         raise RuntimeError("Context not ready")
@@ -596,6 +605,11 @@ def _submit_sell_side_orders(
             return []
     if quantity <= 0:
         return []
+
+    if check_greek_limits:
+        rejected = greek_limit_reject(strategy, symbol, "Sell", quantity, price, tag)
+        if rejected is not None:
+            return rejected
 
     if position_effect == "auto":
         # 与 buy 侧对称：可平持仓已扣除在途平仓单，避免反手第二腿误判（#361）。
@@ -624,6 +638,7 @@ def _submit_sell_side_orders(
                     commission=commission,
                     position_effect=leg_effect,
                     reduce_only=leg_reduce_only,
+                    check_greek_limits=False,
                 )
             )
         return order_ids

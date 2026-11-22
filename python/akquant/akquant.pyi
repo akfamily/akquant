@@ -3251,6 +3251,28 @@ class StrategyContext:
         """
         ...
 
+    def reject_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: typing.Any,
+        reason: str,
+        price: typing.Optional[typing.Any] = None,
+        tag: typing.Optional[str] = None,
+    ) -> str:
+        r"""
+        提交一笔已被策略侧风控拒绝的委托, 由引擎按风控拒单处理(不撮合).
+
+        :param symbol: 标的代码
+        :param side: ``"Buy"`` / ``"Sell"``
+        :param quantity: 委托数量
+        :param reason: 拒单原因
+        :param price: 限价 (可选)
+        :param tag: 订单标签 (可选)
+        :return: 订单 ID
+        """
+        ...
+
     def buy(
         self,
         symbol: str,
@@ -3440,15 +3462,31 @@ class Tick:
     :ivar price: 最新价
     :ivar volume: 成交量
     :ivar symbol: 标的代码
+    :ivar bid_price: 买一价, 无报价为 None
+    :ivar ask_price: 卖一价, 无报价为 None
+    :ivar bid_volume: 买一量, 无报价为 None
+    :ivar ask_volume: 卖一量, 无报价为 None
     """
 
     timestamp: int
     symbol: str
     price: float
     volume: float
+    bid_price: typing.Optional[float]
+    ask_price: typing.Optional[float]
+    bid_volume: typing.Optional[float]
+    ask_volume: typing.Optional[float]
     timestamp_iso: str
     def __new__(
-        cls, timestamp: typing.Any, price: typing.Any, volume: typing.Any, symbol: str
+        cls,
+        timestamp: typing.Any,
+        price: typing.Any,
+        volume: typing.Any,
+        symbol: str,
+        bid_price: typing.Optional[typing.Any] = None,
+        ask_price: typing.Optional[typing.Any] = None,
+        bid_volume: typing.Optional[typing.Any] = None,
+        ask_volume: typing.Optional[typing.Any] = None,
     ) -> "Tick": ...
     def set_price(self, value: typing.Any) -> None: ...
     def set_volume(self, value: typing.Any) -> None: ...
@@ -3705,3 +3743,34 @@ def vec_zscore(values: numpy.ndarray, period: int) -> numpy.ndarray: ...
 def vec_returns(values: numpy.ndarray) -> numpy.ndarray: ...
 def vec_log_returns(values: numpy.ndarray) -> numpy.ndarray: ...
 def vec_cumsum(values: numpy.ndarray) -> numpy.ndarray: ...
+def _option_black76_price(
+    forward: numpy.ndarray,
+    strike: numpy.ndarray,
+    t: numpy.ndarray,
+    rate: numpy.ndarray,
+    sigma: numpy.ndarray,
+    is_call: numpy.ndarray,
+) -> numpy.ndarray: ...
+def _option_black76_greeks(
+    forward: numpy.ndarray,
+    strike: numpy.ndarray,
+    t: numpy.ndarray,
+    rate: numpy.ndarray,
+    sigma: numpy.ndarray,
+    is_call: numpy.ndarray,
+) -> tuple[
+    numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray
+]: ...
+def _option_black76_implied_vol(
+    price_: numpy.ndarray,
+    forward: numpy.ndarray,
+    strike: numpy.ndarray,
+    t: numpy.ndarray,
+    rate: numpy.ndarray,
+    is_call: numpy.ndarray,
+    price_tol: float,
+    sigma_tol: float,
+    sigma_low: float,
+    sigma_high: float,
+    max_iter: int,
+) -> numpy.ndarray: ...
