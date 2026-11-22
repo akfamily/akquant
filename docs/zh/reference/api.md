@@ -1053,6 +1053,8 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `cancel_order(order_id: str | OrderReceipt | Order)`: 撤销指定订单。可传订单号、下单返回的 `OrderReceipt`（取首腿）或订单对象（取其 `id`）；其他类型抛 `TypeError`。
 *   `cancel_group(group_id: str | OrderReceipt)`: 按 `group_id` 撤销一个逻辑委托拆出的全部腿。传订单对象会抛 `TypeError`，撤单笔订单请用 `cancel_order`。
 *   `cancel_all_orders(symbol)`: 取消指定标的的所有挂单。如果不指定 `symbol`，则取消所有挂单。
+*   `submit_combo(legs, quantity=1, prices=None, tag=None) -> str`: 提交多腿组合单，返回组号。`legs` 为 `[(合约, 每组手数), ...]`（正为买、负为卖，至少 2 条腿），各腿数量 = 每组手数 × `quantity`（组数）；`prices` 为各腿限价 `{合约: 价格}`，未给出的腿为市价单。国内期权没有组合合约（期货公司 CTP 合约表中组合合约只有期货跨期、跨品种），各腿作为独立委托报出、分别风控与撮合，盘中柜台按单腿保证金冻结，回测相同；组合保证金优惠要在申请组合或结算后才有。组合单负责编组与腿风险保护：任一腿被拒、被撤或过期且未全部成交时，自动撤掉同组其余未完成的委托；某条腿当场被拒（实盘前置风控、柜台拒单）时余下的腿不再报出。已成交的腿不回滚。`cancel_group(组号)` 撤销整组未完成的委托。腿少于 2 条、合约重复、手数或组数不是整数、限价不为正时抛 `ValueError`。
+*   `get_combo(group_id) -> ComboStatus`: 组合单状态。`ComboStatus.state` 为 `working`（进行中）、`filled`（全部成交）、`broken`（有腿失败且已有成交，组合不完整，需策略自行补单或平仓）、`cancelled`（有腿失败且没有成交）、`unknown`（有腿报单结果不可知：实盘超时、断连，不得当作不存在而重发）；`legs` 为各腿的 `ComboLegStatus`（`symbol`、`side`、`quantity`、`filled`、`status`、`order_ids`），腿状态为 `working` / `filled` / `failed` / `unknown`。
 *   `place_oco(first_order_id, second_order_id, group_id=None) -> str`: 创建 OCO 订单组。组内任一订单成交后，另一订单会被自动撤单。
 *   `place_bracket(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...) -> str`: 创建 Bracket 订单。先提交进场单，进场成交后自动提交止损/止盈；当止损与止盈同时存在时会自动绑定 OCO。
 

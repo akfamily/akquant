@@ -50,6 +50,10 @@ def check_order_events(strategy: Any) -> None:
 
 def _dispatch_order_events(strategy: Any, order_events: Any) -> None:
     for order, fire_reject in order_events:
+        # 组合单先更新(腿失败时撤同组委托), 用户回调里 get_combo 读到的是最新状态
+        process_combo = getattr(strategy, "_process_combo_order", None)
+        if callable(process_combo):
+            process_combo(order)
         call_user_callback(strategy, "on_order", order, payload=order)
         mark_portfolio_dirty(strategy)
         if fire_reject:

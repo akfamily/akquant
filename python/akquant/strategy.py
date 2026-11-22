@@ -18,6 +18,7 @@ from typing import (
     Literal,
     Mapping,
     Optional,
+    Sequence,
     Tuple,
     Type,
     Union,
@@ -55,6 +56,10 @@ from .indicator_recording import IndicatorRecorder, declare_plotted_indicators
 from .log import get_logger as _get_logger
 from .params import ParamModel, ParamSpec, legacy_init_warning_message
 from .sizer import FixedSize, Sizer
+from .strategy_combo import ComboStatus
+from .strategy_combo import get_combo as _get_combo_impl
+from .strategy_combo import process_combo_order as _process_combo_order_impl
+from .strategy_combo import submit_combo as _submit_combo_impl
 from .strategy_events import (
     flush_pending_order_events as _flush_pending_order_events_impl,
 )
@@ -436,6 +441,8 @@ class Strategy:
     _oco_groups: Dict[str, set[str]]
     _oco_order_to_group: Dict[str, str]
     _order_group_members: Dict[str, Tuple[str, ...]]
+    _combos: Dict[str, Dict[str, Any]]
+    _combo_order_to_group: Dict[str, str]
     _use_engine_oco: bool
     _pending_engine_oco_groups: List[Tuple[str, str, str]]
     _use_engine_bracket: bool
@@ -695,6 +702,8 @@ class Strategy:
         instance._oco_groups = {}
         instance._oco_order_to_group = {}
         instance._order_group_members = {}
+        instance._combos = {}
+        instance._combo_order_to_group = {}
         instance._use_engine_oco = False
         instance._pending_engine_oco_groups = []
         instance._use_engine_bracket = False
@@ -874,6 +883,10 @@ class Strategy:
             self._oco_order_to_group = {}
         if not hasattr(self, "_order_group_members"):
             self._order_group_members = {}
+        if not hasattr(self, "_combos"):
+            self._combos = {}
+        if not hasattr(self, "_combo_order_to_group"):
+            self._combo_order_to_group = {}
         if not hasattr(self, "_use_engine_oco"):
             self._use_engine_oco = False
         if not hasattr(self, "_pending_engine_oco_groups"):
@@ -3482,6 +3495,48 @@ class Strategy:
                 "take_profit_tag": take_profit_tag,
             }
             return entry_order_id
+
+    def submit_combo(
+        self,
+        legs: Sequence[Tuple[str, float]],
+        quantity: float = 1,
+        prices: Optional[Mapping[str, float]] = None,
+        tag: Optional[str] = None,
+    ) -> str:
+        """
+        提交多腿组合单, 返回组号.
+
+        各腿作为独立委托报出、分别风控与撮合(国内期权没有组合合约, 盘中柜台按单腿
+        保证金冻结, 回测相同), 组合单负责编组与腿风险保护: 任一腿被拒、被撤或
+        过期且未全部成交时, 自动撤掉同组其余未完成的委托; 某条腿当场被拒时余下的
+        腿不再报出。已成交的腿不回滚, 用 ``get_combo`` 查看组合状态并自行处理。
+        ``cancel_group(组号)`` 撤销整组未完成的委托。
+
+        :param legs: ``[(合约, 每组手数), ...]``, 手数正为买、负为卖, 至少 2 条腿
+        :param quantity: 组数(正整数), 各腿数量 = 每组手数 × 组数
+        :param prices: 各腿限价 ``{合约: 价格}``; 未给出的腿为市价单
+        :param tag: 各腿委托的标签
+        :return: 组号
+        :raises ValueError: 腿少于 2 条、合约重复、手数或组数不是整数、限价不为正
+        """
+        return _submit_combo_impl(self, legs, quantity, prices, tag)
+
+    def get_combo(self, group_id: str) -> ComboStatus:
+        """
+        组合单状态: 各腿目标数量、已成交数量与状态, 以及整组状态.
+
+        整组状态: ``working`` 进行中 / ``filled`` 全部成交 / ``broken`` 有腿失败且
+        已有成交(组合不完整) / ``cancelled`` 有腿失败且没有成交 / ``unknown`` 有腿
+        报单结果不可知(实盘超时、断连, 不得当作不存在而重发)。
+
+        :param group_id: ``submit_combo`` 返回的组号
+        :raises KeyError: 没有该组合单
+        """
+        return _get_combo_impl(self, group_id)
+
+    def _process_combo_order(self, order: Any) -> None:
+        """委托状态更新时维护组合单(回测订单事件、实盘柜台回报都会调用)."""
+        _process_combo_order_impl(self, order)
 
     def _process_order_groups(self, trade: Any) -> None:
         with self._order_group_lock:

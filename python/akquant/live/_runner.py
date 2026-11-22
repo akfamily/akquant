@@ -388,6 +388,10 @@ class _StrategyCallbackFanout:
         # OCO/Bracket 组登记在下单的槽位上, 只有它能撤对手腿/激活子单。
         self._route("_process_order_groups", trade)
 
+    def _process_combo_order(self, order: Any) -> None:
+        # 组合单登记在下单的槽位上, 由它撤同组委托。
+        self._route("_process_combo_order", order)
+
     def on_portfolio_update(self, snapshot: Any) -> None:
         for strategy in self._strategies_by_slot.values():
             self._safe_callback(strategy, "on_portfolio_update", snapshot)
