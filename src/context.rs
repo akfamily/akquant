@@ -1371,11 +1371,40 @@ impl StrategyContext {
         self.exercise_requests
             .lock()
             .expect("行权申请锁被污染")
-            .push(crate::settlement::ExerciseRequest { symbol, quantity });
+            .push(crate::settlement::ExerciseRequest {
+                symbol,
+                quantity,
+                abandon: false,
+            });
         Ok(())
     }
 
-    /// 撤销某期权合约尚未结算的全部行权申请, 返回撤销的手数(没有则为 0).
+    /// 提交期货期权放弃行权申请, 在当日日终到期结算时执行.
+    ///
+    /// 由 ``Strategy.abandon_exercise`` 调用(参数校验在那里完成); 放弃的手数不再
+    /// 按到期规则自动行权。
+    ///
+    /// :param symbol: 期权合约代码
+    /// :param quantity: 放弃行权的手数
+    fn request_abandon(&self, symbol: String, quantity: &Bound<'_, PyAny>) -> PyResult<()> {
+        let quantity = extract_decimal(quantity)?;
+        if quantity <= Decimal::ZERO {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "放弃行权数量须为正数, 实际: {quantity}"
+            )));
+        }
+        self.exercise_requests
+            .lock()
+            .expect("行权申请锁被污染")
+            .push(crate::settlement::ExerciseRequest {
+                symbol,
+                quantity,
+                abandon: true,
+            });
+        Ok(())
+    }
+
+    /// 撤销某期权合约尚未结算的全部行权与放弃行权申请, 返回撤销的手数(没有则为 0).
     ///
     /// :param symbol: 期权合约代码
     fn cancel_exercise(&self, symbol: &str) -> f64 {

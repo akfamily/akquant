@@ -245,8 +245,17 @@ mod tests {
             exercise_requests: vec![crate::settlement::ExerciseRequest {
                 symbol: "m2401-C-3000".to_string(),
                 quantity: Decimal::from(2),
+                abandon: true,
             }],
         };
+
+        // 旧格式行权申请没有 abandon 字段, 读入时为 false(行权)
+        let old_request: Vec<u8> =
+            rmp_serde::to_vec(&("m2401-C-3000".to_string(), Decimal::from(2))).unwrap();
+        let old_request: crate::settlement::ExerciseRequest =
+            rmp_serde::from_slice(&old_request).unwrap();
+        assert_eq!(old_request.quantity, Decimal::from(2));
+        assert!(!old_request.abandon);
 
         // 旧格式存档: msgpack 数组缺少末尾三个交易日进度字段, 读入时应为 None
         let old_encoded: Vec<u8> = rmp_serde::to_vec(&(
@@ -280,6 +289,7 @@ mod tests {
         assert_eq!(decoded.exercise_requests.len(), 1);
         assert_eq!(decoded.exercise_requests[0].symbol, "m2401-C-3000");
         assert_eq!(decoded.exercise_requests[0].quantity, Decimal::from(2));
+        assert!(decoded.exercise_requests[0].abandon);
 
         assert_eq!(decoded.current_time, 123456789);
         assert_eq!(

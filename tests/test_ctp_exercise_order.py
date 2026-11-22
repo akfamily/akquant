@@ -10,13 +10,17 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 from akquant.gateway import ctp_native
+from akquant.gateway.broker_event_bridge import BrokerEventBridge
 from akquant.gateway.broker_execution import BrokerExecution
+from akquant.gateway.brokers.ctp.adapter import CTPTraderAdapter
 from akquant.gateway.ctp_native import CTPTraderGateway
+from akquant.live._payload_utils import payload_field
 
 CONSTANTS = {
     "THOST_FTDC_OF_Close": "1",
     "THOST_FTDC_OF_CloseToday": "3",
     "THOST_FTDC_ACTP_Exec": "1",
+    "THOST_FTDC_ACTP_Abandon": "2",
     "THOST_FTDC_PD_Long": "2",
     "THOST_FTDC_HF_Speculation": "1",
     "THOST_FTDC_EOPF_UnReserve": "1",
@@ -53,6 +57,8 @@ def _gateway(
     gateway._exercise_waiters = {}
     gateway._exercise_cancel_waiters = {}
     gateway._exec_order_query_event = threading.Event()
+    gateway.exercise_result_callback = None
+    gateway._reported_exec_results = set()
     gateway.query_positions = lambda instrument_id=None: [  # type: ignore[method-assign]
         {
             "symbol": "ag2702C10300",
@@ -237,3 +243,106 @@ def test_cancel_exercise_reports_rejection_and_done_part() -> None:
         "ag2702C10300 撤销行权指令 9(2 手)被拒: 73 CTP:执行宣告撤单找不到相应执行宣告; "
         "指令 7 1 手已撤销"
     )
+
+
+def test_abandon_exercise_sends_abandon_action_with_same_legs() -> None:
+    """放弃行权与行权同样按今昨仓拆腿, 执行类型为"放弃"; 持仓不足时写明放弃."""
+    with pytest.MonkeyPatch.context() as mp:
+        gateway, sent = _gateway(mp, "SHFE", today=1, yesterday=2)
+        gateway.abandon_exercise("ag2702C10300", 3)
+        with pytest.raises(ValueError, match="申请放弃行权 4 手, 超过柜台可用多头持仓"):
+            gateway.abandon_exercise("ag2702C10300", 4)
+    assert [(r.ActionType, r.OffsetFlag, r.Volume) for r in sent] == [
+        ("2", "1", 2),
+        ("2", "3", 1),
+    ]
+
+
+def _result(
+    sys_id: str, result: str, action: str = "1", session: int = 9, ref: str = ""
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        FrontID=1,
+        SessionID=session,
+        ExecOrderRef=ref,
+        ExecOrderSysID=f"{sys_id:>12}",
+        InstrumentID="ag2702C10300",
+        ActionType=action,
+        ExecResult=result,
+        OrderSubmitStatus="3",
+        StatusMsg="",
+        Volume=2,
+        TradingDay="20261123",
+    )
+
+
+def test_exec_results_reach_strategy_on_expiry() -> None:
+    """盘后结果经适配器转为 on_expiry 事件: 成功、失败原因、放弃; 同一结果只报一次."""
+    with pytest.MonkeyPatch.context() as mp:
+        gateway, _ = _gateway(mp, "SHFE", today=0, yesterday=0)
+        adapter = CTPTraderAdapter.__new__(CTPTraderAdapter)
+        adapter.gateway = gateway
+        events: List[Dict[str, Any]] = []
+        adapter.on_expiry(events.append)
+        gateway.set_exercise_result_handler(adapter._handle_native_exercise_result)
+
+        gateway.OnRtnExecOrder(_result("7", "n"))  # 盘中受理: 不是结果
+        gateway.OnRtnExecOrder(_result("7", "0"))
+        gateway.OnRtnExecOrder(_result("7", "0"))  # 重复推送
+        gateway.OnRtnExecOrder(_result("8", "2"))
+        gateway.OnRtnExecOrder(_result("9", "0", action="2"))
+    assert [
+        (e["reason"], e["quantity_closed"], e["settlement_type"], e["description"])
+        for e in events
+    ] == [
+        ("early_exercise", 2.0, "physical", "ag2702C10300 行权指令 7 2 手已执行"),
+        ("exercise_failed", 0.0, None, "ag2702C10300 行权指令 8 2 手未执行: 资金不够"),
+        ("abandon", 2.0, None, "ag2702C10300 放弃行权指令 9 2 手已执行"),
+    ]
+    assert {e["trading_date"] for e in events} == {"20261123"}
+
+
+def test_exec_result_of_order_being_submitted_is_left_to_caller() -> None:
+    """本会话正在提交的指令即时失败时由 exercise 同步抛出, 不再另报 on_expiry."""
+    with pytest.MonkeyPatch.context() as mp:
+        gateway, _ = _gateway(mp, "SHFE", today=0, yesterday=0)
+        events: List[Dict[str, Any]] = []
+        gateway.set_exercise_result_handler(events.append)
+        gateway._exercise_waiters["101"] = {"event": threading.Event(), "error": ""}
+        gateway.OnRtnExecOrder(_result("7", "1", session=7, ref="101"))
+    assert events == []
+    assert gateway._exercise_waiters["101"]["error"] == "未通过: "
+
+
+def test_expiry_event_dispatches_to_strategy_on_expiry() -> None:
+    """事件桥把柜台网关的 expiry 事件派发给策略 on_expiry."""
+    received: List[Any] = []
+    bridge = BrokerEventBridge(
+        event_lock=threading.Lock(),
+        event_store=[],
+        event_keys=set(),
+        get_on_broker_event=lambda: None,
+        make_event_key=lambda n, p: f"{n}:{id(p)}",
+        update_broker_state=lambda n, p: None,
+        resolve_owner_strategy_id=lambda p: "",
+        payload_to_dict=lambda p: {},
+        safe_strategy_callback=lambda s, name, p: getattr(s, name)(p),
+        adapt_strategy_payload=lambda n, p: p,
+        payload_field=payload_field,
+    )
+    event = {"symbol": "ag2702C10300", "reason": "early_exercise"}
+    bridge.queue_event("expiry", event)
+    bridge.drain_events(SimpleNamespace(on_expiry=received.append))
+    assert received == [event]
+
+
+def test_broker_execution_routes_abandon_to_gateway() -> None:
+    """实盘执行后端把放弃行权交给柜台网关; 网关没有实现时报出网关类型."""
+    calls: List[tuple] = []
+    gateway = SimpleNamespace(abandon_exercise=lambda s, q: calls.append((s, q)))
+    BrokerExecution(object(), gateway, None, None).abandon_exercise("m2701-C-3000", 2)  # type: ignore[arg-type]
+    assert calls == [("m2701-C-3000", 2)]
+    with pytest.raises(RuntimeError, match="没有实现 abandon_exercise"):
+        BrokerExecution(object(), SimpleNamespace(), None, None).abandon_exercise(  # type: ignore[arg-type]
+            "m2701-C-3000", 1
+        )

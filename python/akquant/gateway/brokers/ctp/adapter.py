@@ -112,6 +112,7 @@ class CTPTraderAdapter:
         self.order_callback: Callable[[UnifiedOrderSnapshot], None] | None = None
         self.trade_callback: Callable[[UnifiedTrade], None] | None = None
         self.execution_callback: Callable[[UnifiedExecutionReport], None] | None = None
+        self.expiry_callback: Callable[[dict[str, Any]], None] | None = None
         self.orders: dict[str, UnifiedOrderSnapshot] = {}
         self.trades: list[UnifiedTrade] = []
         self.trade_ids: set[str] = set()
@@ -136,6 +137,10 @@ class CTPTraderAdapter:
             self.gateway.set_trade_handler(self._handle_native_trade_event)
         if hasattr(self.gateway, "set_error_handler"):
             self.gateway.set_error_handler(self._handle_native_error_event)
+        if hasattr(self.gateway, "set_exercise_result_handler"):
+            self.gateway.set_exercise_result_handler(
+                self._handle_native_exercise_result
+            )
 
     def connect(self) -> None:
         """Connect and start trader stream."""
@@ -220,9 +225,59 @@ class CTPTraderAdapter:
         """提交期权行权指令, 逐条等柜台受理(见 ``CTPTraderGateway.exercise``)."""
         return self.gateway.exercise(symbol, quantity)
 
+    def abandon_exercise(self, symbol: str, quantity: float) -> list[dict[str, Any]]:
+        """提交期权放弃行权指令(见 ``CTPTraderGateway.abandon_exercise``)."""
+        return self.gateway.abandon_exercise(symbol, quantity)
+
     def cancel_exercise(self, symbol: str) -> float:
         """撤销该合约未执行的全部行权指令(见 ``CTPTraderGateway.cancel_exercise``)."""
         return self.gateway.cancel_exercise(symbol)
+
+    def on_expiry(self, callback: Callable[[dict[str, Any]], None]) -> None:
+        """注册行权/放弃指令盘后处理结果回调, 载荷与策略 ``on_expiry`` 事件同形."""
+        self.expiry_callback = callback
+
+    def _handle_native_exercise_result(self, payload: dict[str, Any]) -> None:
+        """把交易所盘后处理完的行权/放弃指令转为 ``on_expiry`` 事件.
+
+        柜台不推送行权得到的期货持仓价格与费用, ``quantity_before``、``cash_flow``、
+        ``fee`` 为 None; 期货持仓随柜台持仓同步。
+        """
+        if self.expiry_callback is None:
+            return
+        symbol = str(payload["symbol"])
+        volume = float(payload["volume"])
+        action = "放弃行权" if payload["abandon"] else "行权"
+        head = f"{symbol} {action}指令 {payload['exec_order_sys_id']} {volume:g} 手"
+        if payload["executed"]:
+            reason = "abandon" if payload["abandon"] else "early_exercise"
+            description = f"{head}已执行"
+        else:
+            reason = "exercise_failed"
+            description = f"{head}未执行: {payload['failure']}"
+        if payload["status_msg"]:
+            description += f"(柜台: {payload['status_msg']})"
+        self.expiry_callback(
+            {
+                "symbol": symbol,
+                "asset_type": "OPTION",
+                "trading_date": str(payload["trading_day"]),
+                "expiry_date": None,
+                "quantity_before": None,
+                "quantity_closed": volume if payload["executed"] else 0.0,
+                "cash_flow": None,
+                "fee": None,
+                "settlement_type": (
+                    "physical"
+                    if payload["executed"] and not payload["abandon"]
+                    else None
+                ),
+                "settlement_price": None,
+                "reason": reason,
+                "description": description,
+                "owner_strategy_id": "",
+            }
+        )
 
     def cancel_order(self, broker_order_id: str) -> None:
         """Cancel order through CTP trader channel."""

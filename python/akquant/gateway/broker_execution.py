@@ -519,8 +519,18 @@ class BrokerExecution:
             )
         exercise(symbol, quantity)
 
+    def abandon_exercise(self, symbol: str, quantity: float) -> None:
+        """经柜台提交期权放弃行权指令; 柜台受理后返回, 拒绝时抛出柜台原因."""
+        abandon = getattr(self._gw, "abandon_exercise", None)
+        if not callable(abandon):
+            raise RuntimeError(
+                f"柜台网关 {type(self._gw).__name__} 没有实现 "
+                "abandon_exercise(symbol, quantity), 不能提交放弃行权指令"
+            )
+        abandon(symbol, quantity)
+
     def cancel_exercise(self, symbol: str) -> float:
-        """经柜台撤销该合约未执行的全部行权指令, 返回撤销的手数."""
+        """经柜台撤销该合约未执行的全部行权与放弃指令, 返回撤销的手数."""
         cancel = getattr(self._gw, "cancel_exercise", None)
         if not callable(cancel):
             raise RuntimeError(

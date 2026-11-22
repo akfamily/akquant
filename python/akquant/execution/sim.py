@@ -89,6 +89,10 @@ class SimExecution:
         """登记行权申请, 引擎在当日日终结算时执行."""
         self._s.ctx.request_exercise(symbol, quantity)
 
+    def abandon_exercise(self, symbol: str, quantity: float) -> None:
+        """登记放弃行权申请, 引擎在到期日日终结算时执行."""
+        self._s.ctx.request_abandon(symbol, quantity)
+
     def cancel_exercise(self, symbol: str) -> float:
-        """撤销尚未结算的行权申请, 返回撤销的手数."""
+        """撤销尚未结算的行权与放弃行权申请, 返回撤销的手数."""
         return float(self._s.ctx.cancel_exercise(symbol))

@@ -24,11 +24,14 @@ pub struct SettlementTask {
     pub delivery: Option<FuturesDelivery>,
 }
 
-/// 策略提交的期货期权行权申请, 在当日日终结算时执行
+/// 策略提交的期货期权行权(放弃行权)申请, 在当日日终结算时执行
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ExerciseRequest {
     pub symbol: String,
     pub quantity: Decimal,
+    /// true 为到期日放弃行权申请: 实值多头不再自动行权
+    #[serde(default)]
+    pub abandon: bool,
 }
 
 /// 期货期权行权(履约)后按行权价获得的标的期货持仓

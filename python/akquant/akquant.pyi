@@ -3252,9 +3252,18 @@ class StrategyContext:
         """
         ...
 
+    def request_abandon(self, symbol: str, quantity: typing.Any) -> None:
+        r"""
+        提交期货期权放弃行权申请, 在当日日终到期结算时执行.
+
+        :param symbol: 期权合约代码
+        :param quantity: 放弃行权的手数
+        """
+        ...
+
     def cancel_exercise(self, symbol: str) -> float:
         r"""
-        撤销某期权合约尚未结算的全部行权申请, 返回撤销的手数(没有则为 0).
+        撤销某期权合约尚未结算的全部行权与放弃行权申请, 返回撤销的手数(没有则为 0).
 
         :param symbol: 期权合约代码
         """

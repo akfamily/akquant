@@ -52,6 +52,17 @@ EXEC_RESULT_EXECUTED = "0"
 EXEC_RESULT_CANCELED = "c"
 EXEC_RESULT_SUBMITTING = "a"
 EXEC_SUBMIT_REJECTED = "4"
+# 交易所盘后处理失败的 ExecResult(CTP 数据字典 TFtdcExecResultType)
+EXEC_RESULT_FAILURES = {
+    "1": "期权持仓不够",
+    "2": "资金不够",
+    "3": "会员不存在",
+    "4": "客户不存在",
+    "6": "合约不存在",
+    "7": "没有执行权限",
+    "8": "不合理的数量",
+    "9": "没有足够的历史成交",
+}
 
 
 class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
@@ -127,6 +138,9 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         self._exec_order_query_event = threading.Event()
         self._exec_order_query_results: list[dict[str, Any]] = []
         self._exec_order_query_error = ""
+        # 行权/放弃指令的盘后处理结果(见 OnRtnExecOrder); 按指令编号与结果去重
+        self.exercise_result_callback: Callable[[dict[str, Any]], None] | None = None
+        self._reported_exec_results: set[tuple[str, str]] = set()
 
     def _log_extra(self, *, symbol: str | None = None) -> dict[str, Any]:
         return build_log_extra(phase="gateway", symbol=symbol)
@@ -167,6 +181,12 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
     def set_error_handler(self, callback: Callable[[dict[str, Any]], None]) -> None:
         """Set native error event handler."""
         self.error_callback = callback
+
+    def set_exercise_result_handler(
+        self, callback: Callable[[dict[str, Any]], None]
+    ) -> None:
+        """设置行权/放弃指令盘后处理结果的回调(见 ``OnRtnExecOrder``)."""
+        self.exercise_result_callback = callback
 
     def can_trade(self) -> bool:
         """Return whether the trader channel is ready for order requests."""
@@ -407,6 +427,28 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         :raises ValueError: 柜台可用多头持仓不足
         :raises RuntimeError: 柜台拒绝(带 CTP 原因)或超时未确认
         """
+        return self._submit_exec_orders(
+            symbol, quantity, tdapi.THOST_FTDC_ACTP_Exec, "行权"
+        )
+
+    def abandon_exercise(self, symbol: str, quantity: float) -> list[dict[str, Any]]:
+        """提交期权放弃行权指令(执行宣告, 放弃), 逐条等柜台受理.
+
+        拆腿规则与 ``exercise`` 相同; 交易所只在到期日接受放弃申请。
+
+        :param symbol: 期权合约
+        :param quantity: 放弃的手数(正整数)
+        :return: 每条指令 ``{"exec_order_ref", "offset", "quantity", "exchange_id"}``
+        :raises ValueError: 柜台可用多头持仓不足
+        :raises RuntimeError: 柜台拒绝(带 CTP 原因)或超时未确认
+        """
+        return self._submit_exec_orders(
+            symbol, quantity, tdapi.THOST_FTDC_ACTP_Abandon, "放弃行权"
+        )
+
+    def _submit_exec_orders(
+        self, symbol: str, quantity: float, action_type: str, label: str
+    ) -> list[dict[str, Any]]:
         if not self.can_trade():
             raise RuntimeError("CTP trader is not ready for exercise")
         if self.api is None:
@@ -424,7 +466,7 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         yesterday = float(long["available_yesterday_quantity"]) if long else 0.0
         if volume > today + yesterday:
             raise ValueError(
-                f"{symbol} 申请行权 {volume} 手, 超过柜台可用多头持仓 "
+                f"{symbol} 申请{label} {volume} 手, 超过柜台可用多头持仓 "
                 f"{today + yesterday:g} 手(今仓 {today:g}, 昨仓 {yesterday:g})"
             )
         exchange_id = str((long or {}).get("exchange_id", ""))
@@ -440,7 +482,9 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         for offset, leg_volume in legs:
             if leg_volume <= 0:
                 continue
-            ref = self._send_exec_order(symbol, exchange_id, offset, leg_volume)
+            ref = self._send_exec_order(
+                symbol, exchange_id, offset, leg_volume, action_type
+            )
             error = self._await_exercise(self._exercise_waiters, ref)
             if error:
                 done = "; ".join(
@@ -448,7 +492,7 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
                     for a in accepted
                 )
                 raise RuntimeError(
-                    f"{symbol} 行权指令 {ref}({leg_volume} 手){error}"
+                    f"{symbol} {label}指令 {ref}({leg_volume} 手){error}"
                     + (f"; {done}" if done else "")
                 )
             accepted.append(
@@ -462,7 +506,7 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         return accepted
 
     def _send_exec_order(
-        self, symbol: str, exchange_id: str, offset: str, volume: int
+        self, symbol: str, exchange_id: str, offset: str, volume: int, action_type: str
     ) -> str:
         ref = str(self.order_ref)
         self.order_ref += 1
@@ -474,7 +518,7 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         request.ExchangeID = exchange_id
         request.ExecOrderRef = ref
         request.Volume = volume
-        request.ActionType = tdapi.THOST_FTDC_ACTP_Exec
+        request.ActionType = action_type
         request.PosiDirection = tdapi.THOST_FTDC_PD_Long
         request.OffsetFlag = offset
         request.HedgeFlag = tdapi.THOST_FTDC_HF_Speculation
@@ -661,6 +705,7 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         """行权指令状态回报: 受理(未执行)、执行、撤销、被拒."""
         result = self._to_text(getattr(pExecOrder, "ExecResult", ""))
         status_msg = self._to_text(getattr(pExecOrder, "StatusMsg", ""))
+        self._report_exec_result(pExecOrder, result, status_msg)
         # 撤销按交易所编号确认, 不限本会话提交的指令
         if result == EXEC_RESULT_CANCELED:
             self._resolve_exercise(
@@ -694,6 +739,42 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
             self._resolve_exercise(waiters, ref, f"已取消: {status_msg}")
         elif result != EXEC_RESULT_SUBMITTING:
             self._resolve_exercise(waiters, ref, f"未通过: {status_msg}")
+
+    def _report_exec_result(self, field: Any, result: str, status_msg: str) -> None:
+        """交易所处理完的行权/放弃指令(执行成功或失败)送给结果回调.
+
+        不限本会话提交的指令: 重启后当日早先提交的指令结果同样送达。
+        """
+        callback = self.exercise_result_callback
+        if callback is None or (
+            result != EXEC_RESULT_EXECUTED and result not in EXEC_RESULT_FAILURES
+        ):
+            return
+        if (
+            result != EXEC_RESULT_EXECUTED
+            and getattr(field, "FrontID", None) == self.front_id
+            and getattr(field, "SessionID", None) == self.session_id
+            and self._to_text(getattr(field, "ExecOrderRef", ""))
+            in self._exercise_waiters
+        ):
+            return  # 提交时即失败的指令由 exercise / abandon_exercise 同步抛出原因
+        sys_id = self._to_text(getattr(field, "ExecOrderSysID", ""))
+        if (sys_id, result) in self._reported_exec_results:
+            return
+        self._reported_exec_results.add((sys_id, result))
+        action = self._to_text(getattr(field, "ActionType", ""))
+        callback(
+            {
+                "symbol": self._to_text(getattr(field, "InstrumentID", "")),
+                "exec_order_sys_id": sys_id,
+                "abandon": action == tdapi.THOST_FTDC_ACTP_Abandon,
+                "volume": float(getattr(field, "Volume", 0) or 0),
+                "executed": result == EXEC_RESULT_EXECUTED,
+                "failure": EXEC_RESULT_FAILURES.get(result, ""),
+                "status_msg": status_msg,
+                "trading_day": self._to_text(getattr(field, "TradingDay", "")),
+            }
+        )
 
     def OnFrontConnected(self) -> None:
         """Handle front connection event."""

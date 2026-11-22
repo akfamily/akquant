@@ -62,7 +62,11 @@ class _HoldToExpiry(Strategy):
         self.events.append(event)
 
 
-def _run(futures_registered: bool, strategy: Optional[Any] = None) -> Tuple[Any, Any]:
+def _run(
+    futures_registered: bool,
+    strategy: Optional[Any] = None,
+    initial_cash: float = 1_000_000.0,
+) -> Tuple[Any, Any]:
     data = {FUTURES: _bars(FUTURES, FUTURES_CLOSES)}
     configs = []
     if futures_registered:
@@ -90,7 +94,7 @@ def _run(futures_registered: bool, strategy: Optional[Any] = None) -> Tuple[Any,
         data=data,
         strategy=strategy,
         config=akquant.BacktestConfig(
-            strategy_config=akquant.StrategyConfig(initial_cash=1_000_000.0),
+            strategy_config=akquant.StrategyConfig(initial_cash=initial_cash),
             instruments_config=configs,
             china_options=akquant.ChinaOptionsConfig(
                 commission_per_contract=0.0,
@@ -212,3 +216,80 @@ def test_cancelled_exercise_is_not_settled() -> None:
     assert strategy.positions_by_day[2]["m2401-C-3000"] == 2.0
     assert "early_exercise" not in {e["reason"] for e in strategy.events}
     assert strategy.positions_by_day[3][FUTURES] == 3.0
+
+
+class _AbandonOnExpiry(_HoldToExpiry):
+    """到期前一日申请放弃被拒(不在到期日); 到期日申请放弃 1 手实值认购."""
+
+    def on_bars(self, batch: BarBatch) -> None:
+        super().on_bars(batch)
+        if len(self.positions_by_day) == 2:
+            with pytest.raises(ValueError) as exc:
+                self.abandon_exercise("m2401-C-3000", 1)
+            self.error = str(exc.value)
+        if len(self.positions_by_day) == 3:
+            self.abandon_exercise("m2401-C-3000", 1)
+
+
+def test_abandon_on_expiry_day_skips_automatic_exercise() -> None:
+    """到期日申请放弃的 1 手不自动行权, 余下 1 手照常行权; 非到期日不能申请放弃."""
+    strategy, _ = _run(futures_registered=True, strategy=_AbandonOnExpiry())
+
+    assert strategy.error == (
+        "m2401-C-3000 到期日为 20231207, 今天 20231206: 只能在到期日申请放弃行权"
+    )
+    # 行权 1 手 + 认沽履约 1 手
+    assert strategy.positions_by_day[3][FUTURES] == 2.0
+    assert strategy.positions_by_day[3]["m2401-C-3000"] == 0.0
+    call_events = [
+        (e["reason"], e["quantity_closed"], e["fee"])
+        for e in strategy.events
+        if e["symbol"] == "m2401-C-3000"
+    ]
+    assert call_events == [("exercise", 1.0, 1.0), ("abandon", 1.0, 0.0)]
+
+
+class _BuyCallExerciseWithoutFunds(Strategy):
+    """首日买 2 手实值认购, 次日申请全部行权; 记录持仓与到期事件."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.positions_by_day: List[Dict[str, float]] = []
+        self.events: List[Dict[str, Any]] = []
+
+    def on_bars(self, batch: BarBatch) -> None:
+        if not self.positions_by_day:
+            self.buy("m2401-C-3000", 2)
+        self.positions_by_day.append(
+            {s: self.get_position(s) for s in (FUTURES, "m2401-C-3000")}
+        )
+        if len(self.positions_by_day) == 2:
+            self.exercise("m2401-C-3000", 2)
+
+    def on_expiry(self, event: Dict[str, Any]) -> None:
+        self.events.append(event)
+
+
+def test_exercise_without_funds_is_refused_and_expiry_abandons_shortfall() -> None:
+    """资金不足: 申请行权整笔不执行(exercise_failed), 到期自动行权只行权资金够的手数."""
+    strategy, _ = _run(
+        futures_registered=True,
+        strategy=_BuyCallExerciseWithoutFunds(),
+        initial_cash=5000.0,
+    )
+
+    # 申请当日结算: 2 手需保证金 2×3050×10×0.1 + 行权费 2 = 6102, 权益 5000
+    assert strategy.positions_by_day[2] == {FUTURES: 0.0, "m2401-C-3000": 2.0}
+    # 到期: 1 手需 3101, 2 手需 6202, 只够 1 手
+    assert strategy.positions_by_day[3] == {FUTURES: 1.0, "m2401-C-3000": 0.0}
+    assert [(e["reason"], e["quantity_closed"]) for e in strategy.events] == [
+        ("exercise_failed", 0.0),
+        ("exercise", 1.0),
+        ("abandon", 1.0),
+    ]
+    assert strategy.events[0]["description"] == (
+        "m2401-C-3000 申请行权 2 手未执行: 所需保证金与行权费 6102, 可用资金 5000"
+    )
+    assert strategy.events[2]["description"].startswith(
+        "m2401-C-3000 到期实值, 1 手因资金不足放弃行权: 所需保证金与行权费 6202"
+    )

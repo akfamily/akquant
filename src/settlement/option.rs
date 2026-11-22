@@ -118,7 +118,7 @@ pub fn early_exercise_tasks(
     instruments: &HashMap<String, Instrument>,
 ) -> (Vec<SettlementTask>, Vec<String>) {
     let mut requested: Vec<(String, Decimal)> = Vec::new();
-    for request in requests {
+    for request in requests.iter().filter(|r| !r.abandon) {
         match requested.iter_mut().find(|(s, _)| *s == request.symbol) {
             Some((_, quantity)) => *quantity += request.quantity,
             None => requested.push((request.symbol.clone(), request.quantity)),
