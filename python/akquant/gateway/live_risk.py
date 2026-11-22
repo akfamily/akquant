@@ -36,6 +36,10 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Sequence
 
+from ..log import build_log_extra, get_logger
+
+logger = get_logger("gateway.live_risk")
+
 
 @dataclass(frozen=True)
 class LiveRiskConfig:
@@ -248,8 +252,18 @@ class LiveRiskGuard:
                         "无法校验 max_daily_loss"
                     )
                 loss = float(day_start) - equity
-                if loss > cfg.max_daily_loss:
+                if loss > cfg.max_daily_loss and self._daily_loss_day != day:
                     self._daily_loss_day = day
+                    # 熔断只在触发时记一次, 带提醒标记(见 akquant.live.alerts)
+                    logger.warning(
+                        "账户当日亏损超限, 当日只允许平仓: 当日初始权益 %.2f, "
+                        "当前权益 %.2f, 亏损 %.2f, 上限 %g",
+                        float(day_start),
+                        equity,
+                        loss,
+                        cfg.max_daily_loss,
+                        extra={**build_log_extra(phase="gateway"), "alert": "风控熔断"},
+                    )
                 if self._daily_loss_day == day and opening:
                     return (
                         f"账户当日亏损超限后只允许平仓: 当日初始权益 "
@@ -259,8 +273,17 @@ class LiveRiskGuard:
             if cfg.max_drawdown is not None:
                 peak = self._peak_equity if self._peak_equity is not None else equity
                 drawdown = peak - equity
-                if drawdown > cfg.max_drawdown:
+                if drawdown > cfg.max_drawdown and not self._drawdown_locked:
                     self._drawdown_locked = True
+                    logger.warning(
+                        "账户回撤超限, 此后只允许平仓: 权益峰值 %.2f, 当前权益 %.2f, "
+                        "回撤 %.2f, 上限 %g",
+                        peak,
+                        equity,
+                        drawdown,
+                        cfg.max_drawdown,
+                        extra={**build_log_extra(phase="gateway"), "alert": "风控熔断"},
+                    )
                 if self._drawdown_locked and opening:
                     return (
                         f"账户回撤超限后只允许平仓: 权益峰值 {peak:.2f}, 当前权益 "

@@ -1226,7 +1226,7 @@ run_live(
 | `max_drawdown` | Account drawdown = peak equity seen in this run (including day-start equity) − current equity; once exceeded, close-only until the process ends; the peak restarts with the process |
 
 *   The loss checks use the broker's account snapshot, which already includes commissions and mark-to-market. For CTP the day-start equity is the static equity = previous balance − previous credit − previous mortgage + mortgage − withdrawal + deposit (checked on SimNow: static equity + close profit + position profit − commission + premium cash flow equals the dynamic equity `Balance`). The snapshot is refreshed after orders and fills and by the recovery poll. When the broker gives no day-start equity, orders are rejected with that reason if `max_daily_loss` is set.
-*   After a trip, any order with an opening leg is rejected; pure closing orders pass. Nothing is closed automatically.
+*   After a trip, any order with an opening leg is rejected; pure closing orders pass. Nothing is closed automatically. A trip logs one WARNING (`akquant.gateway.live_risk`, carrying the `alert` mark, pushed when live alerts are configured).
 *   Counts are per strategy `trading_day` (the night session belongs to the next trading day); when it is unavailable (e.g. orders from a signal thread outside strategy callbacks) the local calendar date is used.
 *   Counts live in the process only and reset on restart.
 

@@ -283,3 +283,26 @@ def test_ctp_account_reports_day_start_equity(monkeypatch: pytest.MonkeyPatch) -
     gateway.api = SimpleNamespace(ReqQryTradingAccount=query)
     account = gateway.query_account()
     assert account is not None and account["day_start_equity"] == 103_000.0
+
+
+def test_circuit_trip_logs_once_with_alert_mark(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """熔断触发时记一条带提醒标记的日志, 之后的拒单不重复记."""
+    account = SimpleNamespace(equity=95_000.0, day_start_equity=100_000.0)
+    with caplog.at_level("WARNING", logger="akquant.gateway.live_risk"):
+        for config in (
+            LiveRiskConfig(max_daily_loss=4000),
+            LiveRiskConfig(max_drawdown=3000),
+        ):
+            guard = LiveRiskGuard(config)
+            _check(guard, account=lambda: account)
+            _check(guard, account=lambda: account)
+    marked = [
+        (r.getMessage().split(":")[0], getattr(r, "alert", None))
+        for r in caplog.records
+    ]
+    assert marked == [
+        ("账户当日亏损超限, 当日只允许平仓", "风控熔断"),
+        ("账户回撤超限, 此后只允许平仓", "风控熔断"),
+    ]
