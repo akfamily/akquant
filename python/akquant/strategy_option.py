@@ -1,7 +1,7 @@
 """策略侧期权工具: 期权链、选合约、Greeks 与 Delta 对冲."""
 
 import math
-from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, cast
+from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
 import pandas as pd
@@ -18,6 +18,7 @@ from .option.pricing import (
     implied_vol,
     year_fraction,
 )
+from .option.surface import SmileModel, VolSurface, fit_surface
 
 OptionModel = Literal["black76", "baw"]
 
@@ -295,6 +296,36 @@ def option_chain(
     if expiry is not None:
         chain = chain[chain["expiry_date"] == expiry]
     return chain.drop(columns="underlying").reset_index(drop=True)
+
+
+def vol_surface(
+    strategy: Any,
+    underlying: Union[str, Sequence[str]],
+    model: SmileModel = "svi",
+    beta: float = 1.0,
+    rate: Optional[float] = None,
+    pricing_model: OptionModel = "black76",
+) -> VolSurface:
+    """由标的的期权链拟合波动率曲面; 与期权链同一批计算时复用上次的拟合结果."""
+    names = (underlying,) if isinstance(underlying, str) else tuple(underlying)
+    if not names:
+        raise ValueError("underlying 不能为空")
+    resolved = _resolve_rate(strategy, rate)
+    chain = _chains(
+        strategy, names[0] if len(names) == 1 else None, resolved, pricing_model
+    )
+    if len(names) > 1:
+        chain = chain[chain["underlying"].isin(names)]
+    if float(strategy.option_refresh_interval) == 0 or strategy.now is None:
+        return fit_surface(chain, model, beta)
+    chain_key = (_price_source(strategy), resolved, pricing_model)
+    chain_time = strategy._option_chains_cache[chain_key][0]
+    key = (chain_key, names, model, float(beta))
+    cached = strategy._vol_surface_cache.get(key)
+    if cached is None or cached[0] != chain_time:
+        cached = (chain_time, fit_surface(chain, model, beta))
+        strategy._vol_surface_cache[key] = cached
+    return cast(VolSurface, cached[1])
 
 
 def _greeks_failure(

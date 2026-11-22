@@ -19,6 +19,7 @@ pub mod margin;
 pub mod market;
 pub mod model;
 mod option_pricing;
+mod vol_surface;
 pub mod order_manager;
 pub mod order_ledger;
 pub mod pipeline;
@@ -76,6 +77,10 @@ fn akquant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(vec_log_returns, m)?)?;
     m.add_function(wrap_pyfunction!(vec_cumsum, m)?)?;
     // akquant.option 的 Black-76 批量计算
+    m.add_function(wrap_pyfunction!(vol_surface::_svi_fit, m)?)?;
+    m.add_function(wrap_pyfunction!(vol_surface::_svi_total_variance, m)?)?;
+    m.add_function(wrap_pyfunction!(vol_surface::_sabr_fit, m)?)?;
+    m.add_function(wrap_pyfunction!(vol_surface::_sabr_vol, m)?)?;
     m.add_function(wrap_pyfunction!(option_pricing::_option_black76_price, m)?)?;
     m.add_function(wrap_pyfunction!(option_pricing::_option_black76_greeks, m)?)?;
     m.add_function(wrap_pyfunction!(

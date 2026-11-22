@@ -118,12 +118,12 @@ fn implied_vol(p: f64, f: f64, k: f64, t: f64, r: f64, call: bool, s: Solver) ->
     f64::NAN
 }
 
-fn slice<'a>(arr: &'a PyReadonlyArray1<'_, f64>, name: &str) -> PyResult<&'a [f64]> {
+pub(crate) fn slice<'a>(arr: &'a PyReadonlyArray1<'_, f64>, name: &str) -> PyResult<&'a [f64]> {
     arr.as_slice()
         .map_err(|_| PyValueError::new_err(format!("{name} 必须是连续的一维 float64 数组")))
 }
 
-fn check_len(n: usize, others: &[(&str, usize)]) -> PyResult<()> {
+pub(crate) fn check_len(n: usize, others: &[(&str, usize)]) -> PyResult<()> {
     for (name, len) in others {
         if *len != n {
             return Err(PyValueError::new_err(format!(

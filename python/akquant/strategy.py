@@ -54,6 +54,7 @@ from .indicator_declaration import (
 )
 from .indicator_recording import IndicatorRecorder, declare_plotted_indicators
 from .log import get_logger as _get_logger
+from .option.surface import SmileModel, VolSurface
 from .params import ParamModel, ParamSpec, legacy_init_warning_message
 from .sizer import FixedSize, Sizer
 from .strategy_events import (
@@ -97,6 +98,7 @@ from .strategy_option import option_chain as _option_chain_impl
 from .strategy_option import option_chains as _option_chains_impl
 from .strategy_option import portfolio_greeks as _portfolio_greeks_impl
 from .strategy_option import select_option as _select_option_impl
+from .strategy_option import vol_surface as _vol_surface_impl
 from .strategy_order_events import (
     check_order_events as _check_order_events_impl,
 )
@@ -363,6 +365,9 @@ class Strategy:
     #: 期权链整批计算结果, 键为 (取价方式, 利率, 模型), 值为
     #: (计算时的行情时间, 全部链, 按标的拆分的链), 见 strategy_option._chains
     _option_chains_cache: Dict[Tuple[str, float, str], Tuple[Any, Any, Any]]
+    #: 波动率曲面拟合结果, 键为 (期权链缓存键, 标的, 模型, beta), 值为
+    #: (所用期权链的计算时间, VolSurface), 见 strategy_option.vol_surface
+    _vol_surface_cache: Dict[Tuple[Any, ...], Tuple[Any, Any]]
     _rolling_train_window: int
     _rolling_step: int
     # 全局 bar 事件计数(不分 symbol), 供 ML 滚动训练节奏使用(见 strategy_ml.py)。
@@ -610,6 +615,7 @@ class Strategy:
         instance._last_prices = {}
         instance._last_quotes = {}
         instance._option_chains_cache = {}
+        instance._vol_surface_cache = {}
         # 撤单意图: 必须在此初始化。三处使用点都写作
         # ``getattr(strategy, "_pending_canceled_order_ids", set())``, 该惯用法在
         # 属性缺失时返回一个**临时** set, 其后的 isinstance 检查恒真 ⇒ setattr 永不
@@ -3312,6 +3318,36 @@ class Strategy:
             行权价、类型排序
         """
         return _option_chains_impl(self, underlyings, rate, model)
+
+    def vol_surface(
+        self,
+        underlying: Union[str, Sequence[str]],
+        model: SmileModel = "svi",
+        beta: float = 1.0,
+        rate: Optional[float] = None,
+        pricing_model: OptionModel = "black76",
+    ) -> VolSurface:
+        """
+        由标的的期权链拟合波动率曲面, 每个到期日一条微笑.
+
+        每个行权价只取虚值一侧(低于远期用认沽, 否则用认购), 剔除算不出隐含波动率的
+        合约后按 ``model`` 拟合, 详见 :func:`akquant.option.fit_surface`。商品期权
+        各月份标的不同, 传多个标的(如 ``["m2605", "m2609"]``)把各月的期权链合成
+        一个曲面; 股指期权传指数代码一个即可。期权链与
+        :meth:`option_chain` 同一批计算, 同一批期权链只拟合一次(节奏由
+        ``option_refresh_interval`` 控制)。成交稀少的期权最新价可能过时, 拟合宜用
+        ``option_price_source = "mid"``。
+
+        :param underlying: 期权登记的标的代码, 或多个标的代码
+        :param model: ``"svi"`` (默认) 或 ``"sabr"``
+        :param beta: SABR 的 β(固定), 默认 1; SVI 忽略
+        :param rate: 无风险利率; 不填使用 ``self.option_rate``
+        :param pricing_model: 期权链求隐含波动率的模型, ``"black76"`` 或 ``"baw"``
+        :return: :class:`akquant.option.VolSurface`; ``vol(strike, t)`` 取任意期限的
+            波动率, ``smile(expiry)`` 取单个到期日的微笑, ``failures`` 为未能拟合的
+            到期日及原因, ``calendar_arbitrage`` 为存在日历套利的相邻到期日
+        """
+        return _vol_surface_impl(self, underlying, model, beta, rate, pricing_model)
 
     def select_option(
         self,

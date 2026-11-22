@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **期权定价模块 `akquant.option`**：Black-76 欧式定价与 Greeks、美式期货期权的 BAW 近似、隐含波动率、按认购-认沽平价反推远期，以及期货交易所期权代码解析（覆盖大商所、郑商所、上期所、能源中心、广期所、中金所的代码格式，含大商所、郑商所月度期权）。Black-76 部分在 Rust 中批量计算、长数组多线程，6 核机器上 5 万个合约求隐含波动率约 10 毫秒；隐含波动率按波动率步长收敛，深度实值、深度虚值等 vega 极小的合约也能解到 1e-6 以内。顶层导出，可直接用 `aq.option`。示例 `examples/80_option_chain_greeks.py`（做多平值跨式并每日用期货对冲 Delta）。
 - **策略期权方法**：`option_chain()`、`get_expiries()`、`select_option()`（按平值档位或目标 Delta 选合约）、`get_greeks()`、`portfolio_greeks()`（合计持仓 Greeks 与现金 Delta）、`hedge_delta()`（用标的期货或股指期货对冲到 Delta 中性），以及类属性 `option_rate`、`option_price_source`。远期价格：期货标的取期货价，其余按平价反推。`option_price_source="mid"` 时按 Cboe VIX 的规则取买一、卖一中间价，单边或无报价的合约不计算。算不出 Greeks 时报错写明每个合约的具体原因（如已到期、没有最新价、只有卖一价、价格不高于内在价值），不按 0 计。期权链整批计算：间隔 `option_refresh_interval`（默认 1 秒，按行情时间）内第一次调用时一次算出全部已登记标的的期权链，其余调用复用；`option_chains()` 一次返回多个标的的期权链。实测 50 条链约 7,300 个合约一批约 22 毫秒。
 - **`Tick` 增加一档盘口 `bid_price` / `ask_price` / `bid_volume` / `ask_volume`**：构造时以关键字参数传入，不传为 `None`，原有构造方式不变；旧版本 pickle / 存档中的 `Tick` 还原为无报价。CTP 网关按 `BidPrice1` / `AskPrice1` / `BidVolume1` / `AskVolume1` 填充，CTP 表示无报价的 DBL_MAX 或 0 转为 `None`。
+- **波动率曲面拟合 `akquant.option.fit_smile` / `fit_surface` 与 `Strategy.vol_surface()`**：每个到期日拟合一条波动率微笑，SVI 按 Zeliade 准显式法标定（约束保证非负方差与 Lee 矩条件），SABR 用 Hagan 对数正态近似（β 固定），多个到期日在 Rust 中并行拟合；曲面在期限方向按总方差插值，`vol(行权价, 期限)` 取任意期限的波动率。拟合后检查蝶式套利（Gatheral g 函数）与日历套利（总方差随期限下降），只报告、不修正。期权链只取虚值一侧，商品期权可把多个月份标的的期权链合成一个曲面。
 
 ### Fixed
 - **README 不再宣称引擎内置期权希腊值、黄金测试验证期权希腊值**：此前两处表述与实际不符。

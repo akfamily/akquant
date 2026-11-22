@@ -1113,6 +1113,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `get_greeks(symbol, rate=None, model="black76") -> Dict[str, float]`: 单个合约每单位标的的 `price`、`forward`、`t`、`iv`、`delta`、`gamma`、`vega`、`theta`。算不出时抛 `ValueError`，信息写明具体原因：没有行情时间、已到期、没有最新价、标的没有最新价、最新价不高于内在价值、最新价超出波动率 500% 时的理论价等。
 *   `portfolio_greeks(underlying, include=(), rate=None, model="black76") -> Dict[str, float]`: 该标的全部期权持仓、标的本身持仓、以及 `include` 中线性品种（Delta 记为 1）的合计 `delta`、`gamma`、`vega`、`theta`、`cash_delta`，已乘持仓数量与合约乘数。`cash_delta` = Σ 数量×乘数×Delta×远期价，用于跨到期、跨对冲品种相加。有持仓算不出 Greeks（含线性持仓没有最新价）时抛 `ValueError`，逐个列出合约与具体原因，不按 0 计。
 *   `hedge_delta(underlying, hedge_symbol=None, band=0.0, rate=None, model="black76", **kwargs) -> Optional[str]`: 用线性品种把 `cash_delta` 调回 0，数量按对冲品种的 `lot_size` 取整，调整量不超过 `band` 时不下单；`hedge_symbol` 不填即用标的本身（商品期权的标的期货），股指期权传对应的股指期货（如 `IF2612`）。`kwargs` 透传给 `order_target`。
+*   `vol_surface(underlying, model="svi", beta=1.0, rate=None, pricing_model="black76") -> VolSurface`: 由期权链拟合波动率曲面，每个到期日一条微笑（见下文 `akquant.option.fit_surface`）。`underlying` 可传一个标的或多个标的：商品期权各月份标的不同，传 `["m2605", "m2609"]` 把各月的期权链合成一个曲面；股指期权传指数代码一个即可。`pricing_model` 是期权链求隐含波动率的模型。期权链与 `option_chain` 同一批计算，同一批期权链只拟合一次，节奏由 `option_refresh_interval` 控制。成交稀少的期权最新价可能过时，拟合宜用 `option_price_source = "mid"`。
 
 Greeks 单位为原始偏导数：`vega` 对应波动率变化 1.0（按 1% 计除以 100），`theta` 为每年（按天计除以 365）。
 
@@ -1123,6 +1124,10 @@ Greeks 单位为原始偏导数：`vega` 对应波动率变化 1.0（按 1% 计�
 *   `implied_vol(price, forward, strike, t, rate, option_type, model="black76")`: 隐含波动率，波动率步长小于 1e-10 即收敛；已到期、时间价值不超过价格容差 1e-8、价格不低于波动率 500% 时的理论价、迭代不收敛时为 NaN。
 *   `implied_forward(strikes, call_prices, put_prices, t, rate) -> float`: 按认购-认沽平价反推远期。
 *   `year_fraction(start, end) -> float`: 按自然日 365 天计的年化期限。
+*   `fit_smile(strikes, ivs, forward, t, model="svi", weights=None, beta=1.0, expiry_date=None) -> VolSmile`: 拟合一个到期日的波动率微笑。`model="svi"` 用 SVI 原始参数 `w(k) = a + b(ρ(k−m) + sqrt((k−m)² + σ²))`（`w` 为总方差 σ²t，`k = ln(K/F)`），按 Zeliade 准显式法标定：固定 (m, σ) 后对其余参数做带约束的线性最小二乘、精确求解，外层在 (m, σ) 上用 Nelder-Mead 搜索；约束保证 `a ≥ 0` 与 Lee 矩条件 `b(1+|ρ|) ≤ 4`。`model="sabr"` 用 Hagan（2002）对数正态近似，β 固定（默认 1），拟合 α、ρ、ν。`weights` 为各点权重，不填等权；SVI 在总方差上、SABR 在波动率上做加权最小二乘。至少需要 SVI 5 个、SABR 3 个报价；输入不合法时抛 `ValueError` 并写明原因。
+*   `fit_surface(chain, model="svi", beta=1.0) -> VolSurface`: 由期权链（`option_chain` / `option_chains` 的输出，需含 `expiry_date`、`t`、`forward`、`strike`、`option_type`、`iv` 列）按到期日拟合，每组用自己的远期价格。每个行权价只取虚值一侧（低于远期用认沽，否则用认购），剔除 `iv` 为 NaN 的合约；有效报价不足、远期或期限缺失的到期日记入 `failures`，同一到期日出现不同远期价格（多个标的同一到期日）时报错。多个到期日在 Rust 中并行拟合，本机（6 核）实测原油期权 3 个到期日共 139 个报价，SVI 约 9 毫秒、SABR 约 5 毫秒。
+*   `VolSmile`: `model`、`forward`、`t`、`params`（SVI 为 `a`、`b`、`rho`、`m`、`sigma`，总方差口径；SABR 为 `alpha`、`beta`、`rho`、`nu`）、`rmse`（拟合点上隐含波动率的加权均方根误差）、`n_points`、`converged`、`k_range`（参与拟合的对数在值程度范围，范围外是外推）、`butterfly_min_g`（`k_range` 内 Gatheral 密度函数 g(k) 的最小值）、`butterfly_arbitrage`（g 小于 0，即范围内存在蝶式套利）、`expiry_date`；`vol(strike)` / `total_variance(strike)` 取行权价处的波动率、总方差。行权价范围窄或报价噪声大时，SVI 的 ρ、m、σ 在相邻时刻之间可能大幅跳动而拟合曲线基本不变，需要稳定参数时用 SABR。
+*   `VolSurface`: `smiles`（到期日 → `VolSmile`）、`expiries`（按期限升序）、`failures`（到期日 → 未能拟合的原因）、`calendar_arbitrage`（相邻到期日在共同拟合范围内远月总方差低于近月的 (近, 远) 对）；`smile(expiry_date)` 取单个到期日，未能拟合时报出原因；`vol(strike, t)` 取任意期限 t（年）的波动率：在相邻两个到期日之间，远期按期限线性插值，在 `k = ln(K/F(t))` 处对两条微笑的总方差按期限线性插值，t 超出已拟合的期限范围时报错、不外推。只检查、不修正套利。
 *   `parse_option_symbol(symbol) -> Optional[OptionSymbol]`: 解析期货交易所期权代码（`m2701-C-3100`、`m2703-MS-C-3300`、`SR701C5700`、`cu2612P94000`、`IO2612-C-4000`），得到 `underlying`、`option_type`、`strike`；代码不含到期日，ETF 期权数字代码返回 `None`。
 
 当前限制：保证金、行权与到期结算仍按引擎现有规则（单腿保证金模型、到期按内在价值现金结算），见[第 8 章](../textbook/08_options.md)。

@@ -3752,3 +3752,54 @@ def _option_black76_implied_vol(
     sigma_high: float,
     max_iter: int,
 ) -> numpy.ndarray: ...
+def _svi_fit(
+    k: numpy.ndarray,
+    w: numpy.ndarray,
+    weight: numpy.ndarray,
+    offsets: numpy.ndarray,
+    sigma_low: float,
+    sigma_high: float,
+    m_margin: float,
+    xtol: float,
+    ftol: float,
+    max_iter: int,
+) -> tuple[
+    numpy.ndarray,
+    numpy.ndarray,
+    numpy.ndarray,
+    numpy.ndarray,
+    numpy.ndarray,
+    numpy.ndarray,
+    numpy.ndarray,
+]: ...
+def _svi_total_variance(
+    k: numpy.ndarray,
+    a: numpy.ndarray,
+    b: numpy.ndarray,
+    rho: numpy.ndarray,
+    m: numpy.ndarray,
+    sigma: numpy.ndarray,
+) -> numpy.ndarray: ...
+def _sabr_fit(
+    forward: numpy.ndarray,
+    t: numpy.ndarray,
+    k: numpy.ndarray,
+    vol: numpy.ndarray,
+    weight: numpy.ndarray,
+    offsets: numpy.ndarray,
+    beta: float,
+    xtol: float,
+    ftol: float,
+    max_iter: int,
+) -> tuple[
+    numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray
+]: ...
+def _sabr_vol(
+    forward: numpy.ndarray,
+    k: numpy.ndarray,
+    t: numpy.ndarray,
+    alpha: numpy.ndarray,
+    beta: float,
+    rho: numpy.ndarray,
+    nu: numpy.ndarray,
+) -> numpy.ndarray: ...
