@@ -171,6 +171,37 @@ def _split_close_legs(
     return legs
 
 
+def _resolve_with_offset_book(
+    trader_gateway: Any,
+    symbol: str,
+    side: str,
+    quantity: float,
+    position_effect: str,
+    reduce_only: bool,
+) -> list[tuple[str, float]] | None:
+    """柜台网关有本地持仓账(CTP 的 ``closable_quantity`` / ``split_close``)时定开平.
+
+    ``close``: 按持仓账拆平今/平昨。``auto``: 先平到可平数量, 余量开仓(只减仓时
+    不开仓, 没有可平持仓则拒绝)。不在下单路径上查询持仓; 可平不足或持仓账未同步时
+    抛 ``ValueError``。网关没有持仓账时返回 None, 由调用方走原有逻辑。
+    """
+    split_close = getattr(trader_gateway, "split_close", None)
+    if not callable(split_close):
+        return None
+    if position_effect == "close":
+        return list(split_close(symbol, side, quantity))
+    closable_quantity = getattr(trader_gateway, "closable_quantity", None)
+    if not callable(closable_quantity):
+        return None
+    close_qty = min(quantity, float(closable_quantity(symbol, side)))
+    legs = list(split_close(symbol, side, close_qty)) if close_qty > 0 else []
+    if quantity > close_qty and not reduce_only:
+        legs.append(("open", quantity - close_qty))
+    if not legs:
+        raise ValueError(f"{symbol} 只减仓委托没有可平持仓")
+    return legs
+
+
 def resolve_live_order_legs(
     trader_gateway: Any,
     capability: BrokerCapability,
@@ -188,6 +219,12 @@ def resolve_live_order_legs(
     declares it handles reversal itself via `"auto_reverse" in capability.features`.
     """
     normalized_effect = str(position_effect).strip().lower()
+    if quantity > 0 and normalized_effect in {"auto", "close"}:
+        legs = _resolve_with_offset_book(
+            trader_gateway, symbol, side, quantity, normalized_effect, reduce_only
+        )
+        if legs is not None:
+            return legs
     if quantity <= 0 or reduce_only:
         return [(normalized_effect, quantity)]
 
@@ -799,16 +836,36 @@ class BrokerOrderSubmitter:
                 reason=reject_reason,
             )
             return OrderReceipt(group_id="", order_ids=(), legs=(), failure="rejected")
-        order_legs = resolve_live_order_legs(
-            trader_gateway=self._trader_gateway,
-            capability=capability,
-            symbol=symbol,
-            side=side,
-            quantity=quantity,
-            position_effect=normalized_position_effect,
-            reduce_only=reduce_only,
-            payload_field=self._payload_field,
-        )
+        try:
+            order_legs = resolve_live_order_legs(
+                trader_gateway=self._trader_gateway,
+                capability=capability,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                position_effect=normalized_position_effect,
+                reduce_only=reduce_only,
+                payload_field=self._payload_field,
+            )
+        except ValueError as exc:
+            # 平仓拆分失败(可平不足、持仓账未同步)作为本地拒单, 写明原因
+            record_reject(
+                strategy_id=owner_strategy_id,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                client_order_id="",
+                reason=str(exc),
+            )
+            self._emit_risk_reject(
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                price=price,
+                owner_strategy_id=owner_strategy_id,
+                reason=str(exc),
+            )
+            return OrderReceipt(group_id="", order_ids=(), legs=(), failure="rejected")
         request_client_order_id = client_order_id or self._next_client_order_id()
         client_order_ids = build_live_order_client_ids(
             request_client_order_id=request_client_order_id,
