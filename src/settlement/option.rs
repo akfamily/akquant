@@ -5,7 +5,7 @@ use chrono::{Datelike, NaiveDate};
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 
-use super::handler::{SettlementHandler, SettlementTask};
+use super::handler::{FuturesDelivery, SettlementHandler, SettlementTask};
 
 /// Handles Option Expiration and Settlement
 #[derive(Debug, Clone, Default)]
@@ -62,6 +62,22 @@ impl OptionSettlementHandler {
                 deferred.push(symbol.clone());
                 continue;
             };
+            // 标的登记为期货: 实值行权(履约)转为标的期货持仓, 其余放弃; 不做现金结算
+            if let Some(futures) = instr
+                .underlying_symbol()
+                .and_then(|u| instruments.get(u.as_str()))
+                .filter(|u| u.asset_type == AssetType::Futures && !u.multiplier().is_zero())
+            {
+                tasks.push(futures_option_expiry_task(
+                    symbol,
+                    instr,
+                    futures,
+                    *qty,
+                    underlying_price,
+                    expiry_date_int,
+                ));
+                continue;
+            }
             let payoff_per_unit = match instr.option_type() {
                 Some(OptionType::Call) => (underlying_price - strike).max(Decimal::ZERO),
                 Some(OptionType::Put) => (strike - underlying_price).max(Decimal::ZERO),
@@ -84,10 +100,82 @@ impl OptionSettlementHandler {
                 settlement_price: Some(underlying_price),
                 reason: "expiry".to_string(),
                 description: format!("Option Expiry for {symbol}"),
+                delivery: None,
             });
         }
 
         (tasks, deferred)
+    }
+}
+
+/// 期货期权到期: 实值的多头行权、空头履约, 按行权价获得标的期货持仓; 其余放弃.
+///
+/// 依《上海期货交易所期权交易管理办法》第三十四、三十五条(大商所、郑商所、广期所同):
+/// 以到期日标的期货结算价判定, 看涨期权行权价小于结算价、看跌期权行权价大于结算价的
+/// 持仓行权, 其他视作放弃; 看涨期权买方获得买持仓、卖方获得卖持仓, 看跌期权相反。
+/// 期货数量按期权与期货的合约乘数折算。
+fn futures_option_expiry_task(
+    symbol: &str,
+    option: &Instrument,
+    futures: &Instrument,
+    quantity: Decimal,
+    underlying_settlement: Decimal,
+    expiry_date: u32,
+) -> SettlementTask {
+    let strike = option.strike_price().unwrap_or(Decimal::ZERO);
+    let option_type = option.option_type();
+    let in_the_money = match option_type {
+        Some(OptionType::Call) => strike < underlying_settlement,
+        Some(OptionType::Put) => strike > underlying_settlement,
+        None => false,
+    };
+    let (reason, settlement_type, description, delivery) = if in_the_money {
+        let direction = if option_type == Some(OptionType::Call) {
+            Decimal::ONE
+        } else {
+            Decimal::NEGATIVE_ONE
+        };
+        let futures_quantity = quantity * option.multiplier() / futures.multiplier() * direction;
+        let (reason, action) = if quantity > Decimal::ZERO {
+            ("exercise", "行权")
+        } else {
+            ("assignment", "履约")
+        };
+        let side = if futures_quantity > Decimal::ZERO { "买" } else { "卖" };
+        (
+            reason,
+            Some("physical".to_string()),
+            format!(
+                "{symbol} 到期{action}: 标的结算价 {underlying_settlement}, 按行权价 {strike} 获得 {} {side}持仓 {}",
+                futures.symbol(),
+                futures_quantity.abs()
+            ),
+            Some(FuturesDelivery {
+                symbol: futures.symbol().to_string(),
+                quantity: futures_quantity,
+                price: strike,
+            }),
+        )
+    } else {
+        (
+            "abandon",
+            None,
+            format!("{symbol} 到期放弃: 标的结算价 {underlying_settlement}, 行权价 {strike}, 不是实值"),
+            None,
+        )
+    };
+    SettlementTask {
+        symbol: symbol.to_string(),
+        asset_type: AssetType::Option,
+        expiry_date: Some(expiry_date),
+        quantity,
+        cash_flow: Decimal::ZERO,
+        fee: Decimal::ZERO,
+        settlement_type,
+        settlement_price: Some(underlying_settlement),
+        reason: reason.to_string(),
+        description,
+        delivery,
     }
 }
 
