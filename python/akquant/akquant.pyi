@@ -3243,6 +3243,15 @@ class StrategyContext:
         """
         ...
 
+    def request_exercise(self, symbol: str, quantity: typing.Any) -> None:
+        r"""
+        提交期货期权行权申请, 在当日日终结算时执行.
+
+        :param symbol: 期权合约代码
+        :param quantity: 行权手数
+        """
+        ...
+
     def cancel_order(self, order_id: str) -> None:
         r"""
         取消订单.

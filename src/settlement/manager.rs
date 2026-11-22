@@ -174,10 +174,36 @@ impl SettlementManager {
         risk_config: &RiskConfig,
         timestamp: i64,
         bar_index: usize,
+        exercise_requests: &[crate::settlement::ExerciseRequest],
     ) -> ExpirySettlement {
-        let (mut tasks, deferred) =
+        // 行权申请先于到期处理: 到期日申请行权的部分不再参与自动行权判定
+        let (mut tasks, warnings) =
+            super::option::early_exercise_tasks(exercise_requests, portfolio, instruments);
+        for warning in warnings {
+            log::warn!(target: "akquant::settlement", "{warning}");
+        }
+        let (expiry_tasks, deferred) =
             self.option_handler
                 .check_with_deferred(date, portfolio, instruments, last_prices);
+        // 同一合约当日已申请行权的数量不再参与到期判定
+        let exercised: HashMap<String, Decimal> = tasks
+            .iter()
+            .map(|task| (task.symbol.clone(), task.quantity))
+            .collect();
+        tasks.extend(expiry_tasks.into_iter().filter_map(|mut task| {
+            if let Some(done) = exercised.get(&task.symbol) {
+                let remaining = task.quantity - *done;
+                if remaining.is_zero() {
+                    return None;
+                }
+                if let Some(delivery) = task.delivery.as_mut() {
+                    delivery.quantity = delivery.quantity * remaining / task.quantity;
+                }
+                task.cash_flow = task.cash_flow * remaining / task.quantity;
+                task.quantity = remaining;
+            }
+            Some(task)
+        }));
         for symbol in self.note_deferred(&deferred) {
             log::warn!(
                 target: "akquant::settlement",
@@ -290,7 +316,12 @@ impl SettlementManager {
             }
 
             // 3. 记合成平仓成交, 使到期平仓进入 trades_df / 交易统计
-            let trade_id = format!("expiry:{}:{}", task.symbol, date);
+            let early = task.reason == "early_exercise";
+            let trade_id = if early {
+                format!("early_exercise:{}:{}", task.symbol, date)
+            } else {
+                format!("expiry:{}:{}", task.symbol, date)
+            };
             let trade = Trade {
                 id: trade_id.clone(),
                 order_id: trade_id,
@@ -315,17 +346,21 @@ impl SettlementManager {
             trade_tracker.process_trade(
                 &trade,
                 multiplier,
-                Some("__expiry__"),
+                Some(if early { "__exercise__" } else { "__expiry__" }),
                 None,
                 portfolio_value,
             );
 
             // 4. 期货期权行权(履约): 按行权价建立标的期货持仓
             if let Some(delivery) = &task.delivery {
+                let delivery_id = if early {
+                    format!("early_exercise_futures:{}:{date}", task.symbol)
+                } else {
+                    format!("exercise:{}:{date}", task.symbol)
+                };
                 cash_flow += apply_futures_delivery(
                     delivery,
-                    &task.symbol,
-                    date,
+                    delivery_id,
                     portfolio,
                     trade_tracker,
                     instruments,
@@ -552,12 +587,11 @@ impl SettlementManager {
 ///
 /// 记账与普通期货成交一致: 保证金账户只入账已实现盈亏(与原有反向持仓对冲时),
 /// 现金账户按名义金额收付。不收期货交易手续费(行权不是期货成交, 行权费已记在期权一侧)。
-/// 合成成交 `id = "exercise:<期权>:<date>"`, tag `__exercise__`。
+/// 合成成交 tag `__exercise__`, id 由调用方给出。
 #[allow(clippy::too_many_arguments)]
 fn apply_futures_delivery(
     delivery: &crate::settlement::handler::FuturesDelivery,
-    option_symbol: &str,
-    date: NaiveDate,
+    trade_id: String,
     portfolio: &mut Portfolio,
     trade_tracker: &mut TradeTracker,
     instruments: &HashMap<String, Instrument>,
@@ -609,7 +643,6 @@ fn apply_futures_delivery(
     } else {
         PositionEffect::Open
     };
-    let trade_id = format!("exercise:{option_symbol}:{date}");
     let trade = Trade {
         id: trade_id.clone(),
         order_id: trade_id,
@@ -1110,6 +1143,7 @@ mod tests {
             &RiskConfig::new(),
             0,
             0,
+            &[],
         );
         let fee_of = |s: &str| {
             settlement
@@ -1183,6 +1217,7 @@ mod tests {
             &risk,
             0,
             0,
+            &[],
         );
         assert_eq!(portfolio.cash, dec!(100100)); // (120-110)*10
         assert_eq!(settlement.events[0].cash_flow, dec!(100));
@@ -1230,6 +1265,7 @@ mod tests {
             &RiskConfig::new(),
             0,
             0,
+            &[],
         );
         assert_eq!(settlement.events.len(), 1);
         assert!(!portfolio.positions.contains_key("STK"));
@@ -1324,6 +1360,7 @@ mod tests {
             &RiskConfig::new(),
             0,
             0,
+            &[],
         );
 
         assert_eq!(
@@ -1410,6 +1447,7 @@ mod tests {
             &risk,
             0,
             0,
+            &[],
         );
 
         // 与普通成交一致, 数量归零的期货项保留为 0
@@ -1424,5 +1462,105 @@ mod tests {
         // 期权按 0 平仓(亏权利金 800) + 期货对冲(盈 500)
         assert_eq!(tracker.closed_trades.len(), 2);
         assert_eq!(tracker.total_pnl, dec!(-300));
+    }
+
+    fn settle_with_requests(
+        date: NaiveDate,
+        portfolio: &mut Portfolio,
+        instruments: &HashMap<String, Instrument>,
+        requests: &[crate::settlement::ExerciseRequest],
+    ) -> ExpirySettlement {
+        use rust_decimal_macros::dec;
+        let prices = HashMap::from([("m2401".to_string(), dec!(3100))]);
+        SettlementManager::new().settle_expiries(
+            date,
+            portfolio,
+            &mut TradeTracker::new(),
+            instruments,
+            &prices,
+            &MarketManager::new(),
+            &RiskConfig::new(),
+            0,
+            0,
+            requests,
+        )
+    }
+
+    /// 到期前申请行权: 不论虚实值都按行权价得到期货持仓; 申请超过持仓时按持仓执行。
+    #[test]
+    fn early_exercise_converts_requested_quantity_before_expiry() {
+        use crate::model::types::OptionType;
+        use crate::settlement::ExerciseRequest;
+        use rust_decimal_macros::dec;
+
+        let instruments = futures_option_fixture(&[
+            ("m2401-C-3200", OptionType::Call, dec!(3200)),
+            ("m2401-P-3000", OptionType::Put, dec!(3000)),
+        ]);
+        let mut portfolio = Portfolio {
+            cash: dec!(0),
+            positions: Arc::new(HashMap::from([
+                ("m2401-C-3200".to_string(), dec!(3)),
+                ("m2401-P-3000".to_string(), dec!(1)),
+            ])),
+            available_positions: Arc::new(HashMap::new()),
+        };
+        let requests = [
+            ExerciseRequest { symbol: "m2401-C-3200".into(), quantity: dec!(2) },
+            ExerciseRequest { symbol: "m2401-P-3000".into(), quantity: dec!(1) },
+            ExerciseRequest { symbol: "m2401-P-3000".into(), quantity: dec!(1) },
+        ];
+        // 到期日 20231207 之前的结算
+        let settlement = settle_with_requests(
+            NaiveDate::from_ymd_opt(2023, 12, 5).unwrap(),
+            &mut portfolio,
+            &instruments,
+            &requests,
+        );
+
+        // 认购 2 手 -> 买持仓 2; 认沽申请 2 手只有 1 手 -> 卖持仓 1
+        assert_eq!(portfolio.positions.get("m2401"), Some(&dec!(1)));
+        assert_eq!(portfolio.positions.get("m2401-C-3200"), Some(&dec!(1)));
+        assert!(!portfolio.positions.contains_key("m2401-P-3000"));
+        let event = |s: &str| settlement.events.iter().find(|e| e.symbol == s).unwrap();
+        assert_eq!(event("m2401-C-3200").reason, "early_exercise");
+        assert_eq!(event("m2401-C-3200").quantity_closed, dec!(2));
+        assert_eq!(event("m2401-C-3200").fee, dec!(1.2));
+        assert_eq!(event("m2401-P-3000").quantity_closed, dec!(1));
+        // 现金 = -2×3200×10 + 1×3000×10 - 行权费 (2+1)×0.6
+        assert_eq!(portfolio.cash, dec!(-34001.8));
+    }
+
+    /// 到期日申请行权一部分, 其余按到期规则自动行权, 两部分不重复。
+    #[test]
+    fn early_exercise_on_expiry_day_leaves_rest_to_automatic_exercise() {
+        use crate::model::types::OptionType;
+        use crate::settlement::ExerciseRequest;
+        use rust_decimal_macros::dec;
+
+        let instruments =
+            futures_option_fixture(&[("m2401-C-3000", OptionType::Call, dec!(3000))]);
+        let mut portfolio = Portfolio {
+            cash: dec!(0),
+            positions: Arc::new(HashMap::from([("m2401-C-3000".to_string(), dec!(3))])),
+            available_positions: Arc::new(HashMap::new()),
+        };
+        let requests = [ExerciseRequest { symbol: "m2401-C-3000".into(), quantity: dec!(1) }];
+        let settlement = settle_with_requests(
+            NaiveDate::from_ymd_opt(2023, 12, 8).unwrap(),
+            &mut portfolio,
+            &instruments,
+            &requests,
+        );
+
+        assert_eq!(portfolio.positions.get("m2401"), Some(&dec!(3)));
+        assert!(!portfolio.positions.contains_key("m2401-C-3000"));
+        let closed: Vec<(&str, Decimal)> = settlement
+            .events
+            .iter()
+            .map(|e| (e.reason.as_str(), e.quantity_closed))
+            .collect();
+        assert_eq!(closed, vec![("early_exercise", dec!(1)), ("exercise", dec!(2))]);
+        assert_eq!(portfolio.cash, dec!(-90001.8)); // -3×3000×10 - 3×0.6
     }
 }

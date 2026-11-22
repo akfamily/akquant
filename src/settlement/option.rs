@@ -5,7 +5,7 @@ use chrono::{Datelike, NaiveDate};
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 
-use super::handler::{FuturesDelivery, SettlementHandler, SettlementTask};
+use super::handler::{ExerciseRequest, FuturesDelivery, SettlementHandler, SettlementTask};
 
 /// Handles Option Expiration and Settlement
 #[derive(Debug, Clone, Default)]
@@ -106,6 +106,88 @@ impl OptionSettlementHandler {
 
         (tasks, deferred)
     }
+}
+
+/// 把当日的行权申请转为结算任务, 返回 `(tasks, warnings)`.
+///
+/// 同一合约的申请合并; 行权数量取申请合计与结算时多头持仓的较小者, 二者不等或
+/// 无法行权时在 `warnings` 中写明原因。只有标的登记为期货的期权(美式)可以行权。
+pub fn early_exercise_tasks(
+    requests: &[ExerciseRequest],
+    portfolio: &Portfolio,
+    instruments: &HashMap<String, Instrument>,
+) -> (Vec<SettlementTask>, Vec<String>) {
+    let mut requested: Vec<(String, Decimal)> = Vec::new();
+    for request in requests {
+        match requested.iter_mut().find(|(s, _)| *s == request.symbol) {
+            Some((_, quantity)) => *quantity += request.quantity,
+            None => requested.push((request.symbol.clone(), request.quantity)),
+        }
+    }
+    let mut tasks = Vec::new();
+    let mut warnings = Vec::new();
+    for (symbol, quantity) in requested {
+        let Some(option) = instruments.get(&symbol) else {
+            warnings.push(format!("行权申请 {symbol} 未执行: 合约未登记"));
+            continue;
+        };
+        let Some(futures) = option
+            .underlying_symbol()
+            .and_then(|u| instruments.get(u.as_str()))
+            .filter(|u| u.asset_type == AssetType::Futures && !u.multiplier().is_zero())
+        else {
+            warnings.push(format!("行权申请 {symbol} 未执行: 标的不是登记为期货的合约"));
+            continue;
+        };
+        let long = portfolio
+            .positions
+            .get(&symbol)
+            .copied()
+            .unwrap_or(Decimal::ZERO);
+        if long <= Decimal::ZERO {
+            warnings.push(format!(
+                "行权申请 {symbol} {quantity} 手未执行: 结算时没有多头持仓"
+            ));
+            continue;
+        }
+        let executed = quantity.min(long);
+        if executed < quantity {
+            warnings.push(format!(
+                "行权申请 {symbol} {quantity} 手, 结算时多头持仓只有 {long} 手, 按 {executed} 手行权"
+            ));
+        }
+        // 申请行权不论虚实值都执行(行权与否由买方决定)
+        let strike = option.strike_price().unwrap_or(Decimal::ZERO);
+        let direction = if option.option_type() == Some(OptionType::Call) {
+            Decimal::ONE
+        } else {
+            Decimal::NEGATIVE_ONE
+        };
+        let futures_quantity = executed * option.multiplier() / futures.multiplier() * direction;
+        let side = if futures_quantity > Decimal::ZERO { "买" } else { "卖" };
+        tasks.push(SettlementTask {
+            symbol: symbol.clone(),
+            asset_type: AssetType::Option,
+            expiry_date: option.expiry_date(),
+            quantity: executed,
+            cash_flow: Decimal::ZERO,
+            fee: Decimal::ZERO,
+            settlement_type: Some("physical".to_string()),
+            settlement_price: None,
+            reason: "early_exercise".to_string(),
+            description: format!(
+                "{symbol} 申请行权 {executed} 手: 按行权价 {strike} 获得 {} {side}持仓 {}",
+                futures.symbol(),
+                futures_quantity.abs()
+            ),
+            delivery: Some(FuturesDelivery {
+                symbol: futures.symbol().to_string(),
+                quantity: futures_quantity,
+                price: strike,
+            }),
+        });
+    }
+    (tasks, warnings)
 }
 
 /// 期货期权到期: 实值的多头行权、空头履约, 按行权价获得标的期货持仓; 其余放弃.

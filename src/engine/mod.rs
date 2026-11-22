@@ -242,6 +242,10 @@ mod tests {
             },
             last_event_ts_in_day: Some(123456000),
             order_ledgers: HashMap::new(),
+            exercise_requests: vec![crate::settlement::ExerciseRequest {
+                symbol: "m2401-C-3000".to_string(),
+                quantity: Decimal::from(2),
+            }],
         };
 
         // 旧格式存档: msgpack 数组缺少末尾三个交易日进度字段, 读入时应为 None
@@ -265,6 +269,7 @@ mod tests {
         assert_eq!(old_decoded.last_settled_trading_day, None);
         assert_eq!(old_decoded.last_corp_action_date, None);
         assert_eq!(old_decoded.last_event_ts_in_day, None);
+        assert!(old_decoded.exercise_requests.is_empty());
         assert_eq!(
             old_decoded.session_config,
             crate::engine::core::SessionConfig::default()
@@ -272,6 +277,9 @@ mod tests {
 
         let encoded: Vec<u8> = rmp_serde::to_vec(&snapshot).unwrap();
         let decoded: EngineSnapshot = rmp_serde::from_slice(&encoded).unwrap();
+        assert_eq!(decoded.exercise_requests.len(), 1);
+        assert_eq!(decoded.exercise_requests[0].symbol, "m2401-C-3000");
+        assert_eq!(decoded.exercise_requests[0].quantity, Decimal::from(2));
 
         assert_eq!(decoded.current_time, 123456789);
         assert_eq!(

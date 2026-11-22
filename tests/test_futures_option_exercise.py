@@ -5,10 +5,11 @@
 行权与履约双方都收手续费。
 """
 
-from typing import Any, Dict, List, Literal, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 import akquant
 import pandas as pd
+import pytest
 from akquant import BarBatch, Strategy
 
 DAYS = pd.date_range("2023-12-05 15:00", periods=5, freq="B", tz="Asia/Shanghai")
@@ -61,7 +62,7 @@ class _HoldToExpiry(Strategy):
         self.events.append(event)
 
 
-def _run(futures_registered: bool) -> Tuple[_HoldToExpiry, Any]:
+def _run(futures_registered: bool, strategy: Optional[Any] = None) -> Tuple[Any, Any]:
     data = {FUTURES: _bars(FUTURES, FUTURES_CLOSES)}
     configs = []
     if futures_registered:
@@ -84,7 +85,7 @@ def _run(futures_registered: bool) -> Tuple[_HoldToExpiry, Any]:
                 option_margin_model="CHINA_SINGLE_LEG",
             )
         )
-    strategy = _HoldToExpiry()
+    strategy = _HoldToExpiry() if strategy is None else strategy
     result = akquant.run_backtest(
         data=data,
         strategy=strategy,
@@ -143,3 +144,49 @@ def test_futures_options_cash_settle_when_underlying_not_registered_as_futures()
     after = strategy.positions_by_day[3]
     assert after[FUTURES] == 0.0
     assert {e["reason"] for e in strategy.events} == {"expiry"}
+
+
+class _ExerciseEarly(_HoldToExpiry):
+    """第 2 个交易日(到期前)申请行权 1 手实值认购, 并逐项记录不能行权的报错."""
+
+    def on_bars(self, batch: BarBatch) -> None:
+        super().on_bars(batch)
+        if len(self.positions_by_day) != 2:
+            return
+        self.exercise("m2401-C-3000", 1)
+        self.errors: Dict[str, str] = {}
+        for name, args in {
+            "short": ("m2401-P-3200", None),  # 空头不能行权
+            "too_many": ("m2401-C-3000", 5),  # 超过多头持仓
+            "futures": (FUTURES, None),  # 不是期权
+        }.items():
+            with pytest.raises(ValueError) as exc:
+                self.exercise(*args)
+            self.errors[name] = str(exc.value)
+
+
+def test_early_exercise_converts_at_settlement_of_request_day() -> None:
+    """到期前申请行权 1 手: 当日结算后得期货买持仓 1 手, 余下 1 手到期自动行权."""
+    strategy, _ = _run(futures_registered=True, strategy=_ExerciseEarly())
+
+    assert strategy.positions_by_day[1]["m2401-C-3000"] == 2.0  # 申请当日尚未结算
+    assert strategy.positions_by_day[2][FUTURES] == 1.0
+    assert strategy.positions_by_day[2]["m2401-C-3000"] == 1.0
+    early = [e for e in strategy.events if e["reason"] == "early_exercise"]
+    assert [(e["symbol"], e["quantity_closed"], e["fee"]) for e in early] == [
+        ("m2401-C-3000", 1.0, 1.0)
+    ]
+    # 到期: 余下 1 手认购行权 + 认沽履约 1 手 -> 期货共 3 手
+    assert strategy.positions_by_day[3][FUTURES] == 3.0
+    assert strategy.errors == {
+        "short": "m2401-P-3200 没有多头持仓(当前 -1), 只有买方可以行权",
+        "too_many": "m2401-C-3000 申请行权 5 手, 超过多头持仓 2 手",
+        "futures": "m2401 不是期权合约, 不能行权",
+    }
+
+
+def test_exercise_rejected_when_underlying_not_futures() -> None:
+    """标的不是登记为期货的合约(欧式、到期现金结算)时不能提前行权."""
+    strategy = _ExerciseEarly()
+    with pytest.raises(ValueError, match=r"只有期货期权\(美式\)可以提前行权"):
+        _run(futures_registered=False, strategy=strategy)

@@ -1173,6 +1173,10 @@ fn settle_day_close(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_t
         .and_then(|r| r.next_session_day(day).ok())
         .or_else(|| day.succ_opt())
         .unwrap_or(day);
+    // 当日行权申请随本次结算执行
+    let exercise_requests = std::mem::take(
+        &mut *engine.exercise_requests.lock().expect("行权申请锁被污染"),
+    );
     let expiry_settlement = engine.settlement_manager.settle_expiries(
         entering_day,
         &mut engine.state.portfolio,
@@ -1183,6 +1187,7 @@ fn settle_day_close(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_t
         &engine.risk_manager.config,
         close_ts,
         engine.bar_count,
+        &exercise_requests,
     );
     let settlement_prices = engine.last_prices.read().expect("last_prices 读锁被污染");
     let settlement_ctx = crate::settlement::manager::SettlementContext {

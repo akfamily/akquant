@@ -70,6 +70,7 @@ from .strategy_events import (
 from .strategy_events import (
     on_timer_event as _on_timer_event_impl,
 )
+from .strategy_exercise import exercise as _exercise_impl
 from .strategy_framework_hooks import (
     call_user_callback as _call_user_callback_impl,
 )
@@ -4086,6 +4087,22 @@ class Strategy:
             Optional[str]: 平仓单的订单号; 当前无持仓(无需交易)时为 None
         """
         return _close_position_impl(self, symbol)
+
+    def exercise(self, symbol: str, quantity: Optional[float] = None) -> None:
+        """
+        提交期货期权行权申请(美式提前行权), 在当日日终结算时执行.
+
+        只有标的登记为期货的期权可以行权; 不论虚实值都按申请执行, 按行权价获得标的
+        期货持仓(认购得买持仓、认沽得卖持仓), 收行权手续费。结算时多头持仓少于
+        申请数量的按持仓执行并记警告。结果以 ``on_expiry`` 事件送达(``reason`` 为
+        ``early_exercise``)。到期日未申请的持仓按到期规则自动行权或放弃。实盘暂不支持。
+
+        :param symbol: 期权合约代码
+        :param quantity: 行权手数; 不填为全部多头持仓
+        :raises ValueError: 不是期货期权、已到期、没有多头持仓或数量超过持仓,
+            信息中写明具体原因
+        """
+        _exercise_impl(self, symbol, quantity)
 
     def short(
         self,

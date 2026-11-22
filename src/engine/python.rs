@@ -717,6 +717,7 @@ impl Engine {
             margin_accrued_interest: Decimal::ZERO,
             margin_daily_interest: Decimal::ZERO,
             recent_expiry_events: Vec::new(),
+            exercise_requests: Arc::default(),
             snapshot_time: 0,
             stream_callback: None,
             stream_run_id: None,
@@ -843,6 +844,11 @@ impl Engine {
             },
             current_trading_day: self.current_trading_day,
             last_settled_trading_day: self.last_settled_trading_day,
+            exercise_requests: self
+                .exercise_requests
+                .lock()
+                .expect("行权申请锁被污染")
+                .clone(),
             last_corp_action_date: self.last_corp_action_date,
             session_config: self.session_config.clone(),
             last_event_ts_in_day: self.last_event_ts_in_day,
@@ -899,6 +905,7 @@ impl Engine {
         // 收盘定时器与跨度由首个事件按当日重新登记。
         self.current_trading_day = snapshot.current_trading_day;
         self.last_settled_trading_day = snapshot.last_settled_trading_day;
+        *self.exercise_requests.lock().expect("行权申请锁被污染") = snapshot.exercise_requests;
         self.last_corp_action_date = snapshot.last_corp_action_date;
         self.session_config = snapshot.session_config;
         self.current_day_span = None;
@@ -1931,6 +1938,10 @@ impl Engine {
                 .expect("last_prices 读锁被污染")
                 .clone();
             let expiry_timestamp = self.terminal_result_timestamp().unwrap_or(0);
+        // 当日行权申请随本次结算执行
+        let exercise_requests = std::mem::take(
+            &mut *self.exercise_requests.lock().expect("行权申请锁被污染"),
+        );
             let settlement = self.settlement_manager.settle_expiries(
                 next_date,
                 &mut self.state.portfolio,
@@ -1941,6 +1952,7 @@ impl Engine {
                 &self.risk_manager.config,
                 expiry_timestamp,
                 self.bar_count,
+                &exercise_requests,
             );
             for event in &settlement.events {
                 log::info!(
