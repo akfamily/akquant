@@ -139,6 +139,8 @@ impl FrozenCash {
 }
 
 pub struct ContextInit {
+    /// 与引擎共享的行权申请列表
+    pub exercise_requests: Arc<Mutex<Vec<crate::settlement::ExerciseRequest>>>,
     pub cash: Decimal,
     pub previous_cash: Decimal,
     pub positions: Arc<HashMap<String, Decimal>>,
@@ -599,12 +601,15 @@ pub struct StrategyContext {
     /// 本槽订单账本(与引擎共享), 见 [`StrategyContext::order_events`]。
     pub(crate) order_ledger: Arc<Mutex<crate::order_ledger::OrderLedger>>,
     pub(crate) slot_ownership: Option<crate::order_ledger::SlotOwnership>,
+    /// 与引擎共享的期货期权行权申请列表, 见 [`StrategyContext::request_exercise`]。
+    pub(crate) exercise_requests: Arc<Mutex<Vec<crate::settlement::ExerciseRequest>>>,
 }
 
 impl StrategyContext {
     pub fn new(init: ContextInit) -> Self {
         let (frozen_cash_inputs, frozen_cash_value) = init.account_frozen_cash.into_state();
         StrategyContext {
+            exercise_requests: init.exercise_requests,
             orders: Vec::new(),
             canceled_order_ids: Vec::new(),
             active_orders: init.active_orders.as_ref().clone(),
@@ -853,6 +858,7 @@ impl StrategyContext {
             .collect();
 
         Ok(StrategyContext {
+            exercise_requests: Arc::default(),
             orders: Vec::new(),
             canceled_order_ids: Vec::new(),
             active_orders: active_orders.clone().unwrap_or_default(),
@@ -1348,6 +1354,27 @@ impl StrategyContext {
         Ok(())
     }
 
+    /// 提交期货期权行权申请, 在当日日终结算时执行.
+    ///
+    /// 由 ``Strategy.exercise`` 调用(参数校验在那里完成); 结算时行权数量取申请合计
+    /// 与多头持仓的较小者。
+    ///
+    /// :param symbol: 期权合约代码
+    /// :param quantity: 行权手数
+    fn request_exercise(&self, symbol: String, quantity: &Bound<'_, PyAny>) -> PyResult<()> {
+        let quantity = extract_decimal(quantity)?;
+        if quantity <= Decimal::ZERO {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "行权数量须为正数, 实际: {quantity}"
+            )));
+        }
+        self.exercise_requests
+            .lock()
+            .expect("行权申请锁被污染")
+            .push(crate::settlement::ExerciseRequest { symbol, quantity });
+        Ok(())
+    }
+
     /// 取消订单.
     ///
     /// :param order_id: 订单 ID
@@ -1740,6 +1767,7 @@ mod tests {
 
     fn ctx_with(sessions: ContextSessions, current_time: i64) -> StrategyContext {
         StrategyContext::new(ContextInit {
+            exercise_requests: Arc::default(),
             cash: Decimal::ZERO,
             previous_cash: Decimal::ZERO,
             positions: Arc::default(),

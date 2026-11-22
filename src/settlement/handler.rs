@@ -20,6 +20,25 @@ pub struct SettlementTask {
     pub settlement_price: Option<Decimal>,
     pub reason: String,
     pub description: String,
+    /// 期货期权行权(履约)交割的标的期货持仓; 现金结算与放弃为 None
+    pub delivery: Option<FuturesDelivery>,
+}
+
+/// 策略提交的期货期权行权申请, 在当日日终结算时执行
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExerciseRequest {
+    pub symbol: String,
+    pub quantity: Decimal,
+}
+
+/// 期货期权行权(履约)后按行权价获得的标的期货持仓
+#[derive(Debug, Clone)]
+pub struct FuturesDelivery {
+    pub symbol: String,
+    /// 带方向的期货数量: 正为买持仓, 负为卖持仓
+    pub quantity: Decimal,
+    /// 期货持仓价格(期权行权价)
+    pub price: Decimal,
 }
 
 /// Trait for handling settlement logic (e.g., Option Expiry, Futures Delivery)

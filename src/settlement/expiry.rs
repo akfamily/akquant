@@ -85,6 +85,7 @@ impl SettlementHandler for ExpirySettlementHandler {
                     "Expiry settlement for {symbol} ({:?})",
                     instr.settlement_type().unwrap_or(SettlementType::Cash)
                 ),
+                delivery: None,
             });
         }
         tasks

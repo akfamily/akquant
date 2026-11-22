@@ -730,6 +730,8 @@ config = BacktestConfig(
 
 到期平仓会作为一笔合成成交记入 `trades_df`（`order_tag="__expiry__"`、`order_id="expiry:<symbol>:<trading_date>"`），成交价期权取每单位内在价值、期货/股票取结算价，手续费为行权结算费；胜率等交易统计随之包含到期平仓，但该行的 `mae`/`mfe` 恒为 `0`（未回放持仓期内的价格历史）。合成成交**不会**出现在 `orders_df` / `executions` 中——它不是一笔订单。保证金账户期货到期时，`ExpiryEvent.cash_flow` 为平仓盈亏（与实际入账一致）；现金账户、股票、期权仍按到期现金流毛额计（`cash_flow - fee` 入账）。
 
+期货期权（期权的 `underlying_symbol` 登记为 `FUTURES` 合约）到期不做现金结算，而按交易所规则行权：以标的期货结算价判定，认购行权价低于、认沽行权价高于结算价的为实值，多头行权、空头履约，按**行权价**获得标的期货持仓（认购买方得买持仓、卖方得卖持仓，认沽相反，数量按期权与期货乘数折算），其余视作放弃。期权一侧记为价格 0 的合成平仓（`reason` 为 `exercise` / `assignment` / `abandon`，`settlement_type="physical"`），手续费为行权（履约）费、买卖双方都收；期货一侧记为按行权价的合成成交（`order_tag="__exercise__"`、`order_id="exercise:<期权>:<trading_date>"`），不收期货交易手续费，记账与普通期货成交相同（保证金账户只入账与原有反向持仓对冲的盈亏，现金账户按名义金额收付），`ExpiryEvent.cash_flow` 为该现金变动。依据《上海期货交易所期权交易管理办法》第三十四、三十五、四十二条，大商所、郑商所、广期所规则相同。未建模：到期日申请放弃或取消自动行权、行权时资金不足不予行权（第三十七条）。
+
 中国期权扩展推荐使用以下优先级口径：
 
 | 配置项 | 高优先级 | 中优先级 | 默认值 |
@@ -1033,6 +1035,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
     *   `liquidate_unmentioned=True` 时，会将未出现在目标字典中的现有持仓目标设为 `0`。
     *   执行顺序为先卖后买，减少现金约束导致的调仓失败。
     *   `rebalance_tolerance` 按组合市值比例跳过小偏差，降低无效换手。
+*   `exercise(symbol, quantity=None)`: 提交期货期权行权申请（美式提前行权），在当日日终结算时执行。只有标的登记为期货的期权可以行权（股指、ETF 期权为欧式，到期按结算价结算）；不论虚实值都按申请执行，按行权价获得标的期货持仓（认购得买持仓、认沽得卖持仓），收行权手续费；`quantity` 不填为全部多头持仓。不是期货期权、已到期、没有多头持仓或数量超过持仓时抛 `ValueError` 写明原因；结算时多头持仓少于申请数量的按持仓执行并记警告。结果以 `on_expiry` 事件送达（`reason="early_exercise"`），合成成交 tag 为 `__exercise__`。到期日未申请的持仓按到期规则自动行权或放弃。实盘暂不支持。
 *   `cancel_order(order_id: str | OrderReceipt | Order)`: 撤销指定订单。可传订单号、下单返回的 `OrderReceipt`（取首腿）或订单对象（取其 `id`）；其他类型抛 `TypeError`。
 *   `cancel_group(group_id: str | OrderReceipt)`: 按 `group_id` 撤销一个逻辑委托拆出的全部腿。传订单对象会抛 `TypeError`，撤单笔订单请用 `cancel_order`。
 *   `cancel_all_orders(symbol)`: 取消指定标的的所有挂单。如果不指定 `symbol`，则取消所有挂单。
