@@ -1053,6 +1053,8 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `cancel_order(order_id: str | OrderReceipt | Order)`: 撤销指定订单。可传订单号、下单返回的 `OrderReceipt`（取首腿）或订单对象（取其 `id`）；其他类型抛 `TypeError`。
 *   `cancel_group(group_id: str | OrderReceipt)`: 按 `group_id` 撤销一个逻辑委托拆出的全部腿。传订单对象会抛 `TypeError`，撤单笔订单请用 `cancel_order`。
 *   `cancel_all_orders(symbol)`: 取消指定标的的所有挂单。如果不指定 `symbol`，则取消所有挂单。
+*   `combine_positions(code, legs, quantity=1)`: 申请组合持仓，申请成功后按组合保证金收取。`code` 为交易所组合代码（如大商所、广期所期权 `STD` 跨式、`STG` 宽跨式，期货跨期 `SP`，以期货公司合约表为准）；`legs` 为 `[(第一腿, 每组手数), (第二腿, 每组手数)]`，正为多头、负为空头，顺序即组合合约代码中的腿序；各腿手数 = 每组手数 × `quantity`（组数），某条腿该方向持仓不足、代码含空格或 `&`、腿数不是 2、手数或组数不是整数时抛 `ValueError`。实盘经 CTP 组合申请（`ReqCombActionInsert`）提交：组合合约代码为 `"<code> <第一腿>&<第二腿>"`，买卖方向取第一腿持仓方向，手数为第一腿手数，等到交易所受理才返回；柜台或交易所拒绝时抛 `RuntimeError` 并带原因，5 秒内没有回报时抛 `RuntimeError`（结果不可知，须查询组合持仓后再决定是否重发）。回测与 paper 没有组合申请这一步，组合保证金由 `CHINA_COMMODITY_COMBINATION` 模型自动配对计算，本方法只做与实盘相同的校验。组合合约代码格式按 CTP 开发指南的期货组合（如 `SP m2601&m2605`）推定，期权组合尚未经实盘验证（SimNow 没有组合合约）。
+*   `uncombine_positions(code, legs, quantity=1)`: 申请拆分组合持仓，参数、校验与 `combine_positions` 相同；实盘经 CTP 组合申请的拆分方向提交，拆分后恢复按单腿保证金收取。
 *   `place_oco(first_order_id, second_order_id, group_id=None) -> str`: 创建 OCO 订单组。组内任一订单成交后，另一订单会被自动撤单。
 *   `place_bracket(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...) -> str`: 创建 Bracket 订单。先提交进场单，进场成交后自动提交止损/止盈；当止损与止盈同时存在时会自动绑定 OCO。
 

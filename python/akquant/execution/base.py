@@ -109,5 +109,10 @@ class ExecutionBackend(Protocol):
     def cancel_all_orders(self, symbol: str | None = None) -> None:
         """取消当前所有未完成的订单."""
 
+    def combine_positions(
+        self, code: str, legs: list[tuple[str, float]], uncombine: bool
+    ) -> None:
+        """申请(``uncombine=True`` 时拆分)组合持仓, ``legs`` 为两条腿带符号的总手数."""
+
     def capabilities(self) -> dict[str, Any]:
         """返回当前执行后端支持的能力标记."""

@@ -216,6 +216,12 @@ class CTPTraderAdapter:
         self._emit_execution_report(report)
         return broker_order_id
 
+    def combine_positions(
+        self, code: str, legs: list[tuple[str, float]], uncombine: bool
+    ) -> None:
+        """申请(拆分)组合持仓(见 ``CTPTraderGateway.combine_positions``)."""
+        self.gateway.combine_positions(code, legs, uncombine)
+
     def cancel_order(self, broker_order_id: str) -> None:
         """Cancel order through CTP trader channel."""
         self.gateway.cancel_order(broker_order_id)
