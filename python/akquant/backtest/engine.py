@@ -2706,6 +2706,18 @@ def _option_type_to_upper_name(value: Any) -> Optional[InstrumentOptionTypeName]
     raise ValueError(f"Unsupported option_type: {value}")
 
 
+def _default_option_margin_model(
+    underlying: Optional[str], asset_type_of: Callable[[str], Any]
+) -> InstrumentOptionMarginModelName:
+    """期权未指定保证金模型时的缺省.
+
+    标的登记为期货按商品期权规则, 否则按沪深 ETF 期权口径。
+    """
+    if underlying and asset_type_of(underlying) == AssetType.Futures:
+        return "CHINA_COMMODITY"
+    return "CHINA_SINGLE_LEG"
+
+
 def _option_margin_model_to_upper_name(
     value: Any,
 ) -> Optional[InstrumentOptionMarginModelName]:
@@ -2720,6 +2732,8 @@ def _option_margin_model_to_upper_name(
         return "CHINA_SINGLE_LEG"
     if "CHINA" in text and "COMMODITY" in text:
         return "CHINA_COMMODITY"
+    if "CHINA" in text and "INDEX" in text:
+        return "CHINA_INDEX"
     if "RATIO" in text:
         return "RATIO"
     raise ValueError(f"Unsupported option_margin_model: {value}")
@@ -5444,6 +5458,8 @@ def run_backtest(
                 return OptionMarginModel.USBrokerSingleLegVolAdjusted
             if s == "CHINA_COMMODITY":
                 return OptionMarginModel.ChinaCommodity
+            if s == "CHINA_INDEX":
+                return OptionMarginModel.ChinaIndex
         raise ValueError(f"Unsupported option_margin_model: {val}")
 
     def _parse_settlement_type(
@@ -5582,7 +5598,13 @@ def run_backtest(
             p_option_margin_model = _parse_option_margin_model(
                 i_conf.option_margin_model
                 if i_conf.option_margin_model is not None
-                else ("CHINA_SINGLE_LEG" if p_asset_type == AssetType.Option else None)
+                else (
+                    _default_option_margin_model(
+                        i_conf.underlying_symbol, session_asset_type_of
+                    )
+                    if p_asset_type == AssetType.Option
+                    else None
+                )
             )
             p_strike = i_conf.strike_price
             p_expiry = _normalize_expiry_date_yyyymmdd(i_conf.expiry_date)
@@ -7011,6 +7033,8 @@ def run_from_checkpoint(
                 return OptionMarginModel.USBrokerSingleLegVolAdjusted
             if normalized == "CHINA_COMMODITY":
                 return OptionMarginModel.ChinaCommodity
+            if normalized == "CHINA_INDEX":
+                return OptionMarginModel.ChinaIndex
         raise ValueError(f"Unsupported option_margin_model: {val}")
 
     def _parse_settlement_type(
@@ -7143,7 +7167,13 @@ def run_from_checkpoint(
             p_option_margin_model = _parse_option_margin_model(
                 conf.option_margin_model
                 if conf.option_margin_model is not None
-                else ("CHINA_SINGLE_LEG" if p_asset_type == AssetType.Option else None)
+                else (
+                    _default_option_margin_model(
+                        conf.underlying_symbol, session_asset_type_of
+                    )
+                    if p_asset_type == AssetType.Option
+                    else None
+                )
             )
             p_strike_price = conf.strike_price
             p_expiry_date = _normalize_expiry_date_yyyymmdd(conf.expiry_date)

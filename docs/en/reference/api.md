@@ -612,8 +612,11 @@ Expiry settlement is recorded as a synthetic closing trade in `trades_df` (`orde
 Common enums (available directly from top-level `akquant`):
 
 - `InstrumentAssetTypeEnum`: `STOCK` / `FUTURES` / `FUND` / `OPTION`
-- `InstrumentOptionMarginModelEnum`: `RATIO` / `CHINA_SINGLE_LEG` / `US_BROKER_SINGLE_LEG` / `US_BROKER_SINGLE_LEG_VOL_ADJUSTED` / `CHINA_COMMODITY`
-    *   `CHINA_SINGLE_LEG` (the option default) follows SSE/SZSE ETF options; use `CHINA_COMMODITY` for commodity futures options (DCE, CZCE, SHFE, INE, GFEX): short margin = premium + max(underlying futures margin − ½ × out-of-the-money amount, ½ × underlying futures margin), per unit of underlying times the trading unit (option multiplier). The underlying futures must be registered as `FUTURES`; its `margin_ratio` is the underlying futures margin rate. When the underlying is not registered, is not futures, has a non-positive margin rate or has no price, a short-opening order is rejected with that cause. Backtests price both legs at the latest prices, matching the exchange's day-end charge at settlement prices; intraday, CTP charges the premium at max(option last price, option previous settlement) and the underlying part at the underlying's previous settlement (the premium price is a broker setting), so intraday figures differ from the backtest. The formula was checked against 30 options across the five exchanges on SimNow (trade-cost queries and actual short opens).
+- `InstrumentOptionMarginModelEnum`: `RATIO` / `CHINA_SINGLE_LEG` / `US_BROKER_SINGLE_LEG` / `US_BROKER_SINGLE_LEG_VOL_ADJUSTED` / `CHINA_COMMODITY` / `CHINA_INDEX`
+    *   Without `option_margin_model`, an option uses `CHINA_COMMODITY` when its underlying is registered as futures, otherwise `CHINA_SINGLE_LEG` (SSE/SZSE ETF options).
+    *   `CHINA_COMMODITY`: commodity futures options (DCE, CZCE, SHFE, INE, GFEX); short margin = premium + max(underlying futures margin − ½ × out-of-the-money amount, ½ × underlying futures margin), per unit of underlying times the trading unit (option multiplier). The underlying futures must be registered as `FUTURES`; its `margin_ratio` is the futures margin rate.
+    *   `CHINA_INDEX`: CFFEX index options (IO / MO / HO); short margin = premium + max(index × adjustment coefficient − out-of-the-money amount, 0.5 × adjustment coefficient × floor base), where the floor base is the index for calls and the strike for puts. The adjustment coefficient goes in the option's `margin_ratio` (must be given explicitly, e.g. 0.12); the index price comes from `underlying_symbol`.
+    *   When inputs are missing (underlying not registered or not futures, non-positive rate or coefficient, no underlying price), a short-opening order is rejected with that cause instead of falling back to another formula. Backtests price at the latest prices, matching the exchanges' day-end charge at settlement prices (index close for CFFEX); intraday, CTP charges the premium at max(option last, option previous settlement) and the underlying part at the underlying's previous settlement (close), the premium price being a broker setting, so intraday figures differ from the backtest. The commodity formula was checked against 30 options across five exchanges on SimNow (trade-cost queries and actual short opens), and the index formula against 36 trade-cost queries on IO / MO / HO from a futures broker's live account.
 - `InstrumentOptionTypeEnum`: `CALL` / `PUT`
 - `InstrumentSettlementTypeEnum`: `CASH` / `SETTLEMENT_PRICE` / `FORCE_CLOSE`
 
@@ -640,7 +643,7 @@ class InstrumentSnapshot:
     margin_ratio: float
     tick_size: float
     lot_size: float
-    option_margin_model: Optional[Literal["RATIO", "CHINA_SINGLE_LEG", "US_BROKER_SINGLE_LEG", "US_BROKER_SINGLE_LEG_VOL_ADJUSTED", "CHINA_COMMODITY"]] = None
+    option_margin_model: Optional[Literal["RATIO", "CHINA_SINGLE_LEG", "US_BROKER_SINGLE_LEG", "US_BROKER_SINGLE_LEG_VOL_ADJUSTED", "CHINA_COMMODITY", "CHINA_INDEX"]] = None
     option_type: Optional[Literal["CALL", "PUT"]] = None
     strike_price: Optional[float] = None
     expiry_date: Optional[int] = None  # YYYYMMDD

@@ -8,7 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **商品期货期权保证金模型 `option_margin_model="CHINA_COMMODITY"`**：大商所、郑商所、上期所、上期能源、广期所的期权卖方保证金 = 权利金 + max(标的期货保证金 − ½ × 虚值额, ½ × 标的期货保证金)，标的期货保证金率取登记为 `FUTURES` 的标的期货合约的 `margin_ratio`。标的未登记、不是期货、保证金率不为正或没有价格时，卖开被拒并写明原因，不退化为其他公式。公式已用 SimNow 五个交易所 30 张期权（实值、平值、深度虚值的认购与认沽）的 CTP 期权交易成本查询与实际卖开核对，结果一致。期权缺省的 `CHINA_SINGLE_LEG` 为沪深 ETF 期权口径，不变。
+- **期货交易所期权保证金模型 `CHINA_COMMODITY` / `CHINA_INDEX`**：`CHINA_COMMODITY` 为大商所、郑商所、上期所、上期能源、广期所的期权卖方保证金 = 权利金 + max(标的期货保证金 − ½ × 虚值额, ½ × 标的期货保证金)，标的期货保证金率取登记为 `FUTURES` 的标的期货合约的 `margin_ratio`；`CHINA_INDEX` 为中金所股指期权 = 权利金 + max(标的指数 × 调整系数 − 虚值额, 0.5 × 调整系数 × 下限基数)，下限基数认购取指数、认沽取行权价，调整系数取期权合约的 `margin_ratio`（须显式填写）。取不到输入时卖开被拒并写明原因，不退化为其他公式。商品期权公式已用 SimNow 五个交易所 30 张期权的 CTP 期权交易成本查询与实际卖开核对，股指期权公式已用期货公司实盘账户的交易成本查询核对 IO / MO / HO 共 36 组，结果一致。
+
+### Changed
+- **期权未指定保证金模型且标的登记为期货时，缺省改用 `CHINA_COMMODITY`**：此前一律按沪深 ETF 期权口径 `CHINA_SINGLE_LEG`（12% / 7%）计算，商品期权卖方保证金不正确。标的不是期货的期权缺省仍为 `CHINA_SINGLE_LEG`。
 
 ## [0.3.95] - 2026-11-21
 

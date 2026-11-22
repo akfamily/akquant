@@ -2,7 +2,7 @@ pub mod calculator;
 pub mod engine;
 
 pub use calculator::{
-    CommodityOptionInputs, FuturesMarginCalculator, LinearMarginCalculator, MarginCalculator,
-    OptionMarginCalculator, china_commodity_option_margin, commodity_option_inputs,
+    ExchangeOptionInputs, FuturesMarginCalculator, LinearMarginCalculator, MarginCalculator,
+    OptionMarginCalculator, exchange_option_inputs, exchange_option_margin,
 };
 pub use engine::MarginEngine;

@@ -84,6 +84,7 @@ InstrumentOptionMarginModel = Literal[
     "US_BROKER_SINGLE_LEG",
     "US_BROKER_SINGLE_LEG_VOL_ADJUSTED",
     "CHINA_COMMODITY",
+    "CHINA_INDEX",
 ]
 
 
@@ -131,6 +132,7 @@ class InstrumentOptionMarginModelEnum(str, Enum):
     US_BROKER_SINGLE_LEG = "US_BROKER_SINGLE_LEG"
     US_BROKER_SINGLE_LEG_VOL_ADJUSTED = "US_BROKER_SINGLE_LEG_VOL_ADJUSTED"
     CHINA_COMMODITY = "CHINA_COMMODITY"
+    CHINA_INDEX = "CHINA_INDEX"
 
 
 InstrumentAssetTypeInput = Union[
@@ -214,8 +216,10 @@ class InstrumentConfig:
     :param strike_price: Strike price.
     :param expiry_date: Expiry date. Supports int (YYYYMMDD), date/datetime.
     :param underlying_symbol: Underlying asset symbol.
-    :param option_margin_model: 期权保证金模型，默认 "CHINA_SINGLE_LEG"；商品期货期权用
-        "CHINA_COMMODITY"(标的期货须登记为 FUTURES, 保证金率取标的期货合约)。
+    :param option_margin_model: 期权保证金模型。不填时标的登记为期货用
+        "CHINA_COMMODITY"(商品期货期权, 保证金率取标的期货合约), 否则用
+        "CHINA_SINGLE_LEG"(沪深 ETF 期权); 中金所股指期权用 "CHINA_INDEX"
+        (margin_ratio 填合约保证金调整系数)。
     :param implied_volatility: 当前隐含波动率，用于波动率调整模式。
     :param reference_volatility: 参考波动率，用于波动率调整模式。
     :param settlement_type: Settlement mode for expiry handling.
@@ -312,9 +316,19 @@ class InstrumentConfig:
                 "US_BROKER_SINGLE_LEG",
                 "US_BROKER_SINGLE_LEG_VOL_ADJUSTED",
                 "CHINA_COMMODITY",
+                "CHINA_INDEX",
             }:
                 raise ValueError(
                     f"Unsupported option_margin_model: {self.option_margin_model}"
+                )
+            if (
+                self.option_margin_model == "CHINA_INDEX"
+                and "margin_ratio" in self.defaulted_fields
+            ):
+                raise ValueError(
+                    f"{self.symbol} 使用 CHINA_INDEX 保证金模型, 须显式填写"
+                    " margin_ratio(中金所合约保证金调整系数, 如 0.12);"
+                    " 未填时缺省的 1.0 不是调整系数"
                 )
         if self.settlement_type is not None:
             settlement_raw = (

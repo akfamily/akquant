@@ -580,8 +580,11 @@ class InstrumentConfig:
 常用枚举（均可在 `akquant` 顶层直接访问）：
 
 - `InstrumentAssetTypeEnum`: `STOCK` / `FUTURES` / `FUND` / `OPTION`
-- `InstrumentOptionMarginModelEnum`: `RATIO` / `CHINA_SINGLE_LEG` / `US_BROKER_SINGLE_LEG` / `US_BROKER_SINGLE_LEG_VOL_ADJUSTED` / `CHINA_COMMODITY`
-    *   `CHINA_SINGLE_LEG`（期权缺省）是沪深 ETF 期权口径；商品期货期权（大商所、郑商所、上期所、上期能源、广期所）请用 `CHINA_COMMODITY`：卖方保证金 = 权利金 + max(标的期货保证金 − ½ × 虚值额, ½ × 标的期货保证金)，每单位标的计算后乘交易单位（期权乘数）。标的期货须登记为 `FUTURES`，其 `margin_ratio` 即标的期货保证金率；标的未登记、不是期货、保证金率不为正或没有价格时，卖开被拒并写明原因。回测按期权与标的的最新价计算，与交易所日终按当日结算价计收的口径一致；CTP 盘中按 max(期权最新价, 期权昨结算价) 计权利金、按标的昨结算价计标的部分（权利金取价由经纪商参数决定），盘中数值会与回测不同。公式已用 SimNow 五个交易所的 30 张期权核对（交易成本查询与实际卖开）。
+- `InstrumentOptionMarginModelEnum`: `RATIO` / `CHINA_SINGLE_LEG` / `US_BROKER_SINGLE_LEG` / `US_BROKER_SINGLE_LEG_VOL_ADJUSTED` / `CHINA_COMMODITY` / `CHINA_INDEX`
+    *   期权未指定 `option_margin_model` 时：标的登记为期货用 `CHINA_COMMODITY`，否则用 `CHINA_SINGLE_LEG`（沪深 ETF 期权口径）。
+    *   `CHINA_COMMODITY`：商品期货期权（大商所、郑商所、上期所、上期能源、广期所），卖方保证金 = 权利金 + max(标的期货保证金 − ½ × 虚值额, ½ × 标的期货保证金)，每单位标的计算后乘交易单位（期权乘数）。标的期货须登记为 `FUTURES`，其 `margin_ratio` 即标的期货保证金率。
+    *   `CHINA_INDEX`：中金所股指期权（IO / MO / HO），卖方保证金 = 权利金 + max(标的指数 × 调整系数 − 虚值额, 0.5 × 调整系数 × 下限基数)，下限基数认购取标的指数、认沽取行权价。调整系数填在期权合约的 `margin_ratio`（须显式填写，如 0.12），标的指数价格取 `underlying_symbol` 的行情。
+    *   两种模型取不到输入（标的未登记、不是期货、保证金率或调整系数不为正、标的没有价格）时，卖开被拒并写明原因，不退化为其他公式。回测按期权与标的的最新价计算，与交易所日终按当日结算价（股指为指数收盘价）计收的口径一致；CTP 盘中按 max(期权最新价, 期权昨结算价) 计权利金、按标的昨结算价（昨收盘）计标的部分（权利金取价由期货公司参数决定），盘中数值会与回测不同。商品期权公式已用 SimNow 五个交易所 30 张期权核对（交易成本查询与实际卖开），股指期权公式已用期货公司实盘账户的交易成本查询核对 IO / MO / HO 共 36 组。
 - `InstrumentOptionTypeEnum`: `CALL` / `PUT`
 - `InstrumentSettlementTypeEnum`: `CASH` / `SETTLEMENT_PRICE` / `FORCE_CLOSE`
 
@@ -608,7 +611,7 @@ class InstrumentSnapshot:
     margin_ratio: float
     tick_size: float
     lot_size: float
-    option_margin_model: Optional[Literal["RATIO", "CHINA_SINGLE_LEG", "US_BROKER_SINGLE_LEG", "US_BROKER_SINGLE_LEG_VOL_ADJUSTED", "CHINA_COMMODITY"]] = None
+    option_margin_model: Optional[Literal["RATIO", "CHINA_SINGLE_LEG", "US_BROKER_SINGLE_LEG", "US_BROKER_SINGLE_LEG_VOL_ADJUSTED", "CHINA_COMMODITY", "CHINA_INDEX"]] = None
     option_type: Optional[Literal["CALL", "PUT"]] = None
     strike_price: Optional[float] = None
     expiry_date: Optional[int] = None  # YYYYMMDD
