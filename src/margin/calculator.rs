@@ -163,23 +163,25 @@ pub fn exchange_option_margin(
         return Decimal::ZERO;
     }
     let half = Decimal::new(5, 1);
-    let exposure = checked_mul_or_cap(inputs.underlying_price, inputs.margin_rate);
-    let otm = match inputs.option_type {
-        OptionType::Call => checked_sub_or_zero(inputs.strike_price, inputs.underlying_price),
-        OptionType::Put => checked_sub_or_zero(inputs.underlying_price, inputs.strike_price),
-    };
-    let margin = if inputs.model == OptionMarginModel::ChinaIndex {
-        let floor_base = match inputs.option_type {
-            OptionType::Call => inputs.underlying_price,
-            OptionType::Put => inputs.strike_price,
-        };
-        let floor = checked_mul_or_cap(checked_mul_or_cap(half, inputs.margin_rate), floor_base);
-        checked_sub_or_zero(exposure, otm).max(floor)
+    let per_unit = if inputs.model == OptionMarginModel::ChinaIndex {
+        // 与通用单腿公式相同: 风险敞口比例取调整系数, 最低保障比例取调整系数的一半
+        calculate_single_leg_margin_per_unit(
+            inputs.option_type,
+            option_price.abs(),
+            inputs.strike_price,
+            inputs.underlying_price,
+            inputs.margin_rate,
+            checked_mul_or_cap(half, inputs.margin_rate),
+        )
     } else {
+        let exposure = checked_mul_or_cap(inputs.underlying_price, inputs.margin_rate);
+        let otm = match inputs.option_type {
+            OptionType::Call => checked_sub_or_zero(inputs.strike_price, inputs.underlying_price),
+            OptionType::Put => checked_sub_or_zero(inputs.underlying_price, inputs.strike_price),
+        };
         let reduced = checked_sub_or_zero(exposure, checked_mul_or_cap(otm, half));
-        reduced.max(checked_mul_or_cap(exposure, half))
+        checked_add_or_cap(option_price.abs(), reduced.max(checked_mul_or_cap(exposure, half)))
     };
-    let per_unit = checked_add_or_cap(option_price.abs(), margin);
     checked_mul_or_cap(
         checked_mul_or_cap(per_unit, instrument.multiplier().abs()),
         quantity.abs(),
