@@ -1213,6 +1213,7 @@ run_live(strategy_cls=MyStrategy, ..., state_file="state/my_strategy.json")
 *   The file is grouped by strategy slot (`{"saved_at": ..., "slots": {"<strategy_id>": {...}}}`); slots share one file.
 *   `save_state()` returns `False` when no state file is configured (including backtests).
 *   Positions need not be listed in `state_variables`; order groups (OCO / Bracket) and working orders are not saved.
+*   Difference from `save_checkpoint`: `save_checkpoint` pickles the engine and the whole strategy object to continue a backtest; a live strategy object holds the context, the broker execution backend and thread locks, so it cannot be pickled as a whole, and a pickle is tied to the code version. `state_file` keeps only the declared variables as JSON, so it still restores after the strategy code changes and the file can be read directly.
 
 ### `akquant.run_live(preload_history=...)` (live history preload) {: #live-preload-history }
 

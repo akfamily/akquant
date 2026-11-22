@@ -1280,6 +1280,7 @@ run_live(strategy_cls=MyStrategy, ..., state_file="state/my_strategy.json")
 *   文件按策略槽位分组（`{"saved_at": ..., "slots": {"<strategy_id>": {...}}}`），多槽位共用一个文件。
 *   `save_state()` 在未启用状态文件（含回测）时返回 `False`。
 *   持仓不需要列入 `state_variables`；OCO / Bracket 等订单组、挂单不在保存范围内。
+*   与 `save_checkpoint` 的区别：`save_checkpoint` 把引擎与整个策略对象打包存档，用于回测续跑；实盘的策略对象挂着上下文、柜台执行后端与线程锁，整体存不下来，且存档与代码版本绑定。`state_file` 只存声明的变量、用 JSON 格式，策略代码修改后仍能恢复，文件也可直接查看。
 
 ### `akquant.run_live(preload_history=...)`（实盘历史预热） {: #live-preload-history }
 
