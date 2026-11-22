@@ -70,6 +70,8 @@ from .strategy_events import (
 from .strategy_events import (
     on_timer_event as _on_timer_event_impl,
 )
+from .strategy_exercise import cancel_exercise as _cancel_exercise_impl
+from .strategy_exercise import exercise as _exercise_impl
 from .strategy_framework_hooks import (
     call_user_callback as _call_user_callback_impl,
 )
@@ -4086,6 +4088,41 @@ class Strategy:
             Optional[str]: 平仓单的订单号; 当前无持仓(无需交易)时为 None
         """
         return _close_position_impl(self, symbol)
+
+    def exercise(self, symbol: str, quantity: Optional[float] = None) -> None:
+        """
+        提交期货期权行权申请(美式提前行权).
+
+        只有标的登记为期货的期权可以行权; 不论虚实值都按申请执行, 按行权价获得标的
+        期货持仓(认购得买持仓、认沽得卖持仓), 收行权手续费。
+
+        - 回测与 paper: 在当日日终结算时执行; 结算时多头持仓少于申请数量的按持仓
+          执行并记警告; 结果以 ``on_expiry`` 事件送达(``reason`` 为
+          ``early_exercise``)。到期日未申请的持仓按到期规则自动行权或放弃。
+        - 实盘(``trading_mode="broker_live"``): 经柜台提交行权指令(CTP 执行宣告),
+          柜台受理后返回; 交易所盘后配对, 行权得到的期货持仓随柜台持仓同步。
+
+        :param symbol: 期权合约代码
+        :param quantity: 行权手数; 不填为全部多头持仓
+        :raises ValueError: 不是期货期权、已到期、没有多头持仓或数量超过持仓
+            (实盘按柜台可用今昨仓核对), 信息中写明具体原因
+        :raises RuntimeError: 实盘柜台拒绝(带柜台原因)或超时未确认
+        """
+        _exercise_impl(self, symbol, quantity)
+
+    def cancel_exercise(self, symbol: str) -> float:
+        """
+        撤销期权合约尚未执行的行权.
+
+        - 回测与 paper: 撤掉当日尚未结算的全部行权申请。
+        - 实盘(``trading_mode="broker_live"``): 撤销柜台上该合约当日未执行的全部
+          行权指令(含其他终端提交的), 逐条等柜台确认。
+
+        :param symbol: 期权合约代码
+        :return: 撤销的手数; 没有可撤的为 0
+        :raises RuntimeError: 实盘柜台拒绝撤销(带柜台原因)或超时未确认
+        """
+        return _cancel_exercise_impl(self, symbol)
 
     def short(
         self,

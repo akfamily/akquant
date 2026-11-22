@@ -119,6 +119,7 @@ def test_ctp_native_query_positions_aggregates_today_yesterday(
         gateway.OnRspQryInvestorPosition(
             SimpleNamespace(
                 InstrumentID="au2606",
+                ExchangeID="SHFE",
                 PosiDirection="2",
                 Position=5,
                 TodayPosition=2,
@@ -154,6 +155,7 @@ def test_ctp_native_query_positions_aggregates_today_yesterday(
             "available_yesterday_quantity": 1.0,
             "avg_price": 510.5,
             "timestamp_ns": positions[0]["timestamp_ns"],
+            "exchange_id": "SHFE",
         }
     ]
 
