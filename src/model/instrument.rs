@@ -379,6 +379,24 @@ impl Instrument {
     pub fn get_underlying_symbol(&self) -> Option<String> {
         self.underlying_symbol().cloned()
     }
+
+    /// 期权类型；非期权为 None。
+    #[getter]
+    pub fn get_option_type(&self) -> Option<OptionType> {
+        self.option_type()
+    }
+
+    /// 期权行权价；非期权为 None。
+    #[getter]
+    pub fn get_strike_price(&self) -> Option<f64> {
+        self.strike_price().and_then(|v| v.to_f64())
+    }
+
+    /// 到期日(YYYYMMDD)；未设置为 None。
+    #[getter]
+    pub fn get_expiry_date(&self) -> Option<u32> {
+        self.expiry_date()
+    }
 }
 
 // Add public accessors for internal Rust usage to avoid breaking changes everywhere immediately

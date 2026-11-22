@@ -14,6 +14,7 @@ pub mod event_manager;
 pub mod execution;
 pub mod history;
 pub mod indicators;
+pub mod instrument_port;
 mod log_context;
 pub mod margin;
 pub mod market;
@@ -77,6 +78,7 @@ fn akquant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Tick>()?;
     m.add_class::<DataFeed>()?;
     m.add_class::<signal_port::SignalPort>()?;
+    m.add_class::<instrument_port::InstrumentPort>()?;
     m.add_class::<BarAggregator>()?;
     m.add_class::<Engine>()?;
     m.add_class::<StrategyContext>()?;

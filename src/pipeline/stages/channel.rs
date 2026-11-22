@@ -223,6 +223,10 @@ impl Processor for ChannelProcessor {
                 drained_event = true;
                 match event {
                     Event::OrderRequest(order) => pending_order_requests.push(order),
+                    // 先于同一通道里随后到达的订单处理: 对新合约下的单不会因未登记被拒。
+                    Event::RegisterInstruments(instruments) => {
+                        engine.register_running_instruments(py, instruments)?;
+                    }
                     Event::OrderValidated(order) => {
                         record_creation_session(engine, &order);
                         engine.execution_model.on_order(order.clone());
@@ -496,6 +500,50 @@ mod tests {
 
     fn market_buy(id: &str) -> Order {
         Order::test_new(id, "600000.SH", OrderSide::Buy, OrderType::Market, dec!(100))
+    }
+
+    fn futures(symbol: &str, margin_ratio: rust_decimal::Decimal) -> crate::model::Instrument {
+        use crate::model::instrument::{FuturesInstrument, Instrument, InstrumentEnum};
+        Instrument {
+            asset_type: crate::model::AssetType::Futures,
+            inner: InstrumentEnum::Futures(FuturesInstrument {
+                symbol: symbol.to_string(),
+                multiplier: dec!(10),
+                margin_ratio,
+                tick_size: dec!(1),
+                expiry_date: None,
+                settlement_type: None,
+                settlement_price: None,
+            }),
+        }
+    }
+
+    #[test]
+    fn register_instruments_event_adds_and_overrides_while_running() {
+        pyo3::Python::initialize();
+        pyo3::Python::attach(|py| {
+            let mut engine = stock_engine();
+            engine.add_instrument(futures("m2601", dec!(0.09)));
+            // 模拟 run() 期间: 运行期合约表快照存在
+            engine.run_instruments = Some(std::sync::Arc::new(engine.instruments.clone()));
+            let sender = engine.event_manager.sender();
+            sender
+                .send(Event::RegisterInstruments(vec![
+                    futures("m2605", dec!(0.08)),
+                    futures("m2601", dec!(0.12)),
+                ]))
+                .unwrap();
+
+            run_channel(&mut engine, py);
+
+            let run_instruments = engine.run_instruments.as_ref().unwrap();
+            for table in [&engine.instruments, run_instruments.as_ref()] {
+                assert!(table.contains_key("m2605"));
+                assert_eq!(table["m2601"].margin_ratio(), dec!(0.12));
+                assert!(table.contains_key("600000.SH"));
+            }
+            assert!(engine.session_resolver.is_some());
+        });
     }
 
     #[test]

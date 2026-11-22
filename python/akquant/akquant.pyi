@@ -1331,6 +1331,15 @@ class Engine:
         """
         ...
 
+    def instrument_port(self) -> InstrumentPort:
+        r"""
+        取一个运行中合约登记端口.
+
+        **必须在 run() 之前调用** (同 ``signal_port``)。会话中经它投递的合约在
+        引擎处理下一个事件前登记, 同名合约按新参数覆盖。
+        """
+        ...
+
     def set_cash(self, cash: float) -> None:
         r"""
         设置初始资金.
@@ -1445,6 +1454,9 @@ class Instrument:
     implied_volatility: typing.Optional[float]
     reference_volatility: typing.Optional[float]
     sellable_after_days: int
+    option_type: typing.Optional[akquant.OptionType]
+    strike_price: typing.Optional[float]
+    expiry_date: typing.Optional[int]
     underlying_symbol: typing.Optional[str]
     def __new__(
         cls,
@@ -3644,6 +3656,24 @@ class SignalPort:
         :param order_type: ``"Limit"`` / ``"Market"``; 省略则按 price 有无推断
         :param tag: 自定义标记 (建议放信号平台的 signal_id, 便于回溯)
         :return: 本地订单 id
+        """
+        ...
+
+class InstrumentPort:
+    r"""
+    运行中合约登记端口.
+
+    由 ``Engine.instrument_port()`` 取得, **必须在 run() 之前取**。持有的是
+    channel sender 的克隆, 与引擎对象解耦, 可安全交给任意线程。
+    """
+
+    def register(self, instruments: typing.Sequence[Instrument]) -> None:
+        r"""
+        投递一批合约, 引擎在处理下一个事件前登记; 同名合约按新参数覆盖.
+
+        线程安全: 可从任意线程调用。
+
+        :param instruments: 合约列表
         """
         ...
 

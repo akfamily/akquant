@@ -639,6 +639,35 @@ impl Engine {
             .set_resolver(None, HashMap::new());
     }
 
+    /// 运行中登记合约(同名按新参数覆盖), 见 `Event::RegisterInstruments`。
+    ///
+    /// 合约表在 `run()` 期间本是不变的, 依赖它的几处要一起换掉: 运行期合约表快照与
+    /// 各策略上下文持有的那份、账户指标缓存、会话解析器(期权跟随标的期货的时段表
+    /// 由合约表推导)。
+    pub(crate) fn register_running_instruments(
+        &mut self,
+        py: Python<'_>,
+        instruments: Vec<Instrument>,
+    ) -> PyResult<()> {
+        if instruments.is_empty() {
+            return Ok(());
+        }
+        for instrument in instruments {
+            self.instruments
+                .insert(instrument.symbol().to_string(), instrument);
+        }
+        if self.run_instruments.is_some() {
+            let run_instruments = Arc::new(self.instruments.clone());
+            for ctx in self.strategy_contexts.iter().flatten() {
+                ctx.borrow_mut(py).instruments = Arc::clone(&run_instruments);
+            }
+            self.run_instruments = Some(run_instruments);
+        }
+        self.account_metrics_memo = None;
+        self.invalidate_session_resolver();
+        self.ensure_session_resolver()
+    }
+
     /// 首次调用时按 `session_config`、引擎时区与规则 B 构造会话解析器，并把全部
     /// 已登记标的设为在用。
     pub(crate) fn ensure_session_resolver(&mut self) -> PyResult<()> {
@@ -2487,7 +2516,8 @@ impl Engine {
             Event::OrderRequest(_)
             | Event::OrderValidated(_)
             | Event::ExecutionReport(_, _)
-            | Event::TradingDayHint { .. } => {
+            | Event::TradingDayHint { .. }
+            | Event::RegisterInstruments(_) => {
                 return Ok((Vec::new(), Vec::new(), Vec::new(), None));
             }
         };
