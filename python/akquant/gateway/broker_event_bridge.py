@@ -540,6 +540,10 @@ class BrokerEventBridge:
             # broker_live 下由真实成交驱动 OCO/Bracket 协调(回测由引擎驱动);
             # 经 _safe_strategy_callback 异常隔离, 无组时 no-op。
             self._safe_strategy_callback(strategy, "_process_order_groups", payload)
+            # 实盘状态持久化: 成交派发之后保存(未启用状态文件时不做任何事);
+            # 没有该方法的策略替身跳过
+            if hasattr(strategy, "_save_live_state"):
+                self._safe_strategy_callback(strategy, "_save_live_state", payload)
         elif event_name == "execution_report":
             self._safe_strategy_callback(strategy, "on_execution_report", payload)
         elif event_name == "account":

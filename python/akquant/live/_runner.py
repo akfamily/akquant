@@ -83,6 +83,7 @@ from ._preload import (
     normalize_preload_history,
     validate_preload_bars,
 )
+from ._state_store import LiveStateStore
 from ._strategy_maps import (
     normalize_strategy_bool_map,
     normalize_strategy_float_map,
@@ -388,6 +389,10 @@ class _StrategyCallbackFanout:
         # OCO/Bracket 组登记在下单的槽位上, 只有它能撤对手腿/激活子单。
         self._route("_process_order_groups", trade)
 
+    def _save_live_state(self, trade: Any) -> None:
+        # 状态文件由全部槽位共用, 交给成交所属槽位触发保存即可。
+        self._route("_save_live_state", trade)
+
     def on_portfolio_update(self, snapshot: Any) -> None:
         for strategy in self._strategies_by_slot.values():
             self._safe_callback(strategy, "on_portfolio_update", snapshot)
@@ -450,6 +455,7 @@ class LiveRunner:
         portfolio_risk_budget: Optional[float] = None,
         risk_budget_mode: str = "order_notional",
         risk_budget_reset_daily: bool = False,
+        state_file: Optional[str] = None,
         on_broker_event: Optional[Callable[[Dict[str, Any]], None]] = None,
         signal_port_ready: Optional[Callable[[Any], None]] = None,
         signal_source: Optional[Any] = None,
@@ -619,6 +625,7 @@ class LiveRunner:
         )
         self.risk_budget_mode = risk_budget_mode
         self.risk_budget_reset_daily = bool(risk_budget_reset_daily)
+        self.state_file = state_file
         self.on_broker_event = on_broker_event
         self.signal_port_ready = signal_port_ready
         self.signal_source = signal_source
@@ -816,6 +823,9 @@ class LiveRunner:
         # 那时局部名尚未绑定。
         self._stop_target_strategy = strategy_instance
         self._stop_target_slot_strategies = slot_strategy_instances
+        self._install_state_store(
+            {effective_strategy_id: strategy_instance, **slot_strategy_instances}
+        )
         # 策略时区与引擎一致(与 run_backtest 相同, 覆盖策略自设的值): 定时器、
         # 生命周期钩子与 naive 时间的本地化都读 strategy.timezone。
         for current_strategy in [strategy_instance, *slot_strategy_instances.values()]:
@@ -1284,6 +1294,25 @@ class LiveRunner:
             elif hasattr(slot_strategy, "on_start"):
                 slot_strategy.on_start()
 
+    def _install_state_store(self, targets: Dict[str, Any]) -> None:
+        """启用 ``state_file`` 时把状态文件挂到各策略, 恢复排在主策略启动之后."""
+        state_file = getattr(self, "state_file", None)
+        if state_file is None:
+            self._state_store = None
+            return
+        store = LiveStateStore(state_file, targets)
+        self._state_store = store
+        for target in targets.values():
+            target._live_state_store = store
+
+        def restore() -> None:
+            store.validate()
+            store.restore()
+
+        # 主策略的 on_start 由 Rust 在 engine.run() 内触发, 早于它的槽位 on_start
+        # 与预热回放都在它的 _on_start_internal 末尾之前完成。
+        next(iter(targets.values()))._live_after_start = restore
+
     def _dispatch_strategy_stop(self) -> None:
         """会话收尾: 触发主策略与 slot 子策略的 on_stop(异常隔离).
 
@@ -1318,6 +1347,17 @@ class LiveRunner:
                     "Error in %s: %s",
                     label,
                     exc,
+                    exc_info=True,
+                    extra=self._runner_log_extra(phase="strategy"),
+                )
+        store = getattr(self, "_state_store", None)
+        if store is not None:
+            try:
+                store.save()
+            except Exception:  # noqa: BLE001 — 收尾失败不改变会话结果
+                logger.error(
+                    "保存策略状态文件 %s 失败",
+                    store.path,
                     exc_info=True,
                     extra=self._runner_log_extra(phase="strategy"),
                 )

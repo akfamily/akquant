@@ -6,6 +6,7 @@
 
 *   [run_live 选择 broker 与连接参数](#live-broker-options)
 *   [run_live broker_live 执行语义](#live-broker-semantics)
+*   [run_live 实盘策略状态持久化](#live-state)
 *   [run_live 实盘历史预热](#live-preload-history)
 *   [run_live 实盘时区、交易时段与收盘宽限](#live-timezone-sessions)
 *   [SessionResolver 交易时段解析器](#akquant-session-resolver)
@@ -1258,6 +1259,27 @@ run_live(
 
 *   撤单请求发送成功不等于 `Cancelled`，需等待 `OnRtnOrder(Cancelled)`。
 *   收到错误回报不等于 `Rejected`，最终状态以订单回报为准。
+
+### `akquant.run_live(state_file=...)`（实盘策略状态持久化） {: #live-state }
+
+实盘进程重启后，持仓从柜台（paper 模式为引擎）恢复，指标靠历史预热（`preload_history`）重算，但策略自己的变量（如已开仓标记、计数器、阶段状态）会丢失。策略用类属性 `state_variables` 声明要保存的属性，`run_live(state_file=...)` 把它们写入 JSON 文件：
+
+```python
+class MyStrategy(Strategy):
+    state_variables = ("entered", "grid_level")
+
+    def on_start(self):
+        self.entered = False      # 初始值; 有状态文件时随后被覆盖
+        self.grid_level = 0
+
+run_live(strategy_cls=MyStrategy, ..., state_file="state/my_strategy.json")
+```
+
+*   **恢复**：在全部策略的 `on_start` 与历史预热回放之后、第一笔实时行情之前。先校验声明的属性存在且值能写入 JSON（不满足时会话起不来，报出属性名与原因），再从文件恢复；文件不存在则保持初始值。文件中缺少的变量保持初始值，不在本次会话中的槽位忽略。
+*   **保存**：每批成交派发 `on_trade` 之后、会话收尾 `on_stop` 之后，以及策略调用 `self.save_state()` 时（没有成交时改了状态变量、希望立刻落盘时用）。先写临时文件再替换，写到一半中断不会损坏原文件；恢复完成之前（启动失败）不保存，以免用初始值覆盖原文件。运行中某个变量变成不能写入 JSON 的值时，记录错误、保留上一次的文件。
+*   文件按策略槽位分组（`{"saved_at": ..., "slots": {"<strategy_id>": {...}}}`），多槽位共用一个文件。
+*   `save_state()` 在未启用状态文件（含回测）时返回 `False`。
+*   持仓不需要列入 `state_variables`；OCO / Bracket 等订单组、挂单不在保存范围内。
 
 ### `akquant.run_live(preload_history=...)`（实盘历史预热） {: #live-preload-history }
 
