@@ -94,6 +94,7 @@ from .strategy_option import get_expiries as _get_expiries_impl
 from .strategy_option import get_greeks as _get_greeks_impl
 from .strategy_option import hedge_delta as _hedge_delta_impl
 from .strategy_option import option_chain as _option_chain_impl
+from .strategy_option import option_chains as _option_chains_impl
 from .strategy_option import portfolio_greeks as _portfolio_greeks_impl
 from .strategy_option import select_option as _select_option_impl
 from .strategy_order_events import (
@@ -359,6 +360,9 @@ class Strategy:
     _last_prices: Dict[str, float]
     #: 各标的最近一笔 tick 的 (买一价, 卖一价), 无报价的一侧为 None
     _last_quotes: Dict[str, Tuple[Optional[float], Optional[float]]]
+    #: 期权链整批计算结果, 键为 (取价方式, 利率, 模型), 值为
+    #: (计算时的行情时间, 全部链, 按标的拆分的链), 见 strategy_option._chains
+    _option_chains_cache: Dict[Tuple[str, float, str], Tuple[Any, Any, Any]]
     _rolling_train_window: int
     _rolling_step: int
     # 全局 bar 事件计数(不分 symbol), 供 ML 滚动训练节奏使用(见 strategy_ml.py)。
@@ -403,6 +407,11 @@ class Strategy:
     #: 期权链取价方式: ``"last"`` 最新价; ``"mid"`` 买一、卖一的中间价,
     #: 单边报价或无报价的合约不计算隐含波动率
     option_price_source: Literal["last", "mid"] = "last"
+    #: 期权链整批计算的刷新间隔(秒, 按行情时间): 间隔内第一次调用期权方法时一次
+    #: 算出全部已登记标的的期权链, 间隔内的后续调用复用该结果。设为 0 则每次调用
+    #: 都按当前报价只算所需标的的链。同一时刻逐个标的派发的 ``on_bar`` 中, 第一次调用
+    #: 之后才到达的价格不进入本时刻结果, 需要全部价格时在 ``on_bars`` 中调用
+    option_refresh_interval: float = 1.0
     _runtime_config: StrategyRuntimeConfig
     _last_event_type: str = ""  # "bar" or "tick"
     _hold_bars: "defaultdict[str, int]"
@@ -600,6 +609,7 @@ class Strategy:
         instance._warned_live_subscriptions = set()
         instance._last_prices = {}
         instance._last_quotes = {}
+        instance._option_chains_cache = {}
         # 撤单意图: 必须在此初始化。三处使用点都写作
         # ``getattr(strategy, "_pending_canceled_order_ids", set())``, 该惯用法在
         # 属性缺失时返回一个**临时** set, 其后的 isinstance 检查恒真 ⇒ setattr 永不
@@ -3271,14 +3281,37 @@ class Strategy:
         单位见 :func:`akquant.option.black76_greeks`。没有最新价的合约 iv 与 Greeks
         为 NaN。
 
+        计算节奏由 ``option_refresh_interval`` 控制: 默认 1 秒内复用同一批结果,
+        本方法与 ``select_option``、``get_greeks``、``portfolio_greeks``、
+        ``hedge_delta`` 共用。
+
         :param underlying: 期权登记的标的代码
         :param expiry: 只返回该到期日(YYYYMMDD); 不填返回全部到期
         :param rate: 无风险利率; 不填使用 ``self.option_rate``
         :param model: 隐含波动率模型, ``"black76"`` (默认) 或 ``"baw"`` (美式)
-        :return: 列为 symbol, option_type, strike, expiry_date, t, price, forward,
-            iv, delta, gamma, vega, theta
+        :return: 列为 symbol, option_type, strike, expiry_date, t, bid, ask, price,
+            forward, iv, delta, gamma, vega, theta
         """
         return _option_chain_impl(self, underlying, expiry, rate, model)
+
+    def option_chains(
+        self,
+        underlyings: Optional[Sequence[str]] = None,
+        rate: Optional[float] = None,
+        model: OptionModel = "black76",
+    ) -> pd.DataFrame:
+        """
+        返回多个标的的期权链, 合并为一张表(同时盯多条链时使用).
+
+        全部已登记标的的期权链一次批量计算, 节奏与缓存同 :meth:`option_chain`。
+
+        :param underlyings: 只返回这些标的; 不填返回全部
+        :param rate: 无风险利率; 不填使用 ``self.option_rate``
+        :param model: 隐含波动率模型
+        :return: 首列为 underlying, 其余列同 :meth:`option_chain`; 按标的、到期日、
+            行权价、类型排序
+        """
+        return _option_chains_impl(self, underlyings, rate, model)
 
     def select_option(
         self,

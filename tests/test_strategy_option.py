@@ -240,6 +240,55 @@ def test_index_options_use_parity_forward_and_futures_hedge() -> None:
     )
 
 
+class _Batch(_DayEnd):
+    """商品与股指两条链: 整批结果、按间隔复用与关闭缓存."""
+
+    def on_day(self, i: int) -> None:
+        if i != 0:
+            return
+        rec = self.records
+        rec["all"] = self.option_chains()
+        rec["idx_only"] = self.option_chains(["IDX"])
+        self.option_refresh_interval = 0.0
+        rec["single"] = {u: self.option_chain(u) for u in ("IDX", "m2401")}
+        self.option_refresh_interval = 1.0
+        prices = self._last_prices
+        saved = prices["m2401-C-3000"]
+        prices["m2401-C-3000"] = saved + 10.0
+        rec["price"] = saved
+        rec["cached"] = self.get_greeks("m2401-C-3000")["price"]
+        self.option_refresh_interval = 0.0
+        rec["fresh"] = self.get_greeks("m2401-C-3000")["price"]
+        prices["m2401-C-3000"] = saved
+        self.option_refresh_interval = -1.0
+        rec["negative"] = _error(self.option_chain, "m2401")
+
+
+def test_option_chains_batch_matches_per_chain_and_reuses_within_interval() -> None:
+    """多标的一次批量与逐链计算一致; 间隔内复用结果, 间隔为 0 时按当前价重算."""
+    data, configs = _commodity()
+    index_data, index_configs = _index()
+    data.update(index_data)
+    strat = _Batch()
+    _run(strat, (data, configs + index_configs))
+
+    rec = strat.records
+    chains = rec["all"]
+    assert chains.columns[0] == "underlying"
+    assert chains["underlying"].unique().tolist() == ["IDX", "m2401"]
+    for underlying, single in rec["single"].items():
+        part = chains[chains["underlying"] == underlying]
+        pd.testing.assert_frame_equal(
+            part.drop(columns="underlying").reset_index(drop=True), single
+        )
+    pd.testing.assert_frame_equal(
+        rec["idx_only"], chains[chains["underlying"] == "IDX"].reset_index(drop=True)
+    )
+    assert rec["cached"] == pytest.approx(rec["price"])
+    assert rec["fresh"] == pytest.approx(rec["price"] + 10.0)
+    assert rec["negative"] == "option_refresh_interval 不能为负, 实际: -1"
+
+
 def _error(fn: Any, *args: Any) -> str:
     try:
         fn(*args)
@@ -250,6 +299,9 @@ def _error(fn: Any, *args: Any) -> str:
 
 class _Failures(_DayEnd):
     """逐项制造算不出 Greeks 的情形, 记录报错文本."""
+
+    # 同一时刻内反复改价并要求按新价重算, 关闭整批缓存
+    option_refresh_interval = 0.0
 
     def on_day(self, i: int) -> None:
         if i == 0:

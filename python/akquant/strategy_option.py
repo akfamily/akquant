@@ -50,23 +50,33 @@ def _price_source(strategy: Any) -> str:
     return str(source)
 
 
-def _quote_price(strategy: Any, symbol: str) -> Tuple[float, float, float]:
-    """(买一价, 卖一价, 定价用价格), 缺失为 nan.
+def _quote_prices(
+    strategy: Any, symbols: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(买一价, 卖一价, 定价用价格) 三个数组, 缺失为 nan.
 
     定价用价格: ``option_price_source="last"`` 取最新价; ``"mid"`` 取中间价, 仅当
     买一价、卖一价都为正且买价不高于卖价(Cboe VIX 的取价规则)。
     """
-    bid, ask = strategy._last_quotes.get(symbol, (None, None))
-    b = math.nan if bid is None else float(bid)
-    a = math.nan if ask is None else float(ask)
-    if _price_source(strategy) == "last":
-        return b, a, float(strategy._last_prices.get(symbol, math.nan))
-    valid = b > 0 and a > 0 and b <= a
-    return b, a, 0.5 * (b + a) if valid else math.nan
+    source = _price_source(strategy)
+    quotes = strategy._last_quotes
+    no_quote = (None, None)
+    book = np.array(
+        [quotes.get(symbol, no_quote) for symbol in symbols], dtype=float
+    ).reshape(-1, 2)
+    bid, ask = book[:, 0], book[:, 1]
+    if source == "last":
+        last = strategy._last_prices
+        price = np.array(
+            [last.get(symbol, math.nan) for symbol in symbols], dtype=float
+        )
+        return bid, ask, price
+    valid = (bid > 0) & (ask > 0) & (bid <= ask)
+    return bid, ask, np.where(valid, 0.5 * (bid + ask), np.nan)
 
 
 def _mid_failure(bid: float, ask: float) -> str:
-    """中间价取不到的确切原因, 与 :func:`_quote_price` 的判定一致."""
+    """中间价取不到的确切原因, 与 :func:`_quote_prices` 的判定一致."""
     if math.isnan(bid) and math.isnan(ask):
         return "没有买一价和卖一价"
     if math.isnan(bid):
@@ -90,12 +100,16 @@ def _expiry_t(strategy: Any, expiry_date: int) -> float:
     return year_fraction(now.to_pydatetime(), expiry.to_pydatetime())
 
 
-def _option_snapshots(strategy: Any, underlying: str) -> List[Any]:
+def _option_snapshots(
+    instruments: Dict[str, Any], underlying: Optional[str]
+) -> List[Any]:
+    """已登记的期权合约; ``underlying`` 为 None 时取全部标的."""
     return [
         snap
-        for snap in strategy.get_instruments().values()
+        for snap in instruments.values()
         if snap.asset_type == "OPTION"
-        and snap.underlying_symbol == underlying
+        and snap.underlying_symbol is not None
+        and (underlying is None or snap.underlying_symbol == underlying)
         and snap.expiry_date is not None
         and snap.strike_price is not None
         and snap.option_type is not None
@@ -104,12 +118,14 @@ def _option_snapshots(strategy: Any, underlying: str) -> List[Any]:
 
 def get_expiries(strategy: Any, underlying: str) -> List[int]:
     """返回标的下尚未到期的期权到期日(YYYYMMDD), 由近到远."""
-    expiries = {snap.expiry_date for snap in _option_snapshots(strategy, underlying)}
+    snaps = _option_snapshots(strategy.get_instruments(), underlying)
+    expiries = {snap.expiry_date for snap in snaps}
     return sorted(e for e in expiries if _expiry_t(strategy, e) > 0)
 
 
 def _forward(
     strategy: Any,
+    underlying_snap: Any,
     underlying: str,
     strikes: np.ndarray,
     types: np.ndarray,
@@ -118,7 +134,6 @@ def _forward(
     rate: float,
 ) -> float:
     """远期价格: 期货标的取期货价; 否则按平价反推, 缺报价时退回现货按利率前推."""
-    underlying_snap = strategy.get_instruments().get(underlying)
     spot = strategy._last_prices.get(underlying)
     if underlying_snap is not None and underlying_snap.asset_type == "FUTURES":
         return float(spot) if spot is not None else math.nan
@@ -137,6 +152,137 @@ def _forward(
     return float(spot) * math.exp(rate * t) if spot is not None else math.nan
 
 
+def _price_chains(
+    strategy: Any,
+    instruments: Dict[str, Any],
+    snaps: List[Any],
+    rate: float,
+    model: OptionModel,
+) -> pd.DataFrame:
+    """一次批量计算多条期权链, 按标的、到期日、行权价、类型排序, 不含已到期合约."""
+    underlyings = np.array([snap.underlying_symbol for snap in snaps], dtype=str)
+    symbols = np.array([snap.symbol for snap in snaps], dtype=object)
+    types = np.array([snap.option_type for snap in snaps], dtype=str)
+    strikes = np.array([snap.strike_price for snap in snaps], dtype=float)
+    expiries = np.array([snap.expiry_date for snap in snaps], dtype=np.int64)
+    order = np.lexsort((types, strikes, expiries, underlyings))
+    underlyings, symbols, types = underlyings[order], symbols[order], types[order]
+    strikes, expiries = strikes[order], expiries[order]
+    bids, asks, prices = _quote_prices(strategy, symbols)
+    n = len(symbols)
+    t = np.full(n, np.nan)
+    forward = np.full(n, np.nan)
+    # 排序后同一(标的, 到期日)的合约连续, 按段计算期限与远期
+    starts_mask = np.ones(n, dtype=bool)
+    starts_mask[1:] = (underlyings[1:] != underlyings[:-1]) | (
+        expiries[1:] != expiries[:-1]
+    )
+    starts = np.flatnonzero(starts_mask)
+    t_of: Dict[int, float] = {}
+    for start, end in zip(starts, np.append(starts[1:], n)):
+        expiry_date = int(expiries[start])
+        if expiry_date not in t_of:
+            t_of[expiry_date] = _expiry_t(strategy, expiry_date)
+        t_e = t_of[expiry_date]
+        if t_e > 0:
+            seg = slice(start, end)
+            underlying = str(underlyings[start])
+            t[seg] = t_e
+            forward[seg] = _forward(
+                strategy,
+                instruments.get(underlying),
+                underlying,
+                strikes[seg],
+                types[seg],
+                prices[seg],
+                t_e,
+                rate,
+            )
+    live = t > 0
+    iv = np.asarray(
+        implied_vol(
+            prices[live],
+            forward[live],
+            strikes[live],
+            t[live],
+            rate,
+            types[live],
+            model,
+        ),
+        dtype=float,
+    )
+    greeks = black76_greeks(
+        forward[live], strikes[live], t[live], rate, iv, types[live]
+    )
+    data: Dict[str, Any] = {
+        "underlying": underlyings[live].astype(object),
+        "symbol": symbols[live],
+        "option_type": types[live].astype(object),
+        "strike": strikes[live],
+        "expiry_date": expiries[live],
+        "t": t[live],
+        "bid": bids[live],
+        "ask": asks[live],
+        "price": prices[live],
+        "forward": forward[live],
+        "iv": iv,
+    }
+    for name in ("delta", "gamma", "vega", "theta"):
+        data[name] = np.where(np.isnan(iv), np.nan, greeks[name])
+    return pd.DataFrame(data, columns=["underlying", *_CHAIN_COLUMNS])
+
+
+def _chains(
+    strategy: Any, underlying: Optional[str], rate: float, model: OptionModel
+) -> pd.DataFrame:
+    """期权链(含 underlying 列), 调用方不得修改返回值.
+
+    ``option_refresh_interval > 0`` 时整批计算全部标的的期权链, 按行情时间在间隔内
+    复用; 缓存按取价方式、利率、模型区分。为 0 时每次只算 ``underlying`` 的链。
+    """
+    interval = float(strategy.option_refresh_interval)
+    if interval < 0:
+        raise ValueError(f"option_refresh_interval 不能为负, 实际: {interval:g}")
+    now = strategy.now
+    if interval == 0 or now is None:
+        instruments = strategy.get_instruments()
+        snaps = _option_snapshots(instruments, underlying)
+        return _price_chains(strategy, instruments, snaps, rate, model)
+    key = (_price_source(strategy), rate, model)
+    cached = strategy._option_chains_cache.get(key)
+    if cached is None or not 0 <= (now - cached[0]).total_seconds() < interval:
+        instruments = strategy.get_instruments()
+        snaps = _option_snapshots(instruments, None)
+        full = _price_chains(strategy, instruments, snaps, rate, model)
+        # 已按标的排序, 记下各标的的行区间, 取用时切片
+        names = full["underlying"].to_numpy()
+        change = np.ones(len(names), dtype=bool)
+        change[1:] = names[1:] != names[:-1]
+        starts = np.flatnonzero(change)
+        ends = np.append(starts[1:], len(names))
+        spans = {str(names[s]): (int(s), int(e)) for s, e in zip(starts, ends)}
+        cached = (now, full, spans)
+        strategy._option_chains_cache[key] = cached
+    _, full, spans = cached
+    if underlying is None:
+        return cast(pd.DataFrame, full)
+    start, end = spans.get(underlying, (0, 0))
+    return cast(pd.DataFrame, full.iloc[start:end])
+
+
+def option_chains(
+    strategy: Any,
+    underlyings: Optional[Sequence[str]] = None,
+    rate: Optional[float] = None,
+    model: OptionModel = "black76",
+) -> pd.DataFrame:
+    """多个标的的期权链合并为一张表, 首列为 underlying."""
+    chains = _chains(strategy, None, _resolve_rate(strategy, rate), model)
+    if underlyings is not None:
+        chains = chains[chains["underlying"].isin(list(underlyings))]
+    return chains.reset_index(drop=True)
+
+
 def option_chain(
     strategy: Any,
     underlying: str,
@@ -145,54 +291,10 @@ def option_chain(
     model: OptionModel = "black76",
 ) -> pd.DataFrame:
     """标的的期权链: 合约要素、报价、远期、隐含波动率与 Greeks."""
-    r = _resolve_rate(strategy, rate)
-    snaps = [
-        snap
-        for snap in _option_snapshots(strategy, underlying)
-        if expiry is None or snap.expiry_date == expiry
-    ]
-    symbols = np.array([snap.symbol for snap in snaps], dtype=object)
-    types = np.array([snap.option_type for snap in snaps], dtype=str)
-    strikes = np.array([snap.strike_price for snap in snaps], dtype=float)
-    expiries = np.array([snap.expiry_date for snap in snaps], dtype=np.int64)
-    quotes = np.array(
-        [_quote_price(strategy, snap.symbol) for snap in snaps], dtype=float
-    ).reshape(-1, 3)
-    prices = quotes[:, 2]
-    t = np.full(len(snaps), np.nan)
-    forward = np.full(len(snaps), np.nan)
-    for expiry_date in np.unique(expiries):
-        mask = expiries == expiry_date
-        t_e = _expiry_t(strategy, int(expiry_date))
-        if t_e > 0:
-            t[mask] = t_e
-            forward[mask] = _forward(
-                strategy, underlying, strikes[mask], types[mask], prices[mask], t_e, r
-            )
-    live = t > 0
-    iv = np.asarray(
-        implied_vol(
-            prices[live], forward[live], strikes[live], t[live], r, types[live], model
-        ),
-        dtype=float,
-    )
-    greeks = black76_greeks(forward[live], strikes[live], t[live], r, iv, types[live])
-    data: Dict[str, Any] = {
-        "symbol": symbols[live],
-        "option_type": types[live].astype(object),
-        "strike": strikes[live],
-        "expiry_date": expiries[live],
-        "t": t[live],
-        "bid": quotes[live, 0],
-        "ask": quotes[live, 1],
-        "price": prices[live],
-        "forward": forward[live],
-        "iv": iv,
-    }
-    for name in ("delta", "gamma", "vega", "theta"):
-        data[name] = np.where(np.isnan(iv), np.nan, greeks[name])
-    order = np.lexsort((data["option_type"], data["strike"], data["expiry_date"]))
-    return pd.DataFrame({name: data[name][order] for name in _CHAIN_COLUMNS})
+    chain = _chains(strategy, underlying, _resolve_rate(strategy, rate), model)
+    if expiry is not None:
+        chain = chain[chain["expiry_date"] == expiry]
+    return chain.drop(columns="underlying").reset_index(drop=True)
 
 
 def _greeks_failure(
@@ -347,7 +449,7 @@ def portfolio_greeks(
     total = {"delta": 0.0, "gamma": 0.0, "vega": 0.0, "theta": 0.0, "cash_delta": 0.0}
     held = {
         snap.symbol: snap
-        for snap in _option_snapshots(strategy, underlying)
+        for snap in _option_snapshots(strategy.get_instruments(), underlying)
         if positions.get(snap.symbol, 0.0)
     }
     linear = [underlying] + [s for s in include if s != underlying]

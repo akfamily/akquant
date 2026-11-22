@@ -1102,11 +1102,13 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 
 *   `option_rate: float`: 类属性，默认 `0.0`；期权定价用的无风险利率（连续复利、年化），各方法未显式传 `rate` 时使用。
 *   `option_price_source: Literal["last", "mid"]`: 类属性，默认 `"last"`；期权链的取价方式。`"last"` 取最新价（K 线回测只有这一种价格）；`"mid"` 按 Cboe VIX 的取价规则取买一、卖一的中间价，仅当两侧都有报价、都为正且买价不高于卖价，否则该合约不计算隐含波动率，`get_greeks` / `portfolio_greeks` 报出具体原因（如“只有卖一价 X, 没有买一价”）。报价来自 tick 的 `bid_price` / `ask_price`。标的期货始终取最新价。
+*   `option_refresh_interval: float`: 类属性，默认 `1.0`（秒，按行情时间）；期权链整批计算的刷新间隔。间隔内第一次调用期权方法时，一次批量算出全部已登记标的的期权链，间隔内的后续调用（`option_chain`、`option_chains`、`select_option`、`get_greeks`、`portfolio_greeks`、`hedge_delta`）复用该结果；缓存按取价方式、利率、模型区分。CTP 对每个合约每秒最多推送 2 笔快照，间隔设到 0.5 秒以下没有意义；对冲、持仓监控用 1 到 5 秒即可，报价、做市类策略可设 0.5 秒。设为 0 则每次调用都按当前报价只算所需标的的链。实测 SimNow 合约表（6 核机器）：10 条链约 2,600 个合约一批约 8 毫秒，50 条链约 7,300 个合约约 22 毫秒，全市场 224 条链约 16,000 个合约约 50 毫秒。K 线回测中每个 K 线时刻都会重新计算；但同一时刻的 K 线逐个标的派发给 `on_bar` 时，本时刻第一次调用之后才到达的标的价格不进入本时刻的结果，需要本时刻全部价格时在 `on_bars` 中调用，或设为 0。
 *   `get_expiries(underlying) -> List[int]`: 未到期的到期日（YYYYMMDD），由近到远。同一标的可能有多个到期（如大商所月度期权）。
 *   `option_chain(underlying, expiry=None, rate=None, model="black76") -> pd.DataFrame`: 期权链，列为 `symbol`、`option_type`、`strike`、`expiry_date`、`t`、`bid`、`ask`、`price`、`forward`、`iv`、`delta`、`gamma`、`vega`、`theta`。
     *   远期价格：标的登记为期货时取期货最新价；否则用同一到期的认购、认沽价格按平价关系反推（股指期权由此吸收基差），缺报价时退回标的最新价按利率前推。
     *   到期时刻取到期日 15:00，期限按自然日 365 天计。
     *   `model` 决定隐含波动率的求解模型：`"black76"`（默认）或 `"baw"`（美式近似）。Greeks 一律按 Black-76 以该隐含波动率计算。没有最新价的合约 `iv` 与 Greeks 为 NaN。
+*   `option_chains(underlyings=None, rate=None, model="black76") -> pd.DataFrame`: 多个标的的期权链合并为一张表，首列为 `underlying`，其余列同 `option_chain`，按标的、到期日、行权价、类型排序；`underlyings` 不填返回全部已登记标的。同时盯多条链时使用。
 *   `select_option(underlying, option_type, expiry=None, strike_offset=0, delta=None, rate=None, model="black76") -> Optional[str]`: 选出一个合约代码。给 `delta` 时选 |Delta| 最接近 `abs(delta)` 的合约；否则以最接近远期价的行权价为平值，按 `strike_offset` 偏移档位（正数向上）。`expiry` 不填取最近到期；选不到返回 `None`。
 *   `get_greeks(symbol, rate=None, model="black76") -> Dict[str, float]`: 单个合约每单位标的的 `price`、`forward`、`t`、`iv`、`delta`、`gamma`、`vega`、`theta`。算不出时抛 `ValueError`，信息写明具体原因：没有行情时间、已到期、没有最新价、标的没有最新价、最新价不高于内在价值、最新价超出波动率 500% 时的理论价等。
 *   `portfolio_greeks(underlying, include=(), rate=None, model="black76") -> Dict[str, float]`: 该标的全部期权持仓、标的本身持仓、以及 `include` 中线性品种（Delta 记为 1）的合计 `delta`、`gamma`、`vega`、`theta`、`cash_delta`，已乘持仓数量与合约乘数。`cash_delta` = Σ 数量×乘数×Delta×远期价，用于跨到期、跨对冲品种相加。有持仓算不出 Greeks（含线性持仓没有最新价）时抛 `ValueError`，逐个列出合约与具体原因，不按 0 计。
