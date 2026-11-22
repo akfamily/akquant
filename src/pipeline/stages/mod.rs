@@ -1307,6 +1307,7 @@ mod tests {
             price,
             volume: dec!(100),
             symbol: "600000.SH".to_string(),
+            book: Default::default(),
         }
     }
 

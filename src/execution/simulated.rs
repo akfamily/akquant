@@ -2569,6 +2569,7 @@ mod tests {
             price: Decimal::new(105, 1),
             volume: Decimal::from(1000),
             symbol: "AAPL".to_string(),
+            book: Default::default(),
         });
         let events = run_auction_step(&mut sim, &tick, TradingSession::Continuous, day(2), false);
         let avg = events.iter().find_map(|e| match e {

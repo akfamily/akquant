@@ -22,6 +22,8 @@ serde = { version = "1.0", features = ["derive", "rc"] }
 # parquet 走 eager ParquetReader; CSV 用独立的 `csv` crate, 不需要 polars 的。
 polars = { version = "0.55.2", features = ["parquet", "ipc"] }
 rayon = "1.11"
+# 期权定价的正态分布函数 erfc(musl 移植, Rust 标准库没有)
+libm = "0.2"
 uuid = { version = "1.20.0", features = ["v4", "fast-rng", "macro-diagnostics"] }
 # Utilities
 chrono = { version = "0.4", features = ["serde"] }

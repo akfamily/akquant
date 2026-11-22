@@ -27,6 +27,7 @@ dependencies = [
  "crossbeam-channel",
  "csv",
  "indicatif",
+ "libm",
  "log",
  "numpy",
  "polars",
