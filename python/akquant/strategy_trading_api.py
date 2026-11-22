@@ -10,6 +10,7 @@ from .execution.base import PositionDetail, PositionLeg
 from .gateway.broker_models import normalize_asset_type
 from .gateway.order_receipt import OrderLeg, OrderReceipt
 from .log import get_logger
+from .strategy_option_risk import greek_limit_violation
 
 logger = get_logger("trading")
 
@@ -398,6 +399,7 @@ def _submit_buy_side_orders(
     position_effect: str = "auto",
     reduce_only: bool = False,
     allow_quantity_auto_resize: Optional[bool] = None,
+    check_greek_limits: bool = True,
 ) -> List[str]:
     if strategy.ctx is None:
         raise RuntimeError("Context not ready")
@@ -420,6 +422,20 @@ def _submit_buy_side_orders(
         )
     if quantity <= 0:
         return []
+
+    if check_greek_limits:
+        # 期权 Greeks 限额: 对用户提交的这一笔逻辑委托校验(拆腿之前), 超限时
+        # 作为风控拒单交给引擎(进订单账本, 触发 on_reject), 不撮合。
+        reason = greek_limit_violation(strategy, symbol, "Buy", float(quantity))
+        if reason is not None:
+            return [
+                cast(
+                    str,
+                    strategy.ctx.reject_order(
+                        symbol, "Buy", quantity, reason, price, tag or ""
+                    ),
+                )
+            ]
 
     if position_effect == "auto":
         # 用可平持仓而非结算仓：同一 on_bar 内已提交未成交的平仓单必须扣除，
@@ -455,6 +471,7 @@ def _submit_buy_side_orders(
                     allow_quantity_auto_resize=(
                         allow_quantity_auto_resize and leg_effect == "open"
                     ),
+                    check_greek_limits=False,
                 )
             )
         return order_ids
@@ -582,6 +599,7 @@ def _submit_sell_side_orders(
     commission: Optional[OrderCommission] = None,
     position_effect: str = "auto",
     reduce_only: bool = False,
+    check_greek_limits: bool = True,
 ) -> List[str]:
     if strategy.ctx is None:
         raise RuntimeError("Context not ready")
@@ -596,6 +614,20 @@ def _submit_sell_side_orders(
             return []
     if quantity <= 0:
         return []
+
+    if check_greek_limits:
+        # 期权 Greeks 限额: 对用户提交的这一笔逻辑委托校验(拆腿之前), 超限时
+        # 作为风控拒单交给引擎(进订单账本, 触发 on_reject), 不撮合。
+        reason = greek_limit_violation(strategy, symbol, "Sell", float(quantity))
+        if reason is not None:
+            return [
+                cast(
+                    str,
+                    strategy.ctx.reject_order(
+                        symbol, "Sell", quantity, reason, price, tag or ""
+                    ),
+                )
+            ]
 
     if position_effect == "auto":
         # 与 buy 侧对称：可平持仓已扣除在途平仓单，避免反手第二腿误判（#361）。
@@ -624,6 +656,7 @@ def _submit_sell_side_orders(
                     commission=commission,
                     position_effect=leg_effect,
                     reduce_only=leg_reduce_only,
+                    check_greek_limits=False,
                 )
             )
         return order_ids

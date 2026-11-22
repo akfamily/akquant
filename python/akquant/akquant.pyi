@@ -3251,6 +3251,28 @@ class StrategyContext:
         """
         ...
 
+    def reject_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: typing.Any,
+        reason: str,
+        price: typing.Optional[typing.Any] = None,
+        tag: typing.Optional[str] = None,
+    ) -> str:
+        r"""
+        提交一笔已被策略侧风控拒绝的委托, 由引擎按风控拒单处理(不撮合).
+
+        :param symbol: 标的代码
+        :param side: ``"Buy"`` / ``"Sell"``
+        :param quantity: 委托数量
+        :param reason: 拒单原因
+        :param price: 限价 (可选)
+        :param tag: 订单标签 (可选)
+        :return: 订单 ID
+        """
+        ...
+
     def buy(
         self,
         symbol: str,

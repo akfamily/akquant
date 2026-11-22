@@ -453,8 +453,16 @@ class BrokerOrderSubmitter:
 
         **覆盖范围**: 只含 order_value / order_size / position_size 三项(不依赖引擎
         运行态)。daily_loss / drawdown / risk_budget 依赖引擎累计盈亏与预算用量,
-        无法在此校验, 仍是 broker_live 的缺口。
+        无法在此校验, 仍是 broker_live 的缺口。另含策略的期权 Greeks 限额
+        (``Strategy.option_greek_limits``), 与回测共用 ``greek_limit_violation``。
         """
+        from ..strategy_option_risk import greek_limit_violation
+
+        greek_reason = greek_limit_violation(
+            self._strategy, symbol, str(side), float(quantity)
+        )
+        if greek_reason is not None:
+            return greek_reason
         limits = self._strategy_limits
         if not limits:
             return None

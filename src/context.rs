@@ -1366,6 +1366,84 @@ impl StrategyContext {
         }
     }
 
+    /// 提交一笔已被策略侧风控拒绝的委托, 由引擎按风控拒单处理(不撮合).
+    ///
+    /// 用于只能在 Python 侧判定的风控(如期权 Greeks 限额): 拒单与 Rust 风控拒单同样
+    /// 进入订单账本, 触发 ``on_order`` / ``on_reject``。
+    ///
+    /// :param symbol: 标的代码
+    /// :param side: ``"Buy"`` / ``"Sell"``
+    /// :param quantity: 委托数量
+    /// :param price: 限价 (可选)
+    /// :param reason: 拒单原因
+    /// :param tag: 订单标签 (可选)
+    /// :return: 订单 ID
+    #[pyo3(signature = (symbol, side, quantity, reason, price=None, tag=None))]
+    fn reject_order(
+        &mut self,
+        symbol: String,
+        side: &str,
+        quantity: &Bound<'_, PyAny>,
+        reason: String,
+        price: Option<&Bound<'_, PyAny>>,
+        tag: Option<String>,
+    ) -> PyResult<String> {
+        let side = match side.trim().to_ascii_lowercase().as_str() {
+            "buy" => OrderSide::Buy,
+            "sell" => OrderSide::Sell,
+            other => {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "side 必须是 'Buy' 或 'Sell', 收到 {other:?}"
+                )));
+            }
+        };
+        if reason.trim().is_empty() {
+            return Err(pyo3::exceptions::PyValueError::new_err("拒单原因不能为空"));
+        }
+        let price = match price {
+            Some(p) => Some(extract_decimal(p)?),
+            None => None,
+        };
+        let id = Uuid::new_v4().to_string();
+        self.submit_order(Order {
+            id: id.clone(),
+            symbol,
+            side,
+            order_type: if price.is_some() {
+                OrderType::Limit
+            } else {
+                OrderType::Market
+            },
+            quantity: extract_decimal(quantity)?,
+            price,
+            time_in_force: TimeInForce::GTC,
+            trigger_price: None,
+            trail_offset: None,
+            trail_reference_price: None,
+            fill_policy_override: None,
+            slippage_type_override: None,
+            slippage_value_override: None,
+            commission_type_override: None,
+            commission_value_override: None,
+            graph_id: None,
+            parent_order_id: None,
+            order_role: crate::model::OrderRole::Standalone,
+            position_effect: PositionEffect::default(),
+            status: crate::model::OrderStatus::New,
+            filled_quantity: Decimal::ZERO,
+            average_filled_price: None,
+            created_at: self.current_time,
+            updated_at: self.current_time,
+            commission: Decimal::ZERO,
+            tag: tag.unwrap_or_default(),
+            reject_reason: reason,
+            owner_strategy_id: self.strategy_id.clone(),
+            allow_quantity_auto_resize: false,
+            reduce_only: false,
+        });
+        Ok(id)
+    }
+
     /// 买入下单.
     ///
     /// :param symbol: 标的代码

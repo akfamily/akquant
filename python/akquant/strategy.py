@@ -412,6 +412,12 @@ class Strategy:
     #: 都按当前报价只算所需标的的链。同一时刻逐个标的派发的 ``on_bar`` 中, 第一次调用
     #: 之后才到达的价格不进入本时刻结果, 需要全部价格时在 ``on_bars`` 中调用
     option_refresh_interval: float = 1.0
+    #: 期权 Greeks 限额 ``{标的: {Greek: 上限}}``, Greek 取 ``delta`` / ``gamma`` /
+    #: ``vega`` / ``theta`` / ``cash_delta``(口径同 ``portfolio_greeks``, 已乘持仓
+    #: 数量与合约乘数)。下单前按"当前组合 + 在途委托 + 本笔"投影, 绝对值超过上限且
+    #: 大于下单前的委托作为风控拒单(``on_reject``), 减小暴露的委托放行; 无法计算
+    #: Greeks 时同样拒单并写明原因。回测与实盘一致。
+    option_greek_limits: Optional[Dict[str, Dict[str, float]]] = None
     _runtime_config: StrategyRuntimeConfig
     _last_event_type: str = ""  # "bar" or "tick"
     _hold_bars: "defaultdict[str, int]"
