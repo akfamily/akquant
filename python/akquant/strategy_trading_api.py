@@ -1195,7 +1195,13 @@ def _target_to_orders(
             if delta_qty > 0:
                 delta_qty = (delta_qty // current_lot_size) * current_lot_size
             elif delta_qty < 0:
-                delta_qty = -((abs(delta_qty) // current_lot_size) * current_lot_size)
+                if target_qty == 0:
+                    # A full liquidation may sell the remaining odd-lot shares.
+                    delta_qty = -abs(delta_qty)
+                else:
+                    delta_qty = -(
+                        (abs(delta_qty) // current_lot_size) * current_lot_size
+                    )
 
     # buy()/sell() 现返回 OrderReceipt；order_target 系列对外仍以 str 订单号
     # 为契约（不属于 Task 7 变更范围），故在此边界取 .primary 落地为字符串。
