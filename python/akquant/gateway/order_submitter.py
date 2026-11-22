@@ -130,7 +130,14 @@ def _split_close_legs(
     supported_effects: set[str],
     payload_field: Callable[[Any, str], Any],
 ) -> list[tuple[str, float]]:
-    """把一段平仓量拆成 close_today/close_yesterday；能力不足则整段 close."""
+    """把一段平仓量拆成 close_today/close_yesterday；能力不足则整段 close.
+
+    柜台网关提供 ``split_close(symbol, side, quantity)`` 时(CTP: 本地持仓账)由它
+    拆分, 不在下单路径上查询持仓; 可平数量不足时它抛 ``ValueError``。
+    """
+    split_close = getattr(trader_gateway, "split_close", None)
+    if callable(split_close):
+        return list(split_close(symbol, side, quantity))
     if not capability.position_details:
         return [("close", quantity)]
     if (
@@ -799,16 +806,36 @@ class BrokerOrderSubmitter:
                 reason=reject_reason,
             )
             return OrderReceipt(group_id="", order_ids=(), legs=(), failure="rejected")
-        order_legs = resolve_live_order_legs(
-            trader_gateway=self._trader_gateway,
-            capability=capability,
-            symbol=symbol,
-            side=side,
-            quantity=quantity,
-            position_effect=normalized_position_effect,
-            reduce_only=reduce_only,
-            payload_field=self._payload_field,
-        )
+        try:
+            order_legs = resolve_live_order_legs(
+                trader_gateway=self._trader_gateway,
+                capability=capability,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                position_effect=normalized_position_effect,
+                reduce_only=reduce_only,
+                payload_field=self._payload_field,
+            )
+        except ValueError as exc:
+            # 平仓拆分失败(可平不足、持仓账未同步)作为本地拒单, 写明原因
+            record_reject(
+                strategy_id=owner_strategy_id,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                client_order_id="",
+                reason=str(exc),
+            )
+            self._emit_risk_reject(
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                price=price,
+                owner_strategy_id=owner_strategy_id,
+                reason=str(exc),
+            )
+            return OrderReceipt(group_id="", order_ids=(), legs=(), failure="rejected")
         request_client_order_id = client_order_id or self._next_client_order_id()
         client_order_ids = build_live_order_client_ids(
             request_client_order_id=request_client_order_id,

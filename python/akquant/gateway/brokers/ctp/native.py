@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from ....akquant import BarAggregator, DataFeed, Tick
 from ....log import build_log_extra, get_logger
+from .offset import OffsetBook
 
 try:
     from openctp_ctp import thostmduserapi as mdapi  # type: ignore
@@ -41,6 +42,18 @@ except ImportError:
 
 
 logger = get_logger("gateway.ctp_native")
+
+#: 上期所、能源中心的市价指令须带保护价(最劣成交价, 须在涨跌停板内), 2026-07-06 起
+#: 上线(上期发〔2026〕242号、上能发〔2026〕73号); 其他交易所市价单不带保护价
+PROTECTION_PRICE_EXCHANGES = frozenset({"SHFE", "INE"})
+#: CTP 请求函数的流控返回码, 遇到时等待后重发
+QUERY_FLOW_CONTROL_CODES = {
+    -2: "未处理请求超过许可数",
+    -3: "每秒发送请求数超过许可数",
+}
+QUERY_MAX_ATTEMPTS = 5
+#: CTP 无效价格以 DBL_MAX 表示; 超过它视为无效
+_INVALID_PRICE = 1e15
 
 
 class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
@@ -108,6 +121,16 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         self._trade_query_event = threading.Event()
         self._trade_query_results: list[dict[str, Any]] = []
         self._trade_query_error = ""
+        self._depth_query_timeout_sec = 2.0
+        self._depth_query_event = threading.Event()
+        self._depth_query_rows: list[dict[str, Any]] = []
+        self._depth_query_error = ""
+        # 查询串行化: 恢复线程与策略线程都会查询, 共用上面的结果字段
+        self._query_lock = threading.RLock()
+        self._query_retry_interval_sec = 1.0
+        # 本地持仓账: 平仓按它拆平今/平昨, 下单路径上不查柜台
+        self.offset_book = OffsetBook()
+        self._symbol_exchange: dict[str, str] = {}
 
     def _log_extra(self, *, symbol: str | None = None) -> dict[str, Any]:
         return build_log_extra(phase="gateway", symbol=symbol)
@@ -170,6 +193,11 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
             raise RuntimeError("CTP trader is not ready for trading")
         if self.api is None:
             raise RuntimeError("CTP trader API is not initialized")
+        protection_price = (
+            self._market_protection_price(symbol, side)
+            if str(order_type).strip().lower() == "market"
+            else 0.0
+        )
 
         order_ref_text = str(self.order_ref)
         self.order_ref += 1
@@ -199,7 +227,7 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         tif_key = str(time_in_force).strip().upper()
         if order_type_key == "market":
             request.OrderPriceType = tdapi.THOST_FTDC_OPT_AnyPrice
-            request.LimitPrice = 0.0
+            request.LimitPrice = protection_price
             request.TimeCondition = tdapi.THOST_FTDC_TC_IOC
             request.VolumeCondition = tdapi.THOST_FTDC_VC_AV
         else:
@@ -299,23 +327,23 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         if self.api is None:
             raise RuntimeError("CTP trader API is not initialized")
 
-        self._account_query_result = None
-        self._account_query_error = ""
-        self._account_query_event.clear()
+        with self._query_lock:
+            self._account_query_result = None
+            self._account_query_error = ""
+            self._account_query_event.clear()
 
-        request = tdapi.CThostFtdcQryTradingAccountField()
-        request.BrokerID = self.broker_id
-        request.InvestorID = self.user_id
+            request = tdapi.CThostFtdcQryTradingAccountField()
+            request.BrokerID = self.broker_id
+            request.InvestorID = self.user_id
 
-        self.req_id += 1
-        ret = self.api.ReqQryTradingAccount(request, self.req_id)
-        if ret != 0:
-            raise RuntimeError(f"ReqQryTradingAccount failed with code={ret}")
-        if not self._account_query_event.wait(timeout=self._account_query_timeout_sec):
-            raise RuntimeError("CTP trading account query timed out")
-        if self._account_query_error:
-            raise RuntimeError(self._account_query_error)
-        return self._account_query_result
+            self._send_query("ReqQryTradingAccount", request)
+            if not self._account_query_event.wait(
+                timeout=self._account_query_timeout_sec
+            ):
+                raise RuntimeError("CTP trading account query timed out")
+            if self._account_query_error:
+                raise RuntimeError(self._account_query_error)
+            return self._account_query_result
 
     def query_positions(self, instrument_id: str | None = None) -> list[dict[str, Any]]:
         """Query and aggregate CTP investor positions synchronously."""
@@ -324,27 +352,30 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         if self.api is None:
             raise RuntimeError("CTP trader API is not initialized")
 
-        self._position_query_results = {}
-        self._position_query_error = ""
-        self._position_query_event.clear()
+        with self._query_lock:
+            self._position_query_results = {}
+            self._position_query_error = ""
+            self._position_query_event.clear()
 
-        request = tdapi.CThostFtdcQryInvestorPositionField()
-        request.BrokerID = self.broker_id
-        request.InvestorID = self.user_id
-        if instrument_id:
-            request.InstrumentID = instrument_id
+            request = tdapi.CThostFtdcQryInvestorPositionField()
+            request.BrokerID = self.broker_id
+            request.InvestorID = self.user_id
+            if instrument_id:
+                request.InstrumentID = instrument_id
 
-        self.req_id += 1
-        ret = self.api.ReqQryInvestorPosition(request, self.req_id)
-        if ret != 0:
-            raise RuntimeError(f"ReqQryInvestorPosition failed with code={ret}")
-        if not self._position_query_event.wait(
-            timeout=self._position_query_timeout_sec
-        ):
-            raise RuntimeError("CTP investor position query timed out")
-        if self._position_query_error:
-            raise RuntimeError(self._position_query_error)
-        return list(self._position_query_results.values())
+            self._send_query("ReqQryInvestorPosition", request)
+            if not self._position_query_event.wait(
+                timeout=self._position_query_timeout_sec
+            ):
+                raise RuntimeError("CTP investor position query timed out")
+            if self._position_query_error:
+                raise RuntimeError(self._position_query_error)
+            rows = list(self._position_query_results.values())
+            self.offset_book.apply_snapshot(rows, instrument_id or None)
+            for row in rows:
+                if row.get("exchange_id"):
+                    self._symbol_exchange[row["symbol"]] = row["exchange_id"]
+            return rows
 
     def query_trades_today(
         self, instrument_id: str | None = None
@@ -355,25 +386,137 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         if self.api is None:
             raise RuntimeError("CTP trader API is not initialized")
 
-        self._trade_query_results = []
-        self._trade_query_error = ""
-        self._trade_query_event.clear()
+        with self._query_lock:
+            self._trade_query_results = []
+            self._trade_query_error = ""
+            self._trade_query_event.clear()
 
-        request = tdapi.CThostFtdcQryTradeField()
-        request.BrokerID = self.broker_id
-        request.InvestorID = self.user_id
-        if instrument_id:
-            request.InstrumentID = instrument_id
+            request = tdapi.CThostFtdcQryTradeField()
+            request.BrokerID = self.broker_id
+            request.InvestorID = self.user_id
+            if instrument_id:
+                request.InstrumentID = instrument_id
 
-        self.req_id += 1
-        ret = self.api.ReqQryTrade(request, self.req_id)
-        if ret != 0:
-            raise RuntimeError(f"ReqQryTrade failed with code={ret}")
-        if not self._trade_query_event.wait(timeout=self._trade_query_timeout_sec):
-            raise RuntimeError("CTP trade query timed out")
-        if self._trade_query_error:
-            raise RuntimeError(self._trade_query_error)
-        return list(self._trade_query_results)
+            self._send_query("ReqQryTrade", request)
+            if not self._trade_query_event.wait(timeout=self._trade_query_timeout_sec):
+                raise RuntimeError("CTP trade query timed out")
+            if self._trade_query_error:
+                raise RuntimeError(self._trade_query_error)
+            return list(self._trade_query_results)
+
+    def _send_query(self, method: str, request: Any) -> None:
+        """发出查询请求; 遇到流控返回码每隔 ``_query_retry_interval_sec`` 重发.
+
+        CTP 查询每秒限 1 次, 超出时请求函数返回 -3(未处理请求过多返回 -2)。重发
+        ``QUERY_MAX_ATTEMPTS`` 次仍被流控、或返回其他非 0 码时抛出, 写明返回码含义。
+        调用方须持有 ``_query_lock``。
+        """
+        for attempt in range(1, QUERY_MAX_ATTEMPTS + 1):
+            self.req_id += 1
+            ret = getattr(self.api, method)(request, self.req_id)
+            if ret == 0:
+                return
+            reason = QUERY_FLOW_CONTROL_CODES.get(ret)
+            if reason is None:
+                raise RuntimeError(f"{method} failed with code={ret}")
+            if attempt == QUERY_MAX_ATTEMPTS:
+                raise RuntimeError(
+                    f"{method} failed with code={ret}({reason}), "
+                    f"已重发 {QUERY_MAX_ATTEMPTS} 次"
+                )
+            time.sleep(self._query_retry_interval_sec)
+
+    def _query_depth(self, symbol: str) -> dict[str, Any]:
+        """查询合约的深度行情(含交易所、涨跌停价); 按合约代码精确匹配."""
+        with self._query_lock:
+            self._depth_query_rows = []
+            self._depth_query_error = ""
+            self._depth_query_event.clear()
+            request = tdapi.CThostFtdcQryDepthMarketDataField()
+            request.InstrumentID = symbol
+            self._send_query("ReqQryDepthMarketData", request)
+            if not self._depth_query_event.wait(timeout=self._depth_query_timeout_sec):
+                raise RuntimeError(
+                    f"CTP depth market data query for {symbol} timed out"
+                )
+            if self._depth_query_error:
+                raise RuntimeError(self._depth_query_error)
+            # 该查询按前缀匹配(期货代码会带出它的期权), 只取代码完全相同的一行
+            for row in self._depth_query_rows:
+                if row["InstrumentID"] == symbol:
+                    return row
+            raise ValueError(f"CTP 查不到合约 {symbol} 的行情")
+
+    def _market_protection_price(self, symbol: str, side: str) -> float:
+        """市价单的保护价: 上期所、能源中心买单取涨停价、卖单取跌停价, 其他交易所为 0.
+
+        合约所属交易所未知或属于这两家时查询一次深度行情(涨跌停价每个交易日不同,
+        这两家每次都取最新值); 取不到有效的涨跌停价时抛 ``ValueError``, 不报 0 价。
+        """
+        exchange = self._symbol_exchange.get(symbol)
+        if exchange is not None and exchange not in PROTECTION_PRICE_EXCHANGES:
+            return 0.0
+        row = self._query_depth(symbol)
+        exchange = str(row["ExchangeID"])
+        if exchange:
+            self._symbol_exchange[symbol] = exchange
+        if exchange not in PROTECTION_PRICE_EXCHANGES:
+            return 0.0
+        buy = str(side).strip().lower() == "buy"
+        field = "UpperLimitPrice" if buy else "LowerLimitPrice"
+        price = float(row[field] or 0.0)
+        if not 0.0 < price < _INVALID_PRICE:
+            raise ValueError(
+                f"{symbol} 行情中没有有效的{'涨停价' if buy else '跌停价'}, "
+                f"不能报{exchange}市价单(须以涨跌停价为保护价)"
+            )
+        return price
+
+    def split_close(
+        self, symbol: str, side: str, quantity: float
+    ) -> list[tuple[str, float]]:
+        """按本地持仓账把平仓量拆成平今/平昨(见 :class:`OffsetBook`)."""
+        return self.offset_book.split_close(
+            symbol, str(side).strip().lower(), float(quantity)
+        )
+
+    def OnRspQryDepthMarketData(
+        self,
+        pDepthMarketData: Any,
+        pRspInfo: Any,
+        nRequestID: int,
+        bIsLast: bool,
+    ) -> None:
+        """Handle depth market data query response."""
+        _ = nRequestID
+        error_id = (
+            int(getattr(pRspInfo, "ErrorID", 0) or 0) if pRspInfo is not None else 0
+        )
+        if error_id:
+            error_msg = self._to_text(getattr(pRspInfo, "ErrorMsg", ""))
+            self._depth_query_error = (
+                f"CTP depth market data query failed: {error_id} {error_msg}".strip()
+            )
+        if pDepthMarketData is not None:
+            # 回调参数只在回调内有效(CTP 复用其内存), 当场复制所需字段
+            self._depth_query_rows.append(
+                {
+                    "InstrumentID": self._to_text(
+                        getattr(pDepthMarketData, "InstrumentID", "")
+                    ),
+                    "ExchangeID": self._to_text(
+                        getattr(pDepthMarketData, "ExchangeID", "")
+                    ),
+                    "UpperLimitPrice": getattr(
+                        pDepthMarketData, "UpperLimitPrice", 0.0
+                    ),
+                    "LowerLimitPrice": getattr(
+                        pDepthMarketData, "LowerLimitPrice", 0.0
+                    ),
+                }
+            )
+        if bIsLast:
+            self._depth_query_event.set()
 
     def OnFrontConnected(self) -> None:
         """Handle front connection event."""
@@ -650,12 +793,30 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         limit_price = float(getattr(pOrder, "LimitPrice", 0.0) or 0.0)
         if limit_price > 0:
             payload["price"] = limit_price
+        traded = float(getattr(pOrder, "VolumeTraded", 0.0) or 0.0)
+        remaining = getattr(pOrder, "VolumeTotal", None)
+        self.offset_book.update_order(
+            key=f"{front_id}:{session_id}:{order_ref}",
+            symbol=str(payload["symbol"]),
+            exchange=self._to_text(getattr(pOrder, "ExchangeID", "")),
+            side=self._map_direction(direction).lower(),
+            position_effect=str(payload["position_effect"]),
+            remaining=float(remaining) if remaining is not None else volume - traded,
+            active=self._to_text(getattr(pOrder, "OrderStatus", "")) not in {"0", "5"},
+        )
         if self.order_callback is not None:
             self.order_callback(payload)
 
     def OnRtnTrade(self, pTrade: Any) -> None:
         """Handle trade return event."""
         payload = self._trade_payload_from_ctp_trade(pTrade)
+        self.offset_book.update_trade(
+            symbol=str(payload["symbol"]),
+            exchange=self._to_text(getattr(pTrade, "ExchangeID", "")),
+            side=str(payload["side"]).lower(),
+            position_effect=str(payload["position_effect"]),
+            volume=float(payload["quantity"]),
+        )
         if self.trade_callback is not None:
             self.trade_callback(payload)
 
@@ -828,19 +989,16 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
 
         position_qty = float(getattr(position, "Position", 0.0) or 0.0)
         today_qty = float(getattr(position, "TodayPosition", 0.0) or 0.0)
-        yesterday_qty = float(getattr(position, "YdPosition", 0.0) or 0.0)
-        if today_qty <= 0.0 and yesterday_qty <= 0.0:
+        # YdPosition 是上日持仓, 当天平掉昨仓后不减少; 当前昨仓 = Position −
+        # TodayPosition(上期所/能源中心的昨仓行 TodayPosition 为 0, 即 Position)。
+        # 行里没有 TodayPosition 时按 PositionDate 判断。
+        if today_qty <= 0.0 and float(getattr(position, "YdPosition", 0.0) or 0.0) <= 0:
             position_date = self._map_position_date(
                 getattr(position, "PositionDate", "")
             )
             if position_date == "today":
                 today_qty = position_qty
-            elif position_date == "yesterday":
-                yesterday_qty = position_qty
-        if yesterday_qty <= 0.0:
-            yesterday_qty = max(position_qty - today_qty, 0.0)
-        if today_qty <= 0.0:
-            today_qty = max(position_qty - yesterday_qty, 0.0)
+        yesterday_qty = max(position_qty - today_qty, 0.0)
 
         direction_frozen = float(
             getattr(
@@ -893,6 +1051,9 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
             if raw_value is not None:
                 snapshot[field] = float(snapshot.get(field, 0.0)) + float(raw_value)
 
+        exchange_id = self._to_text(getattr(position, "ExchangeID", ""))
+        if exchange_id:
+            snapshot["exchange_id"] = exchange_id
         snapshot["timestamp_ns"] = time.time_ns()
         self._position_query_results[key] = snapshot
 

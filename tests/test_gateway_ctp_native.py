@@ -4,6 +4,7 @@ from typing import Any, cast
 
 import pytest
 from akquant.gateway import ctp_native
+from akquant.gateway.brokers.ctp.offset import OffsetBook
 from akquant.gateway.ctp_native import CTPMarketGateway, CTPTraderGateway
 
 
@@ -63,6 +64,14 @@ def _build_native_gateway(monkeypatch: pytest.MonkeyPatch) -> CTPTraderGateway:
     gateway._trade_query_event = threading.Event()
     gateway._trade_query_results = []
     gateway._trade_query_error = ""
+    gateway._depth_query_timeout_sec = 0.1
+    gateway._depth_query_event = threading.Event()
+    gateway._depth_query_rows = []
+    gateway._depth_query_error = ""
+    gateway._query_lock = threading.RLock()
+    gateway._query_retry_interval_sec = 0.0
+    gateway.offset_book = OffsetBook()
+    gateway._symbol_exchange = {}
     return gateway
 
 
