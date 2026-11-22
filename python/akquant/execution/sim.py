@@ -84,3 +84,7 @@ class SimExecution:
     def capabilities(self) -> dict[str, Any]:
         """返回当前执行后端支持的能力标记."""
         return api._sim_capabilities(self._s)
+
+    def exercise(self, symbol: str, quantity: float) -> None:
+        """登记行权申请, 引擎在当日日终结算时执行."""
+        self._s.ctx.request_exercise(symbol, quantity)

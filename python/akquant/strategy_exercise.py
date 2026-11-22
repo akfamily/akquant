@@ -1,4 +1,7 @@
-"""策略侧期货期权行权申请: 校验后交给引擎, 在当日日终结算时执行."""
+"""策略侧期货期权行权申请: 校验后交给执行后端.
+
+回测与 paper 由引擎在当日日终结算时执行; 实盘(broker_live)经柜台提交行权指令。
+"""
 
 from typing import Any, Optional
 
@@ -7,10 +10,6 @@ import pandas as pd
 
 def exercise(strategy: Any, symbol: str, quantity: Optional[float] = None) -> None:
     """校验并提交期货期权行权申请; 不满足条件时报出确切原因."""
-    if getattr(strategy, "_live_market_data_owner", False):
-        raise RuntimeError(
-            "实盘不支持由策略提交行权申请(尚未接入 CTP 行权指令), 请在交易终端提交"
-        )
     snap = strategy.get_instrument(symbol)
     if snap.asset_type != "OPTION":
         raise ValueError(f"{symbol} 不是期权合约, 不能行权")
@@ -36,4 +35,4 @@ def exercise(strategy: Any, symbol: str, quantity: Optional[float] = None) -> No
         raise ValueError(f"{symbol} 行权数量须为正整数手, 实际: {qty:g}")
     if qty > long:
         raise ValueError(f"{symbol} 申请行权 {qty:g} 手, 超过多头持仓 {long:g} 手")
-    strategy.ctx.request_exercise(symbol, qty)
+    strategy.execution.exercise(symbol, qty)

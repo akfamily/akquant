@@ -216,6 +216,10 @@ class CTPTraderAdapter:
         self._emit_execution_report(report)
         return broker_order_id
 
+    def exercise(self, symbol: str, quantity: float) -> list[dict[str, Any]]:
+        """提交期权行权指令, 逐条等柜台受理(见 ``CTPTraderGateway.exercise``)."""
+        return self.gateway.exercise(symbol, quantity)
+
     def cancel_order(self, broker_order_id: str) -> None:
         """Cancel order through CTP trader channel."""
         self.gateway.cancel_order(broker_order_id)

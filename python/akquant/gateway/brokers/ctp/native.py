@@ -42,6 +42,17 @@ except ImportError:
 
 logger = get_logger("gateway.ctp_native")
 
+# 行权指令(执行宣告)的开平标志按交易所区分(SimNow 实测): 上期所、能源中心区分
+# 今昨仓, 今仓须报"平今"、昨仓报"平仓"; 大商所、郑商所、广期所只接受"平仓",
+# 报"平今"被拒(报单字段有误)。
+EXERCISE_CLOSE_TODAY_EXCHANGES = frozenset({"SHFE", "INE"})
+# 行权指令 ExecResult: 盘中受理后为"未执行"(交易所盘后统一配对), 撤销后为"已取消"
+EXEC_RESULT_PENDING = "n"
+EXEC_RESULT_EXECUTED = "0"
+EXEC_RESULT_CANCELED = "c"
+EXEC_RESULT_SUBMITTING = "a"
+EXEC_SUBMIT_REJECTED = "4"
+
 
 class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
     """
@@ -108,6 +119,9 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         self._trade_query_event = threading.Event()
         self._trade_query_results: list[dict[str, Any]] = []
         self._trade_query_error = ""
+        self._exercise_timeout_sec = 5.0
+        # 行权指令引用 -> 等待柜台受理/拒绝的槽位(见 exercise)
+        self._exercise_waiters: dict[str, dict[str, Any]] = {}
 
     def _log_extra(self, *, symbol: str | None = None) -> dict[str, Any]:
         return build_log_extra(phase="gateway", symbol=symbol)
@@ -374,6 +388,174 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         if self._trade_query_error:
             raise RuntimeError(self._trade_query_error)
         return list(self._trade_query_results)
+
+    def exercise(self, symbol: str, quantity: float) -> list[dict[str, Any]]:
+        """提交期权行权指令(执行宣告), 逐条等柜台受理.
+
+        按柜台多头持仓的今昨仓与交易所拆腿: 上期所、能源中心先昨仓("平仓")
+        后今仓("平今"), 其他交易所一条"平仓"。行权在交易所盘后配对, 受理后状态
+        为"未执行"。
+
+        :param symbol: 期权合约
+        :param quantity: 行权手数(正整数)
+        :return: 每条指令 ``{"exec_order_ref", "offset", "quantity", "exchange_id"}``
+        :raises ValueError: 柜台可用多头持仓不足
+        :raises RuntimeError: 柜台拒绝(带 CTP 原因)或超时未确认
+        """
+        if not self.can_trade():
+            raise RuntimeError("CTP trader is not ready for exercise")
+        if self.api is None:
+            raise RuntimeError("CTP trader API is not initialized")
+        volume = int(quantity)
+        long = next(
+            (
+                row
+                for row in self.query_positions(symbol)
+                if row["symbol"] == symbol and row["direction"] == "Buy"
+            ),
+            None,
+        )
+        today = float(long["available_today_quantity"]) if long else 0.0
+        yesterday = float(long["available_yesterday_quantity"]) if long else 0.0
+        if volume > today + yesterday:
+            raise ValueError(
+                f"{symbol} 申请行权 {volume} 手, 超过柜台可用多头持仓 "
+                f"{today + yesterday:g} 手(今仓 {today:g}, 昨仓 {yesterday:g})"
+            )
+        exchange_id = str((long or {}).get("exchange_id", ""))
+        if exchange_id in EXERCISE_CLOSE_TODAY_EXCHANGES:
+            from_yesterday = int(min(volume, yesterday))
+            legs = [
+                (tdapi.THOST_FTDC_OF_Close, from_yesterday),
+                (tdapi.THOST_FTDC_OF_CloseToday, volume - from_yesterday),
+            ]
+        else:
+            legs = [(tdapi.THOST_FTDC_OF_Close, volume)]
+        accepted: list[dict[str, Any]] = []
+        for offset, leg_volume in legs:
+            if leg_volume <= 0:
+                continue
+            ref = self._send_exec_order(symbol, exchange_id, offset, leg_volume)
+            error = self._await_exercise(ref)
+            if error:
+                done = "; ".join(
+                    f"指令 {a['exec_order_ref']} {a['quantity']} 手已受理"
+                    for a in accepted
+                )
+                raise RuntimeError(
+                    f"{symbol} 行权指令 {ref}({leg_volume} 手){error}"
+                    + (f"; {done}" if done else "")
+                )
+            accepted.append(
+                {
+                    "exec_order_ref": ref,
+                    "offset": offset,
+                    "quantity": leg_volume,
+                    "exchange_id": exchange_id,
+                }
+            )
+        return accepted
+
+    def _send_exec_order(
+        self, symbol: str, exchange_id: str, offset: str, volume: int
+    ) -> str:
+        ref = str(self.order_ref)
+        self.order_ref += 1
+        request = tdapi.CThostFtdcInputExecOrderField()
+        request.BrokerID = self.broker_id
+        request.InvestorID = self.user_id
+        request.UserID = self.user_id
+        request.InstrumentID = symbol
+        request.ExchangeID = exchange_id
+        request.ExecOrderRef = ref
+        request.Volume = volume
+        request.ActionType = tdapi.THOST_FTDC_ACTP_Exec
+        request.PosiDirection = tdapi.THOST_FTDC_PD_Long
+        request.OffsetFlag = offset
+        request.HedgeFlag = tdapi.THOST_FTDC_HF_Speculation
+        request.ReservePositionFlag = tdapi.THOST_FTDC_EOPF_UnReserve
+        # 行权得到的期货持仓保留(不自动平仓), 与回测的行权口径一致
+        request.CloseFlag = tdapi.THOST_FTDC_EOCF_NotToClose
+        self._exercise_waiters[ref] = {"event": threading.Event(), "error": ""}
+        self.req_id += 1
+        ret = self.api.ReqExecOrderInsert(request, self.req_id)
+        if ret != 0:
+            self._exercise_waiters.pop(ref, None)
+            raise RuntimeError(f"ReqExecOrderInsert failed with code={ret}")
+        return ref
+
+    def _await_exercise(self, ref: str) -> str:
+        """等柜台对行权指令 ``ref`` 的受理或拒绝; 返回拒绝原因, 受理返回空串."""
+        waiter = self._exercise_waiters[ref]
+        try:
+            if not waiter["event"].wait(timeout=self._exercise_timeout_sec):
+                return (
+                    f" {self._exercise_timeout_sec:g} 秒内柜台未确认, "
+                    "状态未知, 请在交易终端核对"
+                )
+            return str(waiter["error"])
+        finally:
+            self._exercise_waiters.pop(ref, None)
+
+    def _resolve_exercise(self, ref: str, error: str) -> None:
+        waiter = self._exercise_waiters.get(ref)
+        if waiter is not None and not waiter["event"].is_set():
+            waiter["error"] = error
+            waiter["event"].set()
+
+    def OnRspExecOrderInsert(
+        self, pInputExecOrder: Any, pRspInfo: Any, nRequestID: int, bIsLast: bool
+    ) -> None:
+        """柜台拒绝行权指令(CTP 校验不通过)."""
+        self._on_exec_order_error(pInputExecOrder, pRspInfo)
+
+    def OnErrRtnExecOrderInsert(self, pInputExecOrder: Any, pRspInfo: Any) -> None:
+        """交易所拒绝行权指令."""
+        self._on_exec_order_error(pInputExecOrder, pRspInfo)
+
+    def _on_exec_order_error(self, field: Any, info: Any) -> None:
+        if info is None or info.ErrorID == 0:
+            return
+        ref = self._to_text(getattr(field, "ExecOrderRef", ""))
+        logger.error(
+            "CTP exercise rejected: symbol=%s ref=%s error_id=%s msg=%s",
+            self._to_text(getattr(field, "InstrumentID", "")),
+            ref,
+            info.ErrorID,
+            info.ErrorMsg,
+            extra=self._log_extra(),
+        )
+        self._resolve_exercise(ref, f"被拒: {info.ErrorID} {info.ErrorMsg}")
+
+    def OnRtnExecOrder(self, pExecOrder: Any) -> None:
+        """行权指令状态回报: 受理(未执行)、执行、撤销、被拒."""
+        if (
+            getattr(pExecOrder, "FrontID", None) != self.front_id
+            or getattr(pExecOrder, "SessionID", None) != self.session_id
+        ):
+            return
+        ref = self._to_text(getattr(pExecOrder, "ExecOrderRef", ""))
+        result = self._to_text(getattr(pExecOrder, "ExecResult", ""))
+        submit_status = self._to_text(getattr(pExecOrder, "OrderSubmitStatus", ""))
+        status_msg = self._to_text(getattr(pExecOrder, "StatusMsg", ""))
+        logger.info(
+            "CTP exercise status: symbol=%s ref=%s exec_result=%s submit_status=%s"
+            " msg=%s",
+            self._to_text(getattr(pExecOrder, "InstrumentID", "")),
+            ref,
+            result,
+            submit_status,
+            status_msg,
+            extra=self._log_extra(),
+        )
+        if submit_status == EXEC_SUBMIT_REJECTED:
+            self._resolve_exercise(ref, f"被拒: {status_msg}")
+        elif result in (EXEC_RESULT_PENDING, EXEC_RESULT_EXECUTED):
+            self._resolve_exercise(ref, "")
+        elif result == EXEC_RESULT_CANCELED:
+            self._resolve_exercise(ref, f"已取消: {status_msg}")
+        elif result != EXEC_RESULT_SUBMITTING:
+            self._resolve_exercise(ref, f"未通过: {status_msg}")
 
     def OnFrontConnected(self) -> None:
         """Handle front connection event."""
@@ -823,6 +1005,7 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
                 "available_yesterday_quantity": 0.0,
                 "avg_price": 0.0,
                 "timestamp_ns": time.time_ns(),
+                "exchange_id": self._to_text(getattr(position, "ExchangeID", "")),
             },
         )
 

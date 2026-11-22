@@ -109,5 +109,8 @@ class ExecutionBackend(Protocol):
     def cancel_all_orders(self, symbol: str | None = None) -> None:
         """取消当前所有未完成的订单."""
 
+    def exercise(self, symbol: str, quantity: float) -> None:
+        """提交期货期权行权(回测/paper 日终结算执行, 实盘经柜台行权指令)."""
+
     def capabilities(self) -> dict[str, Any]:
         """返回当前执行后端支持的能力标记."""

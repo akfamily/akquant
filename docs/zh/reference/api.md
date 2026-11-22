@@ -1035,7 +1035,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
     *   `liquidate_unmentioned=True` 时，会将未出现在目标字典中的现有持仓目标设为 `0`。
     *   执行顺序为先卖后买，减少现金约束导致的调仓失败。
     *   `rebalance_tolerance` 按组合市值比例跳过小偏差，降低无效换手。
-*   `exercise(symbol, quantity=None)`: 提交期货期权行权申请（美式提前行权），在当日日终结算时执行。只有标的登记为期货的期权可以行权（股指、ETF 期权为欧式，到期按结算价结算）；不论虚实值都按申请执行，按行权价获得标的期货持仓（认购得买持仓、认沽得卖持仓），收行权手续费；`quantity` 不填为全部多头持仓。不是期货期权、已到期、没有多头持仓或数量超过持仓时抛 `ValueError` 写明原因；结算时多头持仓少于申请数量的按持仓执行并记警告。结果以 `on_expiry` 事件送达（`reason="early_exercise"`），合成成交 tag 为 `__exercise__`。到期日未申请的持仓按到期规则自动行权或放弃。实盘暂不支持。
+*   `exercise(symbol, quantity=None)`: 提交期货期权行权申请（美式提前行权），在当日日终结算时执行。只有标的登记为期货的期权可以行权（股指、ETF 期权为欧式，到期按结算价结算）；不论虚实值都按申请执行，按行权价获得标的期货持仓（认购得买持仓、认沽得卖持仓），收行权手续费；`quantity` 不填为全部多头持仓。不是期货期权、已到期、没有多头持仓或数量超过持仓时抛 `ValueError` 写明原因；结算时多头持仓少于申请数量的按持仓执行并记警告。结果以 `on_expiry` 事件送达（`reason="early_exercise"`），合成成交 tag 为 `__exercise__`。到期日未申请的持仓按到期规则自动行权或放弃。实盘（`trading_mode="broker_live"`）经柜台提交行权指令（CTP 执行宣告），柜台受理后返回，柜台拒绝时抛 `RuntimeError` 并带柜台原因，超时未确认时报状态未知；申请数量按柜台可用多头持仓核对。上期所、能源中心按今昨仓拆成两条指令（昨仓报“平仓”、今仓报“平今”），大商所、郑商所、广期所一条“平仓”；行权得到的期货持仓保留（不自动平仓）。交易所在盘后配对，盘中受理后的状态为“未执行”，行权得到的期货持仓随柜台持仓同步。
 *   `cancel_order(order_id: str | OrderReceipt | Order)`: 撤销指定订单。可传订单号、下单返回的 `OrderReceipt`（取首腿）或订单对象（取其 `id`）；其他类型抛 `TypeError`。
 *   `cancel_group(group_id: str | OrderReceipt)`: 按 `group_id` 撤销一个逻辑委托拆出的全部腿。传订单对象会抛 `TypeError`，撤单笔订单请用 `cancel_order`。
 *   `cancel_all_orders(symbol)`: 取消指定标的的所有挂单。如果不指定 `symbol`，则取消所有挂单。
