@@ -6,6 +6,7 @@ Quick links:
 
 *   [run_live broker selection and connection settings](#live-broker-options)
 *   [run_live broker-live semantics](#live-broker-semantics)
+*   [run_live live strategy state persistence](#live-state)
 *   [run_live live history preload](#live-preload-history)
 *   [run_live live timezone, sessions and post-close grace](#live-timezone-sessions)
 *   [SessionResolver trading-session resolver](#akquant-session-resolver)
@@ -1191,6 +1192,28 @@ Strict-mode notes:
 
 *   Cancel request sent does not imply `Cancelled`; wait for `OnRtnOrder(Cancelled)`.
 *   Error callback received does not imply `Rejected`; final status is confirmed by order callback.
+
+### `akquant.run_live(state_file=...)` (live strategy state persistence) {: #live-state }
+
+After a live process restarts, positions come back from the broker (from the engine in paper mode) and indicators are rebuilt from the history preload (`preload_history`), but the strategy's own variables (an "entered" flag, counters, stage state) are lost. A strategy declares the attributes to keep in the class attribute `state_variables`, and `run_live(state_file=...)` writes them to a JSON file:
+
+```python
+class MyStrategy(Strategy):
+    state_variables = ("entered", "grid_level")
+
+    def on_start(self):
+        self.entered = False      # initial value; overwritten from the state file if any
+        self.grid_level = 0
+
+run_live(strategy_cls=MyStrategy, ..., state_file="state/my_strategy.json")
+```
+
+*   **Restore**: after every strategy's `on_start` and the history preload replay, before the first live data. The declared attributes are first checked to exist and to hold JSON-serializable values (otherwise the session does not start, naming the attribute and the reason), then restored from the file; without a file the initial values stay. Variables missing from the file keep their initial values; slots not in this session are ignored.
+*   **Save**: after each batch of `on_trade` dispatches, after `on_stop` at session end, and when the strategy calls `self.save_state()` (for state changed without a fill that should be written at once). The file is written to a temporary file and then replaced, so an interrupted write never corrupts it; nothing is saved before the restore completes (failed start-up), so initial values never overwrite the file. If a variable later holds a value that cannot be written as JSON, an error is logged and the previous file is kept.
+*   The file is grouped by strategy slot (`{"saved_at": ..., "slots": {"<strategy_id>": {...}}}`); slots share one file.
+*   `save_state()` returns `False` when no state file is configured (including backtests).
+*   Positions need not be listed in `state_variables`; order groups (OCO / Bracket) and working orders are not saved.
+*   Difference from `save_checkpoint`: `save_checkpoint` pickles the engine and the whole strategy object to continue a backtest; a live strategy object holds the context, the broker execution backend and thread locks, so it cannot be pickled as a whole, and a pickle is tied to the code version. `state_file` keeps only the declared variables as JSON, so it still restores after the strategy code changes and the file can be read directly.
 
 ### `akquant.run_live(preload_history=...)` (live history preload) {: #live-preload-history }
 

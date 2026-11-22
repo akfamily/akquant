@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **实盘策略状态持久化 `run_live(state_file=...)`**：策略类属性 `state_variables` 声明要保存的属性，每批成交派发之后、停止时与调用 `self.save_state()` 时写入 JSON 文件（先写临时文件再替换），重启后在全部策略的 `on_start` 与历史预热之后恢复，进程重启不再丢失已开仓标记、计数器等策略变量。启动时校验声明的属性存在且能写入 JSON；恢复完成前不保存，启动失败不会用初始值覆盖原文件。持仓仍以柜台为准。
+
 ## [0.3.95] - 2026-11-21
 
 > 规则版本仍为 2.5.0，回测结果不变。

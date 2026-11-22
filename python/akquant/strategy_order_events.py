@@ -57,6 +57,14 @@ def _dispatch_order_events(strategy: Any, order_events: Any) -> None:
 
 
 def _dispatch_trades(strategy: Any, trades: Any) -> None:
+    _dispatch_trade_list(strategy, trades)
+    save_state = getattr(strategy, "_save_live_state", None)
+    if trades and callable(save_state):
+        # 实盘 paper 模式的成交经引擎派发, 派发完保存策略状态(未启用时不做任何事)
+        save_state()
+
+
+def _dispatch_trade_list(strategy: Any, trades: Any) -> None:
     for t in trades:
         strategy._framework_emit_previous_portfolio_snapshot = True
         strategy._framework_use_previous_account_snapshot = True

@@ -474,6 +474,10 @@ class Strategy:
     _aq_title: ClassVar[Optional[str]] = None
     #: 类定义行 ``id=`` 的值; 每个类各自赋值, 不从父类继承。
     _aq_id: ClassVar[Optional[str]] = None
+    #: 实盘要持久化的策略属性名(值须能写入 JSON), 配合
+    #: ``run_live(state_file=...)``: 成交后与停止时保存, 重启后在 on_start 与
+    #: 历史预热之后恢复。持仓以柜台为准, 不需要列入。
+    state_variables: ClassVar[Tuple[str, ...]] = ()
 
     def __init_subclass__(
         cls,
@@ -1077,6 +1081,29 @@ class Strategy:
             replay_preload_history(self)
             for follower in self.__dict__.pop("_preload_followers", []):
                 replay_preload_history(follower)
+        # 实盘状态恢复(run_live(state_file=...)): 排在 on_start 与预热回放之后,
+        # 由 runner 挂在主策略上, 一并恢复各槽位。
+        after_start = self.__dict__.pop("_live_after_start", None)
+        if after_start is not None:
+            after_start()
+
+    def save_state(self) -> bool:
+        """
+        立即保存 ``state_variables`` 列出的属性到实盘状态文件.
+
+        框架在成交派发 ``on_trade`` 之后与停止时已自动保存; 策略在没有成交的时候
+        改了状态变量(如计数器、阶段标记)且希望立刻落盘时调用。
+
+        Returns:
+            bool: 已保存为 True; 未启用 ``run_live(state_file=...)``(含回测)时为
+            False; 有变量不能写入 JSON 时记录错误、保留上一次的文件并返回 False
+        """
+        store = self.__dict__.get("_live_state_store")
+        return bool(store.save()) if store is not None else False
+
+    def _save_live_state(self, *_: Any) -> None:
+        """实盘成交派发之后保存状态(未启用状态文件时不做任何事)."""
+        self.save_state()
 
     def on_stop(self) -> None:
         """
