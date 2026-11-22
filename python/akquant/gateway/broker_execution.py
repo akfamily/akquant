@@ -519,6 +519,16 @@ class BrokerExecution:
             )
         exercise(symbol, quantity)
 
+    def cancel_exercise(self, symbol: str) -> float:
+        """经柜台撤销该合约未执行的全部行权指令, 返回撤销的手数."""
+        cancel = getattr(self._gw, "cancel_exercise", None)
+        if not callable(cancel):
+            raise RuntimeError(
+                f"柜台网关 {type(self._gw).__name__} 没有实现 "
+                "cancel_exercise(symbol), 不能撤销行权指令"
+            )
+        return float(cancel(symbol))
+
     @property
     def state_cache(self) -> BrokerStateCache:
         """暴露底层状态缓存，便于测试/上层复用."""

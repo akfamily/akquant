@@ -190,3 +190,25 @@ def test_exercise_rejected_when_underlying_not_futures() -> None:
     strategy = _ExerciseEarly()
     with pytest.raises(ValueError, match=r"只有期货期权\(美式\)可以提前行权"):
         _run(futures_registered=False, strategy=strategy)
+
+
+class _ExerciseThenCancel(_HoldToExpiry):
+    """第 2 个交易日申请行权 2 手后当日撤销, 记录撤销手数."""
+
+    def on_bars(self, batch: BarBatch) -> None:
+        super().on_bars(batch)
+        if len(self.positions_by_day) == 2:
+            self.exercise("m2401-C-3000", 2)
+            self.cancelled = self.cancel_exercise("m2401-C-3000")
+            self.cancelled_again = self.cancel_exercise("m2401-C-3000")
+
+
+def test_cancelled_exercise_is_not_settled() -> None:
+    """当日撤销的行权申请不在日终结算执行, 期权持有到期按规则自动行权."""
+    strategy, _ = _run(futures_registered=True, strategy=_ExerciseThenCancel())
+
+    assert (strategy.cancelled, strategy.cancelled_again) == (2.0, 0.0)
+    assert strategy.positions_by_day[2][FUTURES] == 0.0
+    assert strategy.positions_by_day[2]["m2401-C-3000"] == 2.0
+    assert "early_exercise" not in {e["reason"] for e in strategy.events}
+    assert strategy.positions_by_day[3][FUTURES] == 3.0

@@ -220,6 +220,10 @@ class CTPTraderAdapter:
         """提交期权行权指令, 逐条等柜台受理(见 ``CTPTraderGateway.exercise``)."""
         return self.gateway.exercise(symbol, quantity)
 
+    def cancel_exercise(self, symbol: str) -> float:
+        """撤销该合约未执行的全部行权指令(见 ``CTPTraderGateway.cancel_exercise``)."""
+        return self.gateway.cancel_exercise(symbol)
+
     def cancel_order(self, broker_order_id: str) -> None:
         """Cancel order through CTP trader channel."""
         self.gateway.cancel_order(broker_order_id)

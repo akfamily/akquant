@@ -70,6 +70,7 @@ from .strategy_events import (
 from .strategy_events import (
     on_timer_event as _on_timer_event_impl,
 )
+from .strategy_exercise import cancel_exercise as _cancel_exercise_impl
 from .strategy_exercise import exercise as _exercise_impl
 from .strategy_framework_hooks import (
     call_user_callback as _call_user_callback_impl,
@@ -4108,6 +4109,20 @@ class Strategy:
         :raises RuntimeError: 实盘柜台拒绝(带柜台原因)或超时未确认
         """
         _exercise_impl(self, symbol, quantity)
+
+    def cancel_exercise(self, symbol: str) -> float:
+        """
+        撤销期权合约尚未执行的行权.
+
+        - 回测与 paper: 撤掉当日尚未结算的全部行权申请。
+        - 实盘(``trading_mode="broker_live"``): 撤销柜台上该合约当日未执行的全部
+          行权指令(含其他终端提交的), 逐条等柜台确认。
+
+        :param symbol: 期权合约代码
+        :return: 撤销的手数; 没有可撤的为 0
+        :raises RuntimeError: 实盘柜台拒绝撤销(带柜台原因)或超时未确认
+        """
+        return _cancel_exercise_impl(self, symbol)
 
     def short(
         self,

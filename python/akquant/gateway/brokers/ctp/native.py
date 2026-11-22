@@ -122,6 +122,11 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         self._exercise_timeout_sec = 5.0
         # 行权指令引用 -> 等待柜台受理/拒绝的槽位(见 exercise)
         self._exercise_waiters: dict[str, dict[str, Any]] = {}
+        # 交易所行权指令编号 -> 等待撤销确认的槽位(见 cancel_exercise)
+        self._exercise_cancel_waiters: dict[str, dict[str, Any]] = {}
+        self._exec_order_query_event = threading.Event()
+        self._exec_order_query_results: list[dict[str, Any]] = []
+        self._exec_order_query_error = ""
 
     def _log_extra(self, *, symbol: str | None = None) -> dict[str, Any]:
         return build_log_extra(phase="gateway", symbol=symbol)
@@ -436,7 +441,7 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
             if leg_volume <= 0:
                 continue
             ref = self._send_exec_order(symbol, exchange_id, offset, leg_volume)
-            error = self._await_exercise(ref)
+            error = self._await_exercise(self._exercise_waiters, ref)
             if error:
                 done = "; ".join(
                     f"指令 {a['exec_order_ref']} {a['quantity']} 手已受理"
@@ -484,9 +489,130 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
             raise RuntimeError(f"ReqExecOrderInsert failed with code={ret}")
         return ref
 
-    def _await_exercise(self, ref: str) -> str:
-        """等柜台对行权指令 ``ref`` 的受理或拒绝; 返回拒绝原因, 受理返回空串."""
-        waiter = self._exercise_waiters[ref]
+    def cancel_exercise(self, symbol: str) -> float:
+        """撤销该期权合约当日未执行的全部行权指令(含其他会话提交的).
+
+        按交易所行权指令编号逐条撤销, 等柜台确认。
+
+        :param symbol: 期权合约
+        :return: 撤销的手数(没有未执行的指令为 0)
+        :raises RuntimeError: 柜台拒绝撤销(带 CTP 原因)或超时未确认
+        """
+        if not self.can_trade():
+            raise RuntimeError("CTP trader is not ready for exercise cancel")
+        if self.api is None:
+            raise RuntimeError("CTP trader API is not initialized")
+        pending = [
+            row
+            for row in self._query_exec_orders(symbol)
+            if row["exec_result"] == EXEC_RESULT_PENDING
+        ]
+        cancelled: list[dict[str, Any]] = []
+        for row in pending:
+            request = tdapi.CThostFtdcInputExecOrderActionField()
+            request.BrokerID = self.broker_id
+            request.InvestorID = self.user_id
+            request.UserID = self.user_id
+            request.InstrumentID = symbol
+            request.ExchangeID = row["exchange_id"]
+            request.ExecOrderSysID = row["raw_sys_id"]
+            request.ActionFlag = tdapi.THOST_FTDC_AF_Delete
+            key = row["exec_order_sys_id"]
+            self._exercise_cancel_waiters[key] = {
+                "event": threading.Event(),
+                "error": "",
+            }
+            self.req_id += 1
+            ret = self.api.ReqExecOrderAction(request, self.req_id)
+            if ret != 0:
+                self._exercise_cancel_waiters.pop(key, None)
+                raise RuntimeError(f"ReqExecOrderAction failed with code={ret}")
+            error = self._await_exercise(self._exercise_cancel_waiters, key)
+            if error:
+                done = "; ".join(
+                    f"指令 {c['exec_order_sys_id']} {c['volume']:g} 手已撤销"
+                    for c in cancelled
+                )
+                raise RuntimeError(
+                    f"{symbol} 撤销行权指令 {key}({row['volume']:g} 手){error}"
+                    + (f"; {done}" if done else "")
+                )
+            cancelled.append(row)
+        return float(sum(row["volume"] for row in cancelled))
+
+    def _query_exec_orders(self, symbol: str) -> list[dict[str, Any]]:
+        """同步查询当日该合约的行权指令."""
+        self._exec_order_query_results = []
+        self._exec_order_query_error = ""
+        self._exec_order_query_event.clear()
+        request = tdapi.CThostFtdcQryExecOrderField()
+        request.BrokerID = self.broker_id
+        request.InvestorID = self.user_id
+        request.InstrumentID = symbol
+        self.req_id += 1
+        ret = self.api.ReqQryExecOrder(request, self.req_id)
+        if ret != 0:
+            raise RuntimeError(f"ReqQryExecOrder failed with code={ret}")
+        if not self._exec_order_query_event.wait(timeout=self._exercise_timeout_sec):
+            raise RuntimeError("CTP exec order query timed out")
+        if self._exec_order_query_error:
+            raise RuntimeError(self._exec_order_query_error)
+        return [r for r in self._exec_order_query_results if r["symbol"] == symbol]
+
+    def OnRspQryExecOrder(
+        self, pExecOrder: Any, pRspInfo: Any, nRequestID: int, bIsLast: bool
+    ) -> None:
+        """行权指令查询回报."""
+        if pRspInfo is not None and pRspInfo.ErrorID != 0:
+            self._exec_order_query_error = (
+                f"CTP exec order query failed: {pRspInfo.ErrorID} {pRspInfo.ErrorMsg}"
+            )
+        elif pExecOrder is not None:
+            raw_sys_id = str(getattr(pExecOrder, "ExecOrderSysID", ""))
+            self._exec_order_query_results.append(
+                {
+                    "symbol": self._to_text(getattr(pExecOrder, "InstrumentID", "")),
+                    "exchange_id": self._to_text(getattr(pExecOrder, "ExchangeID", "")),
+                    "raw_sys_id": raw_sys_id,
+                    "exec_order_sys_id": raw_sys_id.strip(),
+                    "exec_result": self._to_text(getattr(pExecOrder, "ExecResult", "")),
+                    "volume": float(getattr(pExecOrder, "Volume", 0) or 0),
+                }
+            )
+        if bIsLast:
+            self._exec_order_query_event.set()
+
+    def OnRspExecOrderAction(
+        self, pInputExecOrderAction: Any, pRspInfo: Any, nRequestID: int, bIsLast: bool
+    ) -> None:
+        """柜台拒绝撤销行权指令."""
+        self._on_exec_action_error(pInputExecOrderAction, pRspInfo)
+
+    def OnErrRtnExecOrderAction(self, pExecOrderAction: Any, pRspInfo: Any) -> None:
+        """交易所拒绝撤销行权指令."""
+        self._on_exec_action_error(pExecOrderAction, pRspInfo)
+
+    def _on_exec_action_error(self, field: Any, info: Any) -> None:
+        if info is None or info.ErrorID == 0:
+            return
+        sys_id = self._to_text(getattr(field, "ExecOrderSysID", ""))
+        logger.error(
+            "CTP exercise cancel rejected: symbol=%s sys_id=%s error_id=%s msg=%s",
+            self._to_text(getattr(field, "InstrumentID", "")),
+            sys_id,
+            info.ErrorID,
+            info.ErrorMsg,
+            extra=self._log_extra(),
+        )
+        self._resolve_exercise(
+            self._exercise_cancel_waiters,
+            sys_id,
+            f"被拒: {info.ErrorID} {info.ErrorMsg}",
+        )
+
+    def _await_exercise(self, waiters: dict[str, dict[str, Any]], key: str) -> str:
+        """等柜台对 ``key`` 的确认; 返回失败原因, 成功返回空串."""
+        waiter = waiters[key]
         try:
             if not waiter["event"].wait(timeout=self._exercise_timeout_sec):
                 return (
@@ -495,10 +621,12 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
                 )
             return str(waiter["error"])
         finally:
-            self._exercise_waiters.pop(ref, None)
+            waiters.pop(key, None)
 
-    def _resolve_exercise(self, ref: str, error: str) -> None:
-        waiter = self._exercise_waiters.get(ref)
+    def _resolve_exercise(
+        self, waiters: dict[str, dict[str, Any]], key: str, error: str
+    ) -> None:
+        waiter = waiters.get(key)
         if waiter is not None and not waiter["event"].is_set():
             waiter["error"] = error
             waiter["event"].set()
@@ -525,19 +653,28 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
             info.ErrorMsg,
             extra=self._log_extra(),
         )
-        self._resolve_exercise(ref, f"被拒: {info.ErrorID} {info.ErrorMsg}")
+        self._resolve_exercise(
+            self._exercise_waiters, ref, f"被拒: {info.ErrorID} {info.ErrorMsg}"
+        )
 
     def OnRtnExecOrder(self, pExecOrder: Any) -> None:
         """行权指令状态回报: 受理(未执行)、执行、撤销、被拒."""
+        result = self._to_text(getattr(pExecOrder, "ExecResult", ""))
+        status_msg = self._to_text(getattr(pExecOrder, "StatusMsg", ""))
+        # 撤销按交易所编号确认, 不限本会话提交的指令
+        if result == EXEC_RESULT_CANCELED:
+            self._resolve_exercise(
+                self._exercise_cancel_waiters,
+                self._to_text(getattr(pExecOrder, "ExecOrderSysID", "")),
+                "",
+            )
         if (
             getattr(pExecOrder, "FrontID", None) != self.front_id
             or getattr(pExecOrder, "SessionID", None) != self.session_id
         ):
             return
         ref = self._to_text(getattr(pExecOrder, "ExecOrderRef", ""))
-        result = self._to_text(getattr(pExecOrder, "ExecResult", ""))
         submit_status = self._to_text(getattr(pExecOrder, "OrderSubmitStatus", ""))
-        status_msg = self._to_text(getattr(pExecOrder, "StatusMsg", ""))
         logger.info(
             "CTP exercise status: symbol=%s ref=%s exec_result=%s submit_status=%s"
             " msg=%s",
@@ -548,14 +685,15 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
             status_msg,
             extra=self._log_extra(),
         )
+        waiters = self._exercise_waiters
         if submit_status == EXEC_SUBMIT_REJECTED:
-            self._resolve_exercise(ref, f"被拒: {status_msg}")
+            self._resolve_exercise(waiters, ref, f"被拒: {status_msg}")
         elif result in (EXEC_RESULT_PENDING, EXEC_RESULT_EXECUTED):
-            self._resolve_exercise(ref, "")
+            self._resolve_exercise(waiters, ref, "")
         elif result == EXEC_RESULT_CANCELED:
-            self._resolve_exercise(ref, f"已取消: {status_msg}")
+            self._resolve_exercise(waiters, ref, f"已取消: {status_msg}")
         elif result != EXEC_RESULT_SUBMITTING:
-            self._resolve_exercise(ref, f"未通过: {status_msg}")
+            self._resolve_exercise(waiters, ref, f"未通过: {status_msg}")
 
     def OnFrontConnected(self) -> None:
         """Handle front connection event."""

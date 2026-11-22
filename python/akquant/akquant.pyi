@@ -3252,6 +3252,14 @@ class StrategyContext:
         """
         ...
 
+    def cancel_exercise(self, symbol: str) -> float:
+        r"""
+        撤销某期权合约尚未结算的全部行权申请, 返回撤销的手数(没有则为 0).
+
+        :param symbol: 期权合约代码
+        """
+        ...
+
     def cancel_order(self, order_id: str) -> None:
         r"""
         取消订单.

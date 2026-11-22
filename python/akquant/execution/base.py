@@ -112,5 +112,8 @@ class ExecutionBackend(Protocol):
     def exercise(self, symbol: str, quantity: float) -> None:
         """提交期货期权行权(回测/paper 日终结算执行, 实盘经柜台行权指令)."""
 
+    def cancel_exercise(self, symbol: str) -> float:
+        """撤销该合约尚未执行的行权, 返回撤销的手数."""
+
     def capabilities(self) -> dict[str, Any]:
         """返回当前执行后端支持的能力标记."""

@@ -36,3 +36,8 @@ def exercise(strategy: Any, symbol: str, quantity: Optional[float] = None) -> No
     if qty > long:
         raise ValueError(f"{symbol} 申请行权 {qty:g} 手, 超过多头持仓 {long:g} 手")
     strategy.execution.exercise(symbol, qty)
+
+
+def cancel_exercise(strategy: Any, symbol: str) -> float:
+    """撤销该期权合约尚未执行的行权, 返回撤销的手数."""
+    return float(strategy.execution.cancel_exercise(symbol))

@@ -1375,6 +1375,20 @@ impl StrategyContext {
         Ok(())
     }
 
+    /// 撤销某期权合约尚未结算的全部行权申请, 返回撤销的手数(没有则为 0).
+    ///
+    /// :param symbol: 期权合约代码
+    fn cancel_exercise(&self, symbol: &str) -> f64 {
+        let mut requests = self.exercise_requests.lock().expect("行权申请锁被污染");
+        let cancelled: Decimal = requests
+            .iter()
+            .filter(|r| r.symbol == symbol)
+            .map(|r| r.quantity)
+            .sum();
+        requests.retain(|r| r.symbol != symbol);
+        cancelled.to_f64().unwrap_or_default()
+    }
+
     /// 取消订单.
     ///
     /// :param order_id: 订单 ID
