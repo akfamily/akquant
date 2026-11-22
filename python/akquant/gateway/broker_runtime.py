@@ -68,6 +68,11 @@ class BrokerRuntime:
             update_broker_state,
             lambda: self._broker_state_caches,
             on_new_fill=lambda p: self._trade_stats.on_trade(p),
+            on_event=lambda name, p: (
+                self._submitter.on_broker_event(name, p)
+                if self._submitter is not None
+                else None
+            ),
         )
         self._event_bridge = BrokerEventBridge(
             event_lock=event_lock,
@@ -165,6 +170,7 @@ class BrokerRuntime:
         trader_gateway: Any,
         strategy: Any,
         strategy_limits: dict[str, dict[str, float]] | None = None,
+        live_risk: Any = None,
     ) -> BrokerOrderSubmitter:
         """Create and install the strategy-facing broker submitter.
 
@@ -175,6 +181,7 @@ class BrokerRuntime:
             trader_gateway=trader_gateway,
             strategy=strategy,
             strategy_limits=strategy_limits,
+            live_risk=live_risk,
             resolve_trader_capabilities=self._resolve_trader_capabilities,
             next_client_order_id=self._next_client_order_id,
             can_submit_client_order=self._can_submit_client_order,

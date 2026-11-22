@@ -23,6 +23,7 @@ import pandas as pd
 
 from ..akquant import Bar, Instrument
 from ..backtest import BacktestStreamEvent
+from ..gateway.live_risk import LiveRiskConfig
 from ..indicator_recording import IndicatorSink
 from ..indicator_script import Indicator, merge_indicators_into_slots
 from ..sessions_config import SessionsArg
@@ -83,6 +84,7 @@ def run_live(
     portfolio_risk_budget: Optional[float] = None,
     risk_budget_mode: str = "order_notional",
     risk_budget_reset_daily: bool = False,
+    live_risk: Optional[LiveRiskConfig] = None,
     on_broker_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     signal_port_ready: Optional[Callable[[Any], None]] = None,
     signal_source: Optional[Any] = None,
@@ -378,6 +380,7 @@ def run_live(
         portfolio_risk_budget=portfolio_risk_budget,
         risk_budget_mode=risk_budget_mode,
         risk_budget_reset_daily=risk_budget_reset_daily,
+        live_risk=live_risk,
         on_broker_event=on_broker_event,
         signal_port_ready=signal_port_ready,
         signal_source=signal_source,

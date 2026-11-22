@@ -6,6 +6,7 @@
 
 *   [run_live 选择 broker 与连接参数](#live-broker-options)
 *   [run_live broker_live 执行语义](#live-broker-semantics)
+*   [run_live 实盘前置风控](#live-risk)
 *   [run_live 实盘历史预热](#live-preload-history)
 *   [run_live 实盘时区、交易时段与收盘宽限](#live-timezone-sessions)
 *   [SessionResolver 交易时段解析器](#akquant-session-resolver)
@@ -1258,6 +1259,45 @@ run_live(
 
 *   撤单请求发送成功不等于 `Cancelled`，需等待 `OnRtnOrder(Cancelled)`。
 *   收到错误回报不等于 `Rejected`，最终状态以订单回报为准。
+
+### `akquant.run_live(live_risk=...)`（实盘前置风控） {: #live-risk }
+
+`trading_mode="broker_live"` 下，委托经柜台通道报出、不经过引擎，引擎的 `strategy_max_daily_loss` / `strategy_max_drawdown` / `strategy_risk_budget` 不生效（见[第 15 章](../textbook/15_live_trading.md)）。`live_risk=LiveRiskConfig(...)` 在下单器拆完开平腿之后、向柜台报单之前检查，超限时作为前置拒单回吐给 `on_reject`，原因写明计数与限额。所有规则默认关闭；非 `broker_live` 模式传入时报错。
+
+```python
+from akquant import LiveRiskConfig, run_live
+
+run_live(
+    ...,
+    broker="ctp",
+    trading_mode="broker_live",
+    live_risk=LiveRiskConfig(
+        order_flow_limit=5,          # 每秒最多报出 5 笔
+        cancel_limit=400,            # 单合约本交易日被撤 400 次后不再报新委托
+        open_count_limit=200,        # 单合约本交易日最多 200 笔开仓委托
+        self_trade_check=True,
+        max_daily_loss=0.05,         # 账户当日亏损超过 5% 后只允许平仓
+        max_account_drawdown=0.10,
+    ),
+)
+```
+
+| 字段 | 含义 |
+| :--- | :--- |
+| `order_flow_limit` / `order_flow_window` | 滚动窗口（秒，默认 1）内最多报出的委托笔数，按拆出的每条腿计（即柜台收到的报单数） |
+| `active_order_limit` | 本账户未完成委托笔数上限（含本笔） |
+| `cancel_limit` | 单合约本交易日被撤委托达到该次数后，拒绝该合约的新委托；撤单本身不受限。按委托回报状态为已撤计数（含撤单成功、FAK/FOK 剩余撤销、终端手工撤单；CTP 把报单被拒也报为已撤，同样计入），同一委托只计一次 |
+| `open_count_limit` / `open_volume_limit` | 单合约本交易日报出的开仓委托笔数 / 手数上限 |
+| `self_trade_check` | 同一合约本账户有方向相反、价格可成交的未完成委托时拒绝（新委托或对方是市价单都视为可成交） |
+| `max_daily_loss` | 账户当日亏损比例 =（当日初始权益 − 当前动态权益）/ 当日初始权益，超过后本交易日只允许平仓 |
+| `max_account_drawdown` | 账户回撤比例 =（本次运行观察到的权益峰值（含当日初始权益）− 当前权益）/ 权益峰值，超过后到进程结束只允许平仓；进程重启后峰值重新计起 |
+
+*   盈亏熔断的两项是比例（`0.05` 表示 5%），须在 0 与 1 之间，名称与单位同回测的 `RiskConfig.max_daily_loss` / `RiskConfig.max_account_drawdown`，回测里的数值可原样用于实盘；按金额填写（如 `50_000`）会报错。
+
+*   盈亏熔断用柜台账户快照，已含手续费与逐日盯市；CTP 的当日初始权益为静态权益 = 上日结存 − 上次信用额度 − 上次质押 + 质押 − 出金 + 入金（SimNow 核对：静态权益 + 平仓盈亏 + 持仓盈亏 − 手续费 + 权利金收支与动态权益 `Balance` 一致）。账户快照在委托、成交后与恢复轮询时刷新；柜台不提供当日初始权益时，配置了 `max_daily_loss` 的委托被拒并写明原因。
+*   熔断后含开仓腿的委托一律拒绝，纯平仓委托照常放行，不自动平仓。熔断触发时记一条 WARNING 日志（`akquant.gateway.live_risk`，带 `alert` 标记，配置了消息提醒时推送）。
+*   计数按策略的 `trading_day` 分交易日（夜盘属下一交易日）；取不到时（如策略回调之外的信号线程下单）按本地自然日。
+*   计数只在进程内有效，进程重启后清零。
 
 ### `akquant.run_live(preload_history=...)`（实盘历史预热） {: #live-preload-history }
 

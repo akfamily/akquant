@@ -189,6 +189,14 @@ class BrokerExecution:
         ]
         return orders + stops
 
+    def broker_open_orders(self) -> list[Any]:
+        """柜台未完成委托快照(不含本地止损单), 供实盘前置风控使用."""
+        return list(self._cache.open_orders())
+
+    def broker_account(self) -> Any:
+        """柜台账户快照(UnifiedAccount), 供实盘前置风控使用."""
+        return self._cache.account()
+
     def get_order(self, order_id: str) -> Any | None:
         """按订单号获取订单(适配为与回测同形状的 StrategyOrder).
 

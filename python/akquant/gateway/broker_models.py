@@ -271,7 +271,8 @@ class UnifiedAccount:
     """Normalized account snapshot.
 
     后四个字段是柜台直接给出的值, 柜台不提供时留 ``None``(不要填 0.0: ``0.0`` 表示
-    柜台明确给了 0)。策略侧 ``get_account()`` 对 ``None`` 的处理:
+    柜台明确给了 0)。``day_start_equity`` 是柜台口径的当日初始(静态)权益, 供实盘
+    账户级日亏损熔断使用。策略侧 ``get_account()`` 对 ``None`` 的处理:
 
     - ``market_value`` 持仓市值: 退回 ``equity - cash``。有在途/冻结资金或负债时两者
       并不相等。
@@ -289,6 +290,7 @@ class UnifiedAccount:
     frozen_cash: float | None = None
     margin: float | None = None
     unrealized_pnl: float | None = None
+    day_start_equity: float | None = None
 
 
 @dataclass
