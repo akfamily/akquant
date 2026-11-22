@@ -6,7 +6,10 @@ from typing import Any
 
 from .. import strategy_trading_api as api
 from ..gateway.order_receipt import OrderReceipt
+from ..log import get_logger
 from .base import PositionDetail
+
+logger = get_logger("execution.sim")
 
 
 class SimExecution:
@@ -15,6 +18,7 @@ class SimExecution:
     def __init__(self, strategy: Any) -> None:
         """绑定策略实例，读写均经由 strategy.ctx."""
         self._s = strategy
+        self._quote_warned = False
 
     def get_position(self, symbol: str | None = None) -> float:
         """获取指定标的持仓数量."""
@@ -84,3 +88,12 @@ class SimExecution:
     def capabilities(self) -> dict[str, Any]:
         """返回当前执行后端支持的能力标记."""
         return api._sim_capabilities(self._s)
+
+    def request_quote(self, symbol: str) -> None:
+        """回测/paper 没有做市商: 询价不产生报价, 首次调用记警告."""
+        if not self._quote_warned:
+            self._quote_warned = True
+            logger.warning(
+                "回测与 paper 没有做市商, 询价(%s)不产生报价; 本会话不再重复提示",
+                symbol,
+            )

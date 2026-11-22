@@ -70,6 +70,7 @@ from .strategy_events import (
 from .strategy_events import (
     on_timer_event as _on_timer_event_impl,
 )
+from .strategy_for_quote import request_quote as _request_quote_impl
 from .strategy_framework_hooks import (
     call_user_callback as _call_user_callback_impl,
 )
@@ -4086,6 +4087,26 @@ class Strategy:
             Optional[str]: 平仓单的订单号; 当前无持仓(无需交易)时为 None
         """
         return _close_position_impl(self, symbol)
+
+    def request_quote(self, symbol: str) -> Optional[str]:
+        """
+        询价: 请求做市商对合约报出双边价格(ForQuote).
+
+        冷门期权(远月、深度虚值)盘口常常没有报价, 询价后做市商按交易所规定在一定
+        时间内报出买卖价, 策略在随后的行情里看到盘口, 再按正常方式下单。询价不是
+        委托, 不带价格与方向, 不占资金。
+
+        - 实盘(``trading_mode="broker_live"``): 经柜台发出询价请求(CTP
+          ``ReqForQuoteInsert``)后立即返回询价引用, 不等待。询价成功时柜台不回报;
+          柜台或交易所拒绝时(如合约不存在)记一条 ERROR 日志并写明原因。
+        - 回测与 paper: 没有做市商, 询价不产生报价; 记一次警告并返回 None。
+
+        :param symbol: 合约代码(须已登记)
+        :return: 柜台询价引用; 回测与 paper 为 None
+        :raises KeyError: 合约未登记
+        :raises RuntimeError: 实盘柜台未就绪或请求发送失败(带返回码)
+        """
+        return _request_quote_impl(self, symbol)
 
     def short(
         self,

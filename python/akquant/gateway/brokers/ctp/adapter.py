@@ -216,6 +216,10 @@ class CTPTraderAdapter:
         self._emit_execution_report(report)
         return broker_order_id
 
+    def request_quote(self, symbol: str) -> str:
+        """发出询价请求(见 ``CTPTraderGateway.request_quote``)."""
+        return self.gateway.request_quote(symbol)
+
     def cancel_order(self, broker_order_id: str) -> None:
         """Cancel order through CTP trader channel."""
         self.gateway.cancel_order(broker_order_id)
