@@ -1168,6 +1168,37 @@ run_live(
 
 Giving only some of the six trading keys raises `ValueError` naming the missing ones: SimNow defaults are not filled in for you, and the trading channel is never silently skipped.
 
+### `akquant.gateway.CTPOptionUniverse` (register option contracts from CTP and refresh them mid-session) {: #ctp-option-universe }
+
+When a live session tracks dozens of option chains you no longer write an `Instrument` per option: `CTPOptionUniverse` logs into the CTP trading front, queries all contracts, picks the options of the tracked underlyings plus their underlying futures, and converts them to `Instrument`. Queries use a separate short-lived session (login, query, disconnect), so they do not consume the order gateway's query rate limit; it never confirms the settlement statement and never places orders. Requires `openctp-ctp`.
+
+```python
+from akquant import run_live
+from akquant.gateway import CTPOptionUniverse
+
+ctp = {
+    "td_front": "tcp://...", "broker_id": "9999", "user_id": "YOUR_USER_ID",
+    "password": "YOUR_PASSWORD", "app_id": "...", "auth_code": "...",
+}
+universe = CTPOptionUniverse(
+    ctp,
+    underlyings=["m", "au2702", "IO"],   # underlying product (all months) or contract
+    index_underlyings={"IO": "000300.SH"},  # required when tracking CFFEX options
+)
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=universe.load(),
+    instrument_source=universe,   # register newly listed contracts at each refresh time
+    broker="ctp",
+    gateway_options={**ctp, "md_front": "tcp://..."},
+)
+```
+
+*   **Commodity options**: the underlying futures are registered too, with `margin_ratio` taken from the investor short margin rate of `ReqQryInstrumentMarginRate` (by money; per-lot margins raise an error); options use `option_margin_model="CHINA_COMMODITY"`.
+*   **CFFEX index options**: CTP reports the option series (e.g. `IO2612`) as the underlying and does not stream index quotes, so `index_underlyings` must map each product to the index symbol of your index data source; a missing product is named in the error. The margin coefficient is derived from `ReqQryOptionInstrTradeCost`: for one call per product it queries with underlying prices of 1.2× and 0.8× the strike, getting one coefficient from the in-the-money branch and one from the floor branch; if they differ it raises (the broker's algorithm differs from the `CHINA_INDEX` formula). Options use `option_margin_model="CHINA_INDEX"`.
+*   **Cache and refresh times**: exchanges list new options for both the night and day sessions, so `refresh_times` defaults to `("08:30", "20:30")` (30 minutes before each session). Results are cached in `cache_dir` (default `.akquant_ctp`) keyed by the latest refresh time already passed: restarting within the same session `load()` reads the cache; a different set of underlyings or a new session triggers a query; `refresh()` always queries.
+*   **Mid-session refresh (`run_live(instrument_source=...)`)**: a background thread calls `refresh()` at each refresh time; new and re-parameterised contracts are registered into the engine (before the next event is processed, ahead of any order on them), added to the market-data subscription, and finally exposed through the strategy's `get_instrument()` / `get_instruments()`, without restarting the session. Parameter changes (e.g. a broker raising a margin rate) are logged field by field at WARNING; a failed query is logged and retried at the next refresh time, trading continues. `instrument_source` may be any object providing `refresh()` and `next_refresh()`.
+
 ### `akquant.run_live` (broker live semantics) {: #live-broker-semantics }
 
 For live broker routing, `run_live` accepts broker-specific options through `gateway_options`.

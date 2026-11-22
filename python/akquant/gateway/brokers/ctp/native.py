@@ -1008,6 +1008,8 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         self.api: Any = None
         self.req_id = 0
         self.connected = False
+        # 已登录行情前置: 此后订阅集的变化要立即向前置订阅/退订(见 update_subscriptions)
+        self.logged_in = False
 
         # use_aggregator 是旧的二选一开关, 保留为兼容别名: True(默认) -> 只出
         # bar, False -> 只出 tick。新参数 emit_ticks / emit_bars 显式且可同时
@@ -1201,6 +1203,7 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
             extra=self._log_extra(),
         )
         self.connected = False
+        self.logged_in = False
 
     def OnRspUserLogin(
         self, pRspUserLogin: Any, pRspInfo: Any, nRequestID: int, bIsLast: bool
@@ -1225,6 +1228,7 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         self._push_trading_day_hint(
             getattr(pRspUserLogin, "TradingDay", ""), time.time_ns()
         )
+        self.logged_in = True
 
         logger.info(
             "Subscribing CTP market data for symbols=%s",
@@ -1245,6 +1249,37 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
                 logger.error(
                     "CTP market subscribe request failed: code=%s",
                     ret,
+                    extra=self._log_extra(),
+                )
+
+    def update_subscriptions(self, symbols: List[str]) -> None:
+        """替换订阅集.
+
+        登录前只记下, 登录时整体订阅; 已登录时立即向前置订阅新增、退订移除的合约
+        (运行中 ``Strategy.subscribe()`` 与合约表刷新走这里)。
+
+        :param symbols: 新的完整订阅集
+        """
+        new = list(symbols)
+        added = [s for s in new if s not in self.symbols]
+        removed = [s for s in self.symbols if s not in new]
+        self.symbols = new
+        if not (getattr(self, "logged_in", False) and self.api):
+            return
+        for method, part in (
+            ("SubscribeMarketData", added),
+            ("UnSubscribeMarketData", removed),
+        ):
+            if not part:
+                continue
+            encoded = [s.encode("utf-8") for s in part]
+            ret = getattr(self.api, method)(encoded, len(part))
+            if ret != 0:
+                logger.error(
+                    "CTP market %s request failed: code=%s symbols=%s",
+                    method,
+                    ret,
+                    part,
                     extra=self._log_extra(),
                 )
 

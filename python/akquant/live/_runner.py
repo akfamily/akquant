@@ -65,6 +65,7 @@ from ..utils import format_metric_value
 from ._gateway_setup import (
     start_gateway_thread,
 )
+from ._instrument_refresh import InstrumentRefresher
 from ._paper_execution import (
     apply_paper_execution_params,
     resolve_paper_execution_params,
@@ -290,15 +291,12 @@ def _instruments_to_snapshots(
     ``get_instrument_field()`` 在实盘对**任何** symbol 都抛 KeyError。
 
     覆盖范围受 live 入口形态限制: ``run_live`` 只接 ``Instrument``(Rust 对象)，
-    而它仅暴露 symbol/asset_type/multiplier/margin_ratio/tick_size/lot_size/
-    option_margin_model/implied_volatility/reference_volatility 九个可读字段。
-    option_type/strike_price/expiry_date/underlying_symbol/settlement_* 只在
-    构造入参上存在、不可回读，故实盘快照里保持 None——期权策略若依赖这些字段，
-    仍需自行传入，不能指望 ``get_instrument()``。
+    settlement_* 只在构造入参上存在、不可回读，故实盘快照里保持 None。
     """
     from ..backtest.engine import (
         _asset_type_to_upper_name,
         _option_margin_model_to_upper_name,
+        _option_type_to_upper_name,
     )
 
     snapshots: Dict[str, InstrumentSnapshot] = {}
@@ -314,6 +312,10 @@ def _instruments_to_snapshots(
             option_margin_model=_option_margin_model_to_upper_name(
                 inst.option_margin_model
             ),
+            option_type=_option_type_to_upper_name(inst.option_type),
+            strike_price=inst.strike_price,
+            expiry_date=inst.expiry_date,
+            underlying_symbol=inst.underlying_symbol,
             implied_volatility=(
                 float(inst.implied_volatility)
                 if inst.implied_volatility is not None
@@ -453,6 +455,7 @@ class LiveRunner:
         on_broker_event: Optional[Callable[[Dict[str, Any]], None]] = None,
         signal_port_ready: Optional[Callable[[Any], None]] = None,
         signal_source: Optional[Any] = None,
+        instrument_source: Optional[Any] = None,
         strategy_runtime_config: Optional[
             Union[StrategyRuntimeConfig, Dict[str, Any]]
         ] = None,
@@ -622,6 +625,7 @@ class LiveRunner:
         self.on_broker_event = on_broker_event
         self.signal_port_ready = signal_port_ready
         self.signal_source = signal_source
+        self.instrument_source = instrument_source
         self.strategy_runtime_config = strategy_runtime_config
         self.runtime_config_override = bool(runtime_config_override)
         # fail-fast 校验, 不做归一化兜底: 静默改写调用方传入的标识会让平台
@@ -772,6 +776,7 @@ class LiveRunner:
         # 建好, 但策略的 on_start(里面才调 subscribe)要等到 engine.run() 才触发,
         # 所以只能存下网关引用, 到 subscribe 发生的当刻再运行期下发。
         self._market_gateway = bundle.market_gateway
+        self._gateway_bundle = bundle
         # replay: 生命周期锚定首个回放事件、按最后事件判定收尾(同回测), 须在
         # engine.run() 之前下发; 真实行情源不设, 生命周期仍按墙钟。
         replay_awaits_close = self._configure_replay_lifecycle(bundle)
@@ -930,6 +935,12 @@ class LiveRunner:
                 [strategy_instance, *slot_strategy_instances.values()],
             )
 
+        # 合约登记端口同样须在 engine.run() 之前取(同上)。
+        if self.instrument_source is not None:
+            self._start_instrument_refresh(
+                [strategy_instance, *slot_strategy_instances.values()]
+            )
+
         configure_engine_lifecycle_dispatch(
             self.engine, [strategy_instance, *slot_strategy_instances.values()]
         )
@@ -980,6 +991,8 @@ class LiveRunner:
             # 而摘要排最后才能反映 on_stop 落盘后的最终状态。
             self._dispatch_strategy_stop()
             self._stop_signal_source()
+            if getattr(self, "_instrument_refresher", None) is not None:
+                self._instrument_refresher.stop()
             self._stop_broker_dispatcher()
             self._print_summary(stop_reason)
 
@@ -2098,6 +2111,38 @@ class LiveRunner:
                     _original(order)
 
             setattr(strategy, "on_reject", wrapped)
+
+    def _start_instrument_refresh(self, targets: list[Strategy]) -> None:
+        """启动合约表刷新线程(见 ``run_live(instrument_source=...)``).
+
+        刷新得到的新增与参数变化的合约依次: 投递给引擎登记(引擎在处理下一个事件
+        前登记, 先于随后对它下的单)、并入 ``self.instruments``、重建收盘钳制所用的
+        时段解析器、重新下发行情订阅, 最后更新各策略的合约快照 —— 策略看到新合约
+        时, 订阅已下发, 登记请求排在它随后的任何订单之前。
+        """
+        port = self.engine.instrument_port()
+
+        def apply(instruments: List[Instrument]) -> None:
+            port.register(instruments)
+            symbols = {str(inst.symbol) for inst in instruments}
+            self.instruments = [
+                inst for inst in self.instruments if str(inst.symbol) not in symbols
+            ] + list(instruments)
+            self._subscribed_symbols_cache = None
+            self._configure_session_clamp(self._gateway_bundle)
+            forward = getattr(targets[0], "_live_subscription_forwarder", None)
+            if forward is not None:
+                forward()
+            snapshots = _instruments_to_snapshots(instruments)
+            for target in targets:
+                target._set_instrument_snapshots(
+                    {**target._instrument_snapshots, **snapshots}
+                )
+
+        self._instrument_refresher = InstrumentRefresher(
+            self.instrument_source, self.instruments, apply
+        )
+        self._instrument_refresher.start()
 
     def _stop_signal_source(self) -> None:
         """停掉信号源(会话结束时调用, 异常隔离)."""

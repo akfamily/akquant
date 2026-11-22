@@ -16,6 +16,7 @@ from .broker_models import (
 from .broker_recovery import BrokerRecovery
 from .broker_runtime import BrokerRuntime
 from .brokers.ctp.adapter import CTPMarketAdapter, CTPTraderAdapter
+from .brokers.ctp.instruments import CTPOptionUniverse
 from .brokers.ctp.native import CTPMarketGateway, CTPTraderGateway
 from .factory import create_gateway_bundle
 from .order_submitter import BrokerOrderSubmitter
@@ -52,6 +53,7 @@ __all__ = [
     "CTPTraderGateway",
     "CTPMarketAdapter",
     "CTPTraderAdapter",
+    "CTPOptionUniverse",
     "create_gateway_bundle",
     "register_broker",
     "unregister_broker",

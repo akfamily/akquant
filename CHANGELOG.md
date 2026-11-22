@@ -9,9 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **期货交易所期权保证金模型 `CHINA_COMMODITY` / `CHINA_INDEX`**：`CHINA_COMMODITY` 为大商所、郑商所、上期所、上期能源、广期所的期权卖方保证金 = 权利金 + max(标的期货保证金 − ½ × 虚值额, ½ × 标的期货保证金)，标的期货保证金率取登记为 `FUTURES` 的标的期货合约的 `margin_ratio`；`CHINA_INDEX` 为中金所股指期权 = 权利金 + max(标的指数 × 调整系数 − 虚值额, 0.5 × 调整系数 × 下限基数)，下限基数认购取指数、认沽取行权价，调整系数取期权合约的 `margin_ratio`（须显式填写）。取不到输入时卖开被拒并写明原因，不退化为其他公式。商品期权公式已用 SimNow 五个交易所 30 张期权的 CTP 期权交易成本查询与实际卖开核对，股指期权公式已用期货公司实盘账户的交易成本查询核对 IO / MO / HO 共 36 组，结果一致。
+- **从 CTP 登记期权合约、实盘运行中刷新 `CTPOptionUniverse`**：按标的品种或标的合约从 CTP 查询期权及其标的期货并转为 `Instrument`，商品期权用 `CHINA_COMMODITY`（标的期货保证金率取期货公司的投资者保证金率），中金所股指期权用 `CHINA_INDEX`（调整系数由交易成本查询按实值、下限两个分支反推并相互核对，标的指数代码由 `index_underlyings` 指定）。结果按交易时段缓存。`run_live(instrument_source=...)` 在每个刷新时刻（默认 08:30、20:30，日盘、夜盘开盘前 30 分钟）重新查询，新挂合约运行中登记进引擎、订阅行情并进入策略合约快照，夜盘一直运行到日盘的会话不用重启。已用 SimNow（商品期权 1342 张）与期货公司实盘账户（只读查询，IO / MO / HO 612 张，调整系数 0.12）实查。
+- **`Engine.instrument_port()`**：运行前取得的合约登记端口，可从任意线程在会话中登记合约（同名按新参数覆盖），与 `signal_port()` 同为事件通道投递。
+- **`Instrument` 新增只读属性 `option_type`、`strike_price`、`expiry_date`**。
 
 ### Changed
 - **期权未指定保证金模型且标的登记为期货时，缺省改用 `CHINA_COMMODITY`**：此前一律按沪深 ETF 期权口径 `CHINA_SINGLE_LEG`（12% / 7%）计算，商品期权卖方保证金不正确。标的不是期货的期权缺省仍为 `CHINA_SINGLE_LEG`。
+
+### Fixed
+- **实盘中期权合约快照缺少类型、行权价、到期日、标的**：`get_instrument()` / `get_instruments()` 在实盘读到的这四项此前恒为 `None`，依赖它们按行权价、到期日筛选期权的策略在实盘取不到任何期权。现在取自登记的 `Instrument`。
+- **CTP 行情网关运行中新增的订阅不生效**：`Strategy.subscribe()` 等运行中改订阅集时，CTP 网关此前只记下订阅列表，要到断线重连才向前置订阅。现在已登录时立即订阅新增、退订移除的合约。
 
 ## [0.3.95] - 2026-11-21
 

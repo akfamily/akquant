@@ -63,13 +63,13 @@ class CTPMarketAdapter:
     def subscribe(self, symbols: Sequence[str]) -> None:
         """Update subscribed symbols."""
         self.symbols = list(symbols)
-        self.gateway.symbols = list(symbols)
+        self.gateway.update_subscriptions(self.symbols)
 
     def unsubscribe(self, symbols: Sequence[str]) -> None:
         """Remove symbols from subscription list."""
         removed = set(symbols)
         self.symbols = [s for s in self.symbols if s not in removed]
-        self.gateway.symbols = list(self.symbols)
+        self.gateway.update_subscriptions(self.symbols)
 
     def on_tick(self, callback: Callable[[dict[str, Any]], None]) -> None:
         """Register tick callback."""

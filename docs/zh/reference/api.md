@@ -1235,6 +1235,37 @@ run_live(
 
 交易通道六项只给了一部分时会抛 `ValueError` 并指出缺哪几项：不会替你补 SimNow 仿真环境的默认值，也不会因为缺一项就悄悄不建交易通道。
 
+### `akquant.gateway.CTPOptionUniverse`（从 CTP 登记期权合约并在运行中刷新） {: #ctp-option-universe }
+
+实盘同时跟踪几十条期权链时，不必手工为每个期权写 `Instrument`：`CTPOptionUniverse` 登录 CTP 交易前置查询全部合约，选出跟踪标的的期权及其标的期货，转为 `Instrument`。查询走独立的短连接（登录、查询、断开），不占用下单网关的查询流控；不确认结算单，不下单。需要安装 `openctp-ctp`。
+
+```python
+from akquant import run_live
+from akquant.gateway import CTPOptionUniverse
+
+ctp = {
+    "td_front": "tcp://...", "broker_id": "9999", "user_id": "YOUR_USER_ID",
+    "password": "YOUR_PASSWORD", "app_id": "...", "auth_code": "...",
+}
+universe = CTPOptionUniverse(
+    ctp,
+    underlyings=["m", "au2702", "IO"],   # 标的品种代码（全部月份）或标的合约代码
+    index_underlyings={"IO": "000300.SH"},  # 跟踪中金所期权时必填
+)
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=universe.load(),
+    instrument_source=universe,   # 运行中按刷新时刻登记新挂合约
+    broker="ctp",
+    gateway_options={**ctp, "md_front": "tcp://..."},
+)
+```
+
+*   **商品期权**：标的期货一并登记，`margin_ratio` 取 `ReqQryInstrumentMarginRate` 的投资者卖方保证金率（按金额；期货公司按手数收取时报错）；期权 `option_margin_model="CHINA_COMMODITY"`。
+*   **中金所股指期权**：CTP 的标的字段是期权系列（如 `IO2612`），行情也不推送指数，标的指数代码须由 `index_underlyings` 按品种给出，与指数行情来源的代码一致，缺哪个品种报哪个。保证金调整系数由 `ReqQryOptionInstrTradeCost` 反推：每个品种取一张认购，分别以 1.2 倍、0.8 倍行权价作为标的价格查询，实值分支与下限分支各得一个系数，两者不一致时报错（说明期货公司的算法与 `CHINA_INDEX` 公式不同）；期权 `option_margin_model="CHINA_INDEX"`。
+*   **缓存与刷新时刻**：交易所在夜盘、日盘都会新挂期权，`refresh_times` 默认 `("08:30", "20:30")`（两个时段开盘前 30 分钟）。查询结果按“最近一个已过的刷新时刻”缓存在 `cache_dir`（默认 `.akquant_ctp`）：同一时段内重启时 `load()` 读缓存，跟踪标的变化或进入下一时段时重新查询；`refresh()` 总是查询。
+*   **运行中刷新（`run_live(instrument_source=...)`）**：后台线程在每个刷新时刻调用 `refresh()`，新增与参数变化的合约依次登记进引擎（在处理下一个事件前登记，先于随后对它下的单）、加入行情订阅，最后进入策略的 `get_instrument()` / `get_instruments()`，会话不用重启。参数变化（如期货公司调整保证金率）逐项记 WARNING 日志；查询失败记日志，下一个刷新时刻再查，交易不中断。`instrument_source` 也可以是任何提供 `refresh()` 与 `next_refresh()` 的对象。
+
 ### `akquant.run_live`（broker_live 执行语义） {: #live-broker-semantics }
 
 实盘 broker 路由可通过 `gateway_options` 传入网关特定参数：
