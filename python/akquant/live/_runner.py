@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import functools
 import math
 import numbers
 import random
@@ -90,8 +91,41 @@ from ._strategy_maps import (
     validate_strategy_map_keys,
 )
 from ._stream_sink import StreamingIndicatorSink
+from .alerts import AlertConfig, install_alerts, uninstall_alerts
 
 logger = get_logger("gateway.live")
+
+
+def _with_alerts(run: Callable[..., None]) -> Callable[..., None]:
+    """会话期间挂上实盘消息提醒(``LiveRunner.alerts``), 结束时推送停止原因.
+
+    包在 ``run`` 外层: 连网关、登录失败等启动阶段的错误同样推送。
+    """
+
+    @functools.wraps(run)
+    def wrapper(self: "LiveRunner", *args: Any, **kwargs: Any) -> None:
+        if self.alerts is None:
+            run(self, *args, **kwargs)
+            return
+        strategy_name = getattr(
+            self.strategy_cls, "__name__", type(self.strategy_cls).__name__
+        )
+        handler = install_alerts(
+            self.alerts,
+            f"{strategy_name} broker={self.broker} mode={self.trading_mode}",
+        )
+        stop_reason = "启动失败"
+        try:
+            run(self, *args, **kwargs)
+            stop_reason = self._last_stop_reason
+        except BaseException as exc:
+            stop_reason = f"异常中止: {type(exc).__name__}: {exc}"
+            raise
+        finally:
+            uninstall_alerts(handler, stop_reason)
+
+    return wrapper
+
 
 # 中国交易所所在时区(IANA 名与别名); 真实行情源配其他时区时构造期告警。
 _CHINA_TIMEZONES = frozenset(
@@ -470,6 +504,7 @@ class LiveRunner:
         min_commission: Optional[float] = None,
         slippage: Optional[Dict[str, Any]] = None,
         volume_limit_pct: Optional[float] = None,
+        alerts: Optional[AlertConfig] = None,
     ):
         """
         Initialize the LiveRunner.
@@ -549,7 +584,9 @@ class LiveRunner:
         :param min_commission: paper 撮合的最低佣金（股票与基金）。见 ``run_live``
         :param slippage: paper 撮合的滑点，与 ``run_backtest`` 同格式。见 ``run_live``
         :param volume_limit_pct: paper 撮合的成交量限制，0 表示不限制。见 ``run_live``
+        :param alerts: 实盘消息提醒(企业微信群机器人)。见 ``run_live``
         """
+        self.alerts = alerts
         self.strategy_cls = strategy_cls
         self.strategy_source = strategy_source
         self.strategy_loader = strategy_loader
@@ -705,6 +742,7 @@ class LiveRunner:
             for inst in instruments
         )
 
+    @_with_alerts
     def run(
         self,
         cash: float = 1_000_000.0,
@@ -982,6 +1020,7 @@ class LiveRunner:
             self._stop_signal_source()
             self._stop_broker_dispatcher()
             self._print_summary(stop_reason)
+            self._last_stop_reason = stop_reason
 
     @contextmanager
     def _termination_signal_guard(self) -> Iterator[None]:
@@ -3019,15 +3058,21 @@ class LiveRunner:
             logger.warning(
                 "Strategy broker callback failed",
                 exc_info=exc,
-                extra=build_log_extra(
-                    phase="gateway",
-                    strategy_id=owner_strategy_id,
-                    slot=owner_strategy_id if owner_strategy_id != "_default" else None,
-                    symbol=str(payload_dict.get("symbol", "") or "").strip() or None,
-                    order_id=payload_dict.get("broker_order_id")
-                    or payload_dict.get("order_id"),
-                    client_order_id=payload_dict.get("client_order_id"),
-                ),
+                extra={
+                    **build_log_extra(
+                        phase="gateway",
+                        strategy_id=owner_strategy_id,
+                        slot=owner_strategy_id
+                        if owner_strategy_id != "_default"
+                        else None,
+                        symbol=str(payload_dict.get("symbol", "") or "").strip()
+                        or None,
+                        order_id=payload_dict.get("broker_order_id")
+                        or payload_dict.get("order_id"),
+                        client_order_id=payload_dict.get("client_order_id"),
+                    ),
+                    "alert": "策略异常",
+                },
             )
             on_error = getattr(strategy, "on_error", None)
             if on_error is not None and callback_name != "on_error":

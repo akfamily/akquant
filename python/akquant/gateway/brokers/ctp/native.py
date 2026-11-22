@@ -50,6 +50,9 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
     Handles connection, authentication, login, and settlement confirmation.
     """
 
+    # 前置断开过、尚未重连成功(重连成功的日志带提醒标记)
+    _front_disconnected = False
+
     def __init__(
         self,
         front_url: str,
@@ -377,11 +380,16 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
 
     def OnFrontConnected(self) -> None:
         """Handle front connection event."""
+        # 断线后 CTP 自动重连成功: 带提醒标记(见 akquant.live.alerts)
         logger.info(
             "CTP trader front connected: %s",
             self.front_url,
-            extra=self._log_extra(),
+            extra={
+                **self._log_extra(),
+                **({"alert": "连接"} if self._front_disconnected else {}),
+            },
         )
+        self._front_disconnected = False
         self.connected = True
 
         self.req_id += 1
@@ -501,8 +509,9 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         logger.critical(
             "CTP trader front disconnected: reason=%s",
             nReason,
-            extra=self._log_extra(),
+            extra={**self._log_extra(), "alert": "连接"},
         )
+        self._front_disconnected = True
         self.connected = False
         self.login_status = False
         self.ready_to_trade = False
@@ -958,6 +967,9 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
     depending on ``emit_ticks``/``emit_bars`` (see :meth:`__init__`).
     """
 
+    # 前置断开过、尚未重连成功(重连成功的日志带提醒标记)
+    _front_disconnected = False
+
     def __init__(
         self,
         feed: DataFeed,
@@ -1176,11 +1188,16 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
 
     def OnFrontConnected(self) -> None:
         """Handle front connection event."""
+        # 断线后 CTP 自动重连成功: 带提醒标记(见 akquant.live.alerts)
         logger.info(
             "CTP market front connected: %s",
             self.front_url,
-            extra=self._log_extra(),
+            extra={
+                **self._log_extra(),
+                **({"alert": "连接"} if self._front_disconnected else {}),
+            },
         )
+        self._front_disconnected = False
         self.connected = True
 
         req = mdapi.CThostFtdcReqUserLoginField()
@@ -1198,8 +1215,9 @@ class CTPMarketGateway(mdapi.CThostFtdcMdSpi):  # type: ignore
         logger.warning(
             "CTP market front disconnected: reason=%s",
             nReason,
-            extra=self._log_extra(),
+            extra={**self._log_extra(), "alert": "连接"},
         )
+        self._front_disconnected = True
         self.connected = False
 
     def OnRspUserLogin(

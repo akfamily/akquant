@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **实盘消息提醒 `run_live(alerts=AlertConfig(wecom_webhook=...))`**：把成交、拒单（本地风控、策略限额、柜台拒单）、报单状态未知、CTP 交易与行情前置断线及重连、策略柜台回调异常、ERROR 及以上日志（登录失败、会话异常中止等）和会话启动、结束推送到企业微信群机器人。后台线程按间隔合并发送，遵守机器人每分钟 20 条的限制，超出时积攒不丢；发送失败的原因写入 `akquant.alerts` 日志。其他日志记录带 `extra={"alert": "<类别>"}` 即可推送。
+
 ## [0.3.95] - 2026-11-21
 
 > 规则版本仍为 2.5.0，回测结果不变。

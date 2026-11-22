@@ -8,5 +8,6 @@ longer part of the public API.
 
 from ._facade import run_live
 from ._stream_sink import StreamingIndicatorSink
+from .alerts import AlertConfig
 
-__all__ = ["run_live", "StreamingIndicatorSink"]
+__all__ = ["run_live", "AlertConfig", "StreamingIndicatorSink"]

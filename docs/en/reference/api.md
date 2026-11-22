@@ -6,6 +6,7 @@ Quick links:
 
 *   [run_live broker selection and connection settings](#live-broker-options)
 *   [run_live broker-live semantics](#live-broker-semantics)
+*   [run_live live alerts](#live-alerts)
 *   [run_live live history preload](#live-preload-history)
 *   [run_live live timezone, sessions and post-close grace](#live-timezone-sessions)
 *   [SessionResolver trading-session resolver](#akquant-session-resolver)
@@ -1191,6 +1192,40 @@ Strict-mode notes:
 
 *   Cancel request sent does not imply `Cancelled`; wait for `OnRtnOrder(Cancelled)`.
 *   Error callback received does not imply `Rejected`; final status is confirmed by order callback.
+
+### `akquant.run_live(alerts=...)` (live alerts) {: #live-alerts }
+
+For unattended live trading, `AlertConfig` pushes key events to a WeCom (Enterprise WeChat) group bot (group settings → add group bot, which gives the webhook address):
+
+```python
+from akquant import AlertConfig, run_live
+
+run_live(
+    strategy_cls=MyStrategy,
+    ...,
+    alerts=AlertConfig(
+        wecom_webhook="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...",
+        name="options-live",  # message prefix to tell several live processes apart
+    ),
+)
+```
+
+What is pushed (each message starts with `[category] HH:MM:SS text`; categories are in Chinese):
+
+| Category | Source |
+|---|---|
+| Fill (成交) | order audit `order_fill` (disable with `trades=False`) |
+| Reject (拒单) | order audit `order_reject`: local risk, strategy limits, broker rejects (disable with `rejects=False`) |
+| Order anomaly (报单异常) | unknown submission outcome (`order_submit_unknown`), failed cancel |
+| Connection (连接) | CTP trader / market front disconnects, and reconnection after a disconnect |
+| Strategy error (策略异常) | an exception in the strategy's broker callbacks (`on_order`, `on_trade`, ...) |
+| Error / Critical (错误 / 严重错误) | any ERROR / CRITICAL log record, e.g. login failure, session aborted on error |
+| Session (会话) | session start and end (with the stop reason) |
+
+*   The alert handler sits on the `akquant` logger: any log record carrying `extra={"alert": "<category>"}` is pushed too, with the category as its title. With a log level above INFO, INFO records such as fills are not produced, so they are not pushed either.
+*   Sending runs on a background thread and never blocks trading: every `batch_interval_sec` seconds (default 2) pending alerts are merged into one message; a WeCom bot accepts at most 20 messages per minute, beyond which alerts keep accumulating rather than being dropped; a message over 2048 bytes is split. Send failures (such as an invalid webhook) are logged to `akquant.alerts` with the cause; that logger itself is not pushed.
+*   At session end the pending alerts are sent before exiting, waiting at most 15 seconds.
+*   With `error_mode="continue"`, exceptions in engine callbacks (`on_order`, `on_bar`, ...) only go to `on_error` and are not logged, so they are not pushed; log an ERROR in `on_error` if you want them.
 
 ### `akquant.run_live(preload_history=...)` (live history preload) {: #live-preload-history }
 

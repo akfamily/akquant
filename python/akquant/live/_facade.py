@@ -28,6 +28,7 @@ from ..indicator_script import Indicator, merge_indicators_into_slots
 from ..sessions_config import SessionsArg
 from ..strategy import Strategy, StrategyRuntimeConfig, reconcile_strategy_id
 from ._runner import LiveRunner
+from .alerts import AlertConfig
 
 
 def run_live(
@@ -107,6 +108,7 @@ def run_live(
     min_commission: Optional[float] = None,
     slippage: Optional[Dict[str, Any]] = None,
     volume_limit_pct: Optional[float] = None,
+    alerts: Optional[AlertConfig] = None,
 ) -> None:
     """Run a live/paper trading session, symmetric with ``run_backtest``.
 
@@ -325,6 +327,10 @@ def run_live(
                              以上六个参数只作用于 ``trading_mode="paper"``（由
                              akquant 撮合）；``broker_live`` 由柜台撮合，传了任一
                              参数即抛 ``ValueError``
+    :param alerts: 实盘消息提醒 :class:`~akquant.AlertConfig`(企业微信群机器人):
+        推送成交、拒单、报单状态未知、ERROR 及以上日志(交易前置断线、登录失败、
+        会话异常中止等)、行情断线与重连、策略回调异常, 以及会话启动与结束。
+        挂在 ``akquant`` 日志上, 日志级别高于 INFO 时成交提醒随之不发。
     """
     if instruments is None:
         raise ValueError("run_live requires instruments")
@@ -396,6 +402,7 @@ def run_live(
         min_commission=min_commission,
         slippage=slippage,
         volume_limit_pct=volume_limit_pct,
+        alerts=alerts,
     )
     runner.set_indicator_stream(
         indicator_recorder=indicator_recorder, on_event=on_event

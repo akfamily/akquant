@@ -6,6 +6,7 @@
 
 *   [run_live 选择 broker 与连接参数](#live-broker-options)
 *   [run_live broker_live 执行语义](#live-broker-semantics)
+*   [run_live 实盘消息提醒](#live-alerts)
 *   [run_live 实盘历史预热](#live-preload-history)
 *   [run_live 实盘时区、交易时段与收盘宽限](#live-timezone-sessions)
 *   [SessionResolver 交易时段解析器](#akquant-session-resolver)
@@ -1258,6 +1259,40 @@ run_live(
 
 *   撤单请求发送成功不等于 `Cancelled`，需等待 `OnRtnOrder(Cancelled)`。
 *   收到错误回报不等于 `Rejected`，最终状态以订单回报为准。
+
+### `akquant.run_live(alerts=...)`（实盘消息提醒） {: #live-alerts }
+
+实盘无人值守时，用 `AlertConfig` 把关键事件推送到企业微信群机器人（群设置 → 添加群机器人，拿到 webhook 地址）：
+
+```python
+from akquant import AlertConfig, run_live
+
+run_live(
+    strategy_cls=MyStrategy,
+    ...,
+    alerts=AlertConfig(
+        wecom_webhook="https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=...",
+        name="期权实盘",  # 消息前缀, 同一个群里有多个实盘进程时区分
+    ),
+)
+```
+
+推送的内容（消息以 `[类别] 时:分:秒 内容` 开头）：
+
+| 类别 | 来源 |
+|---|---|
+| 成交 | 订单审计 `order_fill`（`trades=False` 关闭） |
+| 拒单 | 订单审计 `order_reject`：本地风控、策略限额、柜台拒单（`rejects=False` 关闭） |
+| 报单异常 | 报单是否到达柜台未知（`order_submit_unknown`）、撤单失败 |
+| 连接 | CTP 交易前置、行情前置断线，以及断线后重连成功 |
+| 策略异常 | 策略的柜台回调（`on_order`、`on_trade` 等）抛出异常 |
+| 错误 / 严重错误 | 任何 ERROR / CRITICAL 级别的日志，如登录失败、会话因异常中止 |
+| 会话 | 会话启动、结束（写明结束原因） |
+
+*   提醒挂在 `akquant` 日志上：其他代码的日志记录带 `extra={"alert": "<类别>"}` 字段时同样推送，类别即标题。日志级别高于 INFO 时，成交等 INFO 记录不再产生，提醒随之不发。
+*   发送在后台线程，不阻塞交易：每 `batch_interval_sec` 秒（默认 2）把积攒的提醒合并成一条；企业微信机器人每分钟最多 20 条，超出时继续积攒、不丢弃；单条超过 2048 字节时拆分。发送失败的原因（如 webhook 无效）写入 `akquant.alerts` 日志，这条日志本身不推送。
+*   会话结束时发完积攒的提醒再退出，最多等 15 秒。
+*   `on_order`、`on_bar` 等引擎回调里的异常在 `error_mode="continue"` 下只转给 `on_error`、不写日志，不会推送；需要时在 `on_error` 里自行记 ERROR 日志。
 
 ### `akquant.run_live(preload_history=...)`（实盘历史预热） {: #live-preload-history }
 
