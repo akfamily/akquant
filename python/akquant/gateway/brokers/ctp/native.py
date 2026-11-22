@@ -715,6 +715,19 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
                 ),
                 "timestamp_ns": time.time_ns(),
             }
+            # 静态权益 = 上日结存 − 上次信用额度 − 上次质押 + 质押 − 出金 + 入金
+            if getattr(pTradingAccount, "PreBalance", None) is not None:
+                self._account_query_result["day_start_equity"] = sum(
+                    sign * float(getattr(pTradingAccount, name, 0.0) or 0.0)
+                    for sign, name in (
+                        (1, "PreBalance"),
+                        (-1, "PreCredit"),
+                        (-1, "PreMortgage"),
+                        (1, "Mortgage"),
+                        (-1, "Withdraw"),
+                        (1, "Deposit"),
+                    )
+                )
         if bIsLast:
             self._account_query_event.set()
 

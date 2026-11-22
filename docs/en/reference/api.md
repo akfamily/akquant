@@ -6,6 +6,7 @@ Quick links:
 
 *   [run_live broker selection and connection settings](#live-broker-options)
 *   [run_live broker-live semantics](#live-broker-semantics)
+*   [run_live live pre-trade risk](#live-risk)
 *   [run_live live history preload](#live-preload-history)
 *   [run_live live timezone, sessions and post-close grace](#live-timezone-sessions)
 *   [SessionResolver trading-session resolver](#akquant-session-resolver)
@@ -1191,6 +1192,43 @@ Strict-mode notes:
 
 *   Cancel request sent does not imply `Cancelled`; wait for `OnRtnOrder(Cancelled)`.
 *   Error callback received does not imply `Rejected`; final status is confirmed by order callback.
+
+### `akquant.run_live(live_risk=...)` (live pre-trade risk) {: #live-risk }
+
+Under `trading_mode="broker_live"` orders go through the broker channel, not the engine, so the engine's `strategy_max_daily_loss` / `strategy_max_drawdown` / `strategy_risk_budget` do not apply (see [Chapter 15](../textbook/15_live_trading.md)). `live_risk=LiveRiskConfig(...)` checks each order after the submitter has split it into open/close legs and before it is sent; a violation is reported to `on_reject` as a pre-trade rejection whose reason states the count and the limit. Every rule is off by default; passing it in a mode other than `broker_live` raises.
+
+```python
+from akquant import LiveRiskConfig, run_live
+
+run_live(
+    ...,
+    broker="ctp",
+    trading_mode="broker_live",
+    live_risk=LiveRiskConfig(
+        order_flow_limit=5,          # at most 5 orders sent per second
+        cancel_limit=400,            # stop new orders on a contract after 400 cancels today
+        open_count_limit=200,        # at most 200 opening orders per contract today
+        self_trade_check=True,
+        max_daily_loss=50_000,       # close-only once the account loses 50k today
+        max_drawdown=100_000,
+    ),
+)
+```
+
+| Field | Meaning |
+| :--- | :--- |
+| `order_flow_limit` / `order_flow_window` | Max orders sent within a rolling window (seconds, default 1), counted per split leg (i.e. orders the broker receives) |
+| `active_order_limit` | Max working orders of the account, including this one |
+| `cancel_limit` | Once a contract has this many cancelled orders in the trading day, new orders on it are rejected; cancels themselves are never blocked. Counted from order returns with a cancelled status (successful cancels, FAK/FOK remainders, manual cancels in a terminal; CTP also reports rejected orders as cancelled, so they count too), each order once |
+| `open_count_limit` / `open_volume_limit` | Max opening orders / lots sent per contract in the trading day |
+| `self_trade_check` | Reject when the account has a working order on the same contract on the opposite side at a crossing price (a market order on either side counts as crossing) |
+| `max_daily_loss` | Account daily loss = day-start equity − current equity; once exceeded, close-only for the rest of the trading day |
+| `max_drawdown` | Account drawdown = peak equity seen in this run (including day-start equity) − current equity; once exceeded, close-only until the process ends; the peak restarts with the process |
+
+*   The loss checks use the broker's account snapshot, which already includes commissions and mark-to-market. For CTP the day-start equity is the static equity = previous balance − previous credit − previous mortgage + mortgage − withdrawal + deposit (checked on SimNow: static equity + close profit + position profit − commission + premium cash flow equals the dynamic equity `Balance`). The snapshot is refreshed after orders and fills and by the recovery poll. When the broker gives no day-start equity, orders are rejected with that reason if `max_daily_loss` is set.
+*   After a trip, any order with an opening leg is rejected; pure closing orders pass. Nothing is closed automatically.
+*   Counts are per strategy `trading_day` (the night session belongs to the next trading day); when it is unavailable (e.g. orders from a signal thread outside strategy callbacks) the local calendar date is used.
+*   Counts live in the process only and reset on restart.
 
 ### `akquant.run_live(preload_history=...)` (live history preload) {: #live-preload-history }
 

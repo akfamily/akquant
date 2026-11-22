@@ -91,6 +91,7 @@ def wrap_state_invalidation(
     update_broker_state: Callable[[str, Any], None],
     get_caches: Callable[[], list[Any] | None],
     on_new_fill: Callable[[Any], None] | None = None,
+    on_event: Callable[[str, Any], None] | None = None,
 ) -> Callable[[str, Any], None]:
     """Wrap the broker update callback: trade 幂等叠总持仓 delta, order 失效委托/资金.
 
@@ -115,6 +116,12 @@ def wrap_state_invalidation(
     def _wrapped(event_name: str, payload: Any) -> None:
         nonlocal warned_no_id
         update_broker_state(event_name, payload)
+        if on_event is not None and event_name in {"order", "account"}:
+            # 实盘前置风控: 委托回报计撤单次数, 账户快照更新权益峰值
+            try:
+                on_event(event_name, payload)
+            except Exception:  # noqa: BLE001 风控计数出错不影响柜台状态同步
+                logger.warning("实盘风控: 处理 %s 回报失败", event_name, exc_info=True)
         caches = get_caches() or ()
         if event_name == "trade":
             trade_id = _trade_field(payload, "trade_id")

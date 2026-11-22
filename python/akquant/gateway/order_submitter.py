@@ -13,6 +13,7 @@ from .broker_models import (
     validate_execution_semantics,
 )
 from .broker_strategy_api import _resolve_symbol
+from .live_risk import LiveRiskConfig, LiveRiskGuard
 from .order_audit import record_reject, record_submit, record_submit_unknown
 from .order_errors import classify_gateway_error, is_definite_reject
 from .order_receipt import OrderLeg, OrderReceipt
@@ -379,6 +380,7 @@ class BrokerOrderSubmitter:
         record_order_request: Callable[[str, Any], None],
         sync_group_mapping: Callable[[str, str], None] = lambda _c, _g: None,
         strategy_limits: dict[str, dict[str, float]] | None = None,
+        live_risk: LiveRiskConfig | None = None,
     ) -> None:
         """Bind strategy injection hooks, id mapping and capability callbacks.
 
@@ -394,6 +396,7 @@ class BrokerOrderSubmitter:
         self._trader_gateway = trader_gateway
         self._strategy = strategy
         self._strategy_limits = strategy_limits or {}
+        self._live_risk = LiveRiskGuard(live_risk) if live_risk is not None else None
         self._risk_reject_seq = 0
         self._broker_reject_seq = 0
         self._resolve_trader_capabilities = resolve_trader_capabilities
@@ -546,6 +549,46 @@ class BrokerOrderSubmitter:
                 extra=build_log_extra(phase="gateway"),
             )
             return None
+
+    def _trading_day(self) -> Any:
+        return getattr(self._strategy, "trading_day", None)
+
+    def _check_live_risk(
+        self,
+        symbol: str,
+        side: str,
+        price: float | None,
+        order_legs: list[tuple[str, float]],
+    ) -> str | None:
+        """实盘前置风控(见 :class:`LiveRiskGuard`); 未配置时通过."""
+        if self._live_risk is None:
+            return None
+        execution = self._strategy.execution
+        return self._live_risk.check(
+            symbol=symbol,
+            side=side,
+            price=price,
+            legs=order_legs,
+            trading_day=self._trading_day(),
+            open_orders=execution.broker_open_orders,
+            account=execution.broker_account,
+        )
+
+    def on_broker_event(self, event_name: str, payload: Any) -> None:
+        """柜台回报: 委托回报计撤单次数, 账户快照更新权益峰值."""
+        if self._live_risk is None:
+            return
+        if event_name == "order":
+            self._live_risk.on_order_event(payload, self._trading_day())
+        elif event_name == "account":
+            equity = (
+                payload.get("equity")
+                if isinstance(payload, dict)
+                else getattr(payload, "equity", None)
+            )
+            self._live_risk.observe_equity(
+                float(equity) if equity is not None else None
+            )
 
     def _emit_risk_reject(
         self,
@@ -866,6 +909,25 @@ class BrokerOrderSubmitter:
                 reason=str(exc),
             )
             return OrderReceipt(group_id="", order_ids=(), legs=(), failure="rejected")
+        live_risk_reason = self._check_live_risk(symbol, side, price, order_legs)
+        if live_risk_reason is not None:
+            record_reject(
+                strategy_id=owner_strategy_id,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                client_order_id="",
+                reason=live_risk_reason,
+            )
+            self._emit_risk_reject(
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                price=price,
+                owner_strategy_id=owner_strategy_id,
+                reason=live_risk_reason,
+            )
+            return OrderReceipt(group_id="", order_ids=(), legs=(), failure="rejected")
         request_client_order_id = client_order_id or self._next_client_order_id()
         client_order_ids = build_live_order_client_ids(
             request_client_order_id=request_client_order_id,
@@ -917,6 +979,10 @@ class BrokerOrderSubmitter:
                 )
                 break
             broker_order_ids.append(broker_order_id)
+            if self._live_risk is not None:
+                self._live_risk.record_sent(
+                    symbol, leg_position_effect, leg_quantity, self._trading_day()
+                )
             record_submit(
                 strategy_id=owner_strategy_id,
                 symbol=symbol,

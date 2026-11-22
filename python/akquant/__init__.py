@@ -61,6 +61,7 @@ from .feed_adapter import (
     ReplayFeedAdapter,
     ResampledFeedAdapter,
 )
+from .gateway.live_risk import LiveRiskConfig
 from .gateway.order_receipt import OrderLeg, OrderReceipt
 from .indicator_declaration import IndicatorBinding, IndicatorDeclaration
 from .indicator_recording import IndicatorRecorder, IndicatorSink
@@ -196,6 +197,7 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "run_backtest",
         "run_from_checkpoint",
         "run_live",
+        "LiveRiskConfig",
         "merge_results",
         "make_fill_policy",
         "FillMode",
@@ -306,6 +308,7 @@ else:
         "run_backtest",
         "run_from_checkpoint",
         "run_live",
+        "LiveRiskConfig",
         "merge_results",
         "make_fill_policy",
         "FillMode",

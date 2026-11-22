@@ -28,6 +28,7 @@ from ..backtest import BacktestStreamEvent
 from ..gateway.broker_event_adapter import map_order_snapshot, map_trade
 from ..gateway.broker_runtime import BrokerRuntime
 from ..gateway.factory import create_gateway_bundle
+from ..gateway.live_risk import LiveRiskConfig
 from ..gateway.models import BrokerCapability
 from ..gateway.order_submitter import (
     build_live_order_client_ids,
@@ -450,6 +451,7 @@ class LiveRunner:
         portfolio_risk_budget: Optional[float] = None,
         risk_budget_mode: str = "order_notional",
         risk_budget_reset_daily: bool = False,
+        live_risk: Optional[LiveRiskConfig] = None,
         on_broker_event: Optional[Callable[[Dict[str, Any]], None]] = None,
         signal_port_ready: Optional[Callable[[Any], None]] = None,
         signal_source: Optional[Any] = None,
@@ -619,6 +621,12 @@ class LiveRunner:
         )
         self.risk_budget_mode = risk_budget_mode
         self.risk_budget_reset_daily = bool(risk_budget_reset_daily)
+        if live_risk is not None and trading_mode != "broker_live":
+            raise ValueError(
+                "live_risk 只在 trading_mode='broker_live' 生效(委托经柜台通道报出), "
+                f"当前 trading_mode={trading_mode!r}"
+            )
+        self.live_risk = live_risk
         self.on_broker_event = on_broker_event
         self.signal_port_ready = signal_port_ready
         self.signal_source = signal_source
@@ -2029,6 +2037,7 @@ class LiveRunner:
                     getattr(self, "strategy_max_position_size", {}) or {}
                 ),
             },
+            live_risk=getattr(self, "live_risk", None),
         )
 
     def _start_signal_source(

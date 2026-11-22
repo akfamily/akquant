@@ -506,6 +506,7 @@ class CTPTraderAdapter:
             frozen_cash=_optional("frozen_cash"),
             margin=_optional("margin"),
             unrealized_pnl=_optional("unrealized_pnl"),
+            day_start_equity=_optional("day_start_equity"),
         )
 
     def _position_cache_key(self, symbol: str, direction: str) -> tuple[str, str]:
