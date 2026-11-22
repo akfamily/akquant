@@ -42,6 +42,10 @@ except ImportError:
 
 logger = get_logger("gateway.ctp_native")
 
+# 组合申请回报 CThostFtdcCombActionField.ActionStatus
+COMB_ACTION_ACCEPTED = "b"
+COMB_ACTION_REJECTED = "c"
+
 
 class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
     """
@@ -108,6 +112,9 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         self._trade_query_event = threading.Event()
         self._trade_query_results: list[dict[str, Any]] = []
         self._trade_query_error = ""
+        self._comb_action_timeout_sec = 5.0
+        self._comb_action_ref = 1
+        self._comb_action_waiters: dict[str, dict[str, Any]] = {}
 
     def _log_extra(self, *, symbol: str | None = None) -> dict[str, Any]:
         return build_log_extra(phase="gateway", symbol=symbol)
@@ -264,6 +271,104 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         ret = self.api.ReqOrderAction(request, self.req_id)
         if ret != 0:
             raise RuntimeError(f"ReqOrderAction failed with code={ret}")
+
+    def combine_positions(
+        self, code: str, legs: list[tuple[str, float]], uncombine: bool = False
+    ) -> None:
+        """申请(``uncombine=True`` 时拆分)组合持仓, 等交易所受理后返回.
+
+        按 CTP 开发指南: 组合合约代码为 ``"<code> <第一腿>&<第二腿>"``, ``Direction``
+        为第一腿的持仓方向, ``Volume`` 为第一腿手数。``legs`` 为两条腿带符号的总手数
+        (正为多头)。柜台或交易所拒绝时抛出原因; 超时没有回报时结果不可知。
+        """
+        if not self.can_trade():
+            raise RuntimeError("CTP trader is not ready for combination requests")
+        if self.api is None:
+            raise RuntimeError("CTP trader API is not initialized")
+        (first, first_lots), (second, _) = legs
+        action = "拆分组合" if uncombine else "申请组合"
+        instrument_id = f"{code} {first}&{second}"
+        ref = str(self._comb_action_ref)
+        self._comb_action_ref += 1
+
+        request = tdapi.CThostFtdcInputCombActionField()
+        request.BrokerID = self.broker_id
+        request.InvestorID = self.user_id
+        request.UserID = self.user_id
+        request.InstrumentID = instrument_id
+        request.CombActionRef = ref
+        request.Direction = (
+            tdapi.THOST_FTDC_D_Buy if first_lots > 0 else tdapi.THOST_FTDC_D_Sell
+        )
+        request.Volume = int(abs(first_lots))
+        request.CombDirection = (
+            tdapi.THOST_FTDC_CMDR_UnComb if uncombine else tdapi.THOST_FTDC_CMDR_Comb
+        )
+        request.HedgeFlag = tdapi.THOST_FTDC_HF_Speculation
+
+        waiter: dict[str, Any] = {
+            "event": threading.Event(),
+            "error": "",
+            "label": f"{action} {instrument_id}",
+        }
+        self._comb_action_waiters[ref] = waiter
+        try:
+            self.req_id += 1
+            ret = self.api.ReqCombActionInsert(request, self.req_id)
+            if ret != 0:
+                raise RuntimeError(f"ReqCombActionInsert failed with code={ret}")
+            if not waiter["event"].wait(timeout=self._comb_action_timeout_sec):
+                raise RuntimeError(
+                    f"{waiter['label']} {self._comb_action_timeout_sec:g} 秒内没有收到"
+                    "交易所受理回报, 结果不可知, 须查询组合持仓后再决定是否重发"
+                )
+        finally:
+            self._comb_action_waiters.pop(ref, None)
+        if waiter["error"]:
+            raise RuntimeError(waiter["error"])
+
+    def _resolve_comb_action(self, ref: str, error: str) -> None:
+        waiter = self._comb_action_waiters.get(ref)
+        if waiter is None or waiter["event"].is_set():
+            return
+        if error:
+            waiter["error"] = f"{waiter['label']} 被拒绝: {error}"
+        waiter["event"].set()
+
+    def OnRspCombActionInsert(
+        self, pInputCombAction: Any, pRspInfo: Any, nRequestID: int, bIsLast: bool
+    ) -> None:
+        """Handle combination request response (only sent on error)."""
+        _ = nRequestID, bIsLast
+        if pRspInfo is None or not getattr(pRspInfo, "ErrorID", 0):
+            return
+        self._resolve_comb_action(
+            self._to_text(getattr(pInputCombAction, "CombActionRef", "")),
+            f"{pRspInfo.ErrorID} {self._to_text(getattr(pRspInfo, 'ErrorMsg', ''))}",
+        )
+
+    def OnErrRtnCombActionInsert(self, pInputCombAction: Any, pRspInfo: Any) -> None:
+        """Handle asynchronous combination request reject."""
+        self.OnRspCombActionInsert(pInputCombAction, pRspInfo, 0, True)
+
+    def OnRtnCombAction(self, pCombAction: Any) -> None:
+        """Handle combination request status: accepted or rejected by exchange."""
+        if pCombAction is None:
+            return
+        # 引用号只在本会话内唯一, 其他会话的申请回报不处理
+        if (
+            int(getattr(pCombAction, "FrontID", 0) or 0) != self.front_id
+            or int(getattr(pCombAction, "SessionID", 0) or 0) != self.session_id
+        ):
+            return
+        ref = self._to_text(getattr(pCombAction, "CombActionRef", ""))
+        status = self._to_text(getattr(pCombAction, "ActionStatus", ""))
+        if status == COMB_ACTION_ACCEPTED:
+            self._resolve_comb_action(ref, "")
+        elif status == COMB_ACTION_REJECTED:
+            self._resolve_comb_action(
+                ref, self._to_text(getattr(pCombAction, "StatusMsg", ""))
+            )
 
     def classify_order_error(self, exc: BaseException) -> str:
         """将 CTP 异常分类为统一的失败类型.

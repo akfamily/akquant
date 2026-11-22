@@ -81,6 +81,11 @@ class SimExecution:
         for order in self.get_open_orders(symbol=symbol):
             self.cancel_order(order.id)
 
+    def combine_positions(
+        self, code: str, legs: list[tuple[str, float]], uncombine: bool
+    ) -> None:
+        """回测没有组合申请: 组合保证金由 CHINA_COMMODITY_COMBINATION 模型自动计算."""
+
     def capabilities(self) -> dict[str, Any]:
         """返回当前执行后端支持的能力标记."""
         return api._sim_capabilities(self._s)

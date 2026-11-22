@@ -509,6 +509,18 @@ class BrokerExecution:
         """返回当前执行后端支持的能力标记."""
         return dict(self._submitter._get_execution_capabilities())
 
+    def combine_positions(
+        self, code: str, legs: list[tuple[str, float]], uncombine: bool
+    ) -> None:
+        """经柜台申请(拆分)组合持仓; 交易所受理后返回, 拒绝时抛出柜台原因."""
+        combine = getattr(self._gw, "combine_positions", None)
+        if not callable(combine):
+            raise RuntimeError(
+                f"柜台网关 {type(self._gw).__name__} 没有实现 "
+                "combine_positions(code, legs, uncombine), 不能申请组合持仓"
+            )
+        combine(code, legs, uncombine)
+
     @property
     def state_cache(self) -> BrokerStateCache:
         """暴露底层状态缓存，便于测试/上层复用."""

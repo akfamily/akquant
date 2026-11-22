@@ -132,6 +132,15 @@ pub enum OptionMarginModel {
     ChinaSingleLeg,
     USBrokerSingleLeg,
     USBrokerSingleLegVolAdjusted,
+    /// 商品期货期权(大商所、郑商所、上期所、上期能源、广期所): 权利金 +
+    /// max(标的期货保证金 - 虚值额/2, 标的期货保证金/2), 标的期货保证金率取标的合约
+    ChinaCommodity,
+    /// 中金所股指期权: 权利金 + max(标的指数 × 调整系数 - 虚值额, 0.5 × 调整系数 ×
+    /// 下限基数), 下限基数认购取标的指数、认沽取行权价; 调整系数取期权合约的 margin_ratio
+    ChinaIndex,
+    /// 同 `ChinaCommodity` 的单腿保证金, 并参与交易所组合保证金配对(大商所、广期所、
+    /// 郑商所, 见 `margin::combination`)
+    ChinaCommodityCombination,
 }
 
 #[pymethods]

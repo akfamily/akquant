@@ -55,6 +55,10 @@ from .indicator_recording import IndicatorRecorder, declare_plotted_indicators
 from .log import get_logger as _get_logger
 from .params import ParamModel, ParamSpec, legacy_init_warning_message
 from .sizer import FixedSize, Sizer
+from .strategy_combination import combine_positions as _combine_positions_impl
+from .strategy_combination import (
+    uncombine_positions as _uncombine_positions_impl,
+)
 from .strategy_events import (
     flush_pending_order_events as _flush_pending_order_events_impl,
 )
@@ -245,6 +249,9 @@ InstrumentOptionMarginModelName = Literal[
     "CHINA_SINGLE_LEG",
     "US_BROKER_SINGLE_LEG",
     "US_BROKER_SINGLE_LEG_VOL_ADJUSTED",
+    "CHINA_COMMODITY",
+    "CHINA_INDEX",
+    "CHINA_COMMODITY_COMBINATION",
 ]
 InstrumentSettlementMode = Literal["CASH", "SETTLEMENT_PRICE", "FORCE_CLOSE"]
 
@@ -3347,6 +3354,49 @@ class Strategy:
             symbol: 标的代码 (如果不填, 取消所有标的订单)
         """
         _cancel_all_orders_impl(self, symbol)
+
+    def combine_positions(
+        self,
+        code: str,
+        legs: List[Tuple[str, float]],
+        quantity: float = 1,
+    ) -> None:
+        """
+        申请组合持仓(期权跨式、宽跨式、价差, 期货跨期等), 申请成功后按组合保证金收取.
+
+        实盘经 CTP 组合申请(``ReqCombActionInsert``)提交: 组合合约代码为
+        ``"<code> <第一腿>&<第二腿>"``, 买卖方向取第一腿的持仓方向, 手数为第一腿
+        手数; 等到交易所受理才返回, 被拒时抛出柜台原因, 超时没有回报时抛出
+        "结果不可知", 须查询组合持仓后再决定是否重发。回测与 paper 没有组合申请这一步,
+        组合保证金由 ``CHINA_COMMODITY_COMBINATION`` 模型自动配对计算, 本方法只做与
+        实盘相同的校验。
+
+        Args:
+            code: 交易所组合代码, 如大商所、广期所期权 ``STD``(跨式)、``STG``(宽跨式),
+                期货跨期 ``SP``; 以期货公司合约表为准
+            legs: ``[(第一腿, 每组手数), (第二腿, 每组手数)]``, 正为多头、负为空头,
+                顺序即组合合约代码中的腿序
+            quantity: 组数, 各腿手数 = 每组手数 × 组数
+
+        Raises:
+            ValueError: 组合代码、腿数、手数不合法, 或某条腿持仓不足
+            RuntimeError: 实盘柜台拒绝或回报超时
+        """
+        _combine_positions_impl(self, code, legs, quantity)
+
+    def uncombine_positions(
+        self,
+        code: str,
+        legs: List[Tuple[str, float]],
+        quantity: float = 1,
+    ) -> None:
+        """
+        申请拆分组合持仓, 参数与 ``combine_positions`` 相同.
+
+        实盘经 CTP 组合申请(拆分方向)提交, 拆分后恢复按单腿保证金收取; 回测与 paper
+        只做校验。
+        """
+        _uncombine_positions_impl(self, code, legs, quantity)
 
     def place_oco(
         self,

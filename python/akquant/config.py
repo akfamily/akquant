@@ -83,6 +83,9 @@ InstrumentOptionMarginModel = Literal[
     "CHINA_SINGLE_LEG",
     "US_BROKER_SINGLE_LEG",
     "US_BROKER_SINGLE_LEG_VOL_ADJUSTED",
+    "CHINA_COMMODITY",
+    "CHINA_INDEX",
+    "CHINA_COMMODITY_COMBINATION",
 ]
 
 
@@ -122,6 +125,23 @@ class InstrumentSettlementTypeEnum(str, Enum):
     FORCE_CLOSE = "force_close"
 
 
+def _check_combination_underlying(symbol: str, underlying: Optional[str]) -> None:
+    """CHINA_COMMODITY_COMBINATION 只用于大商所、广期所、郑商所的商品期权."""
+    from .akquant import _option_combination_exchange
+
+    exchange = _option_combination_exchange(underlying) if underlying else None
+    if exchange == "SHFE":
+        raise ValueError(
+            f"{symbol} 的标的 {underlying} 属于上期所/上期能源, 期权没有组合保证金"
+            "优惠, 请用 CHINA_COMMODITY"
+        )
+    if exchange is None:
+        raise ValueError(
+            f"{symbol} 的标的 {underlying!r} 不在组合保证金交易所对照表中"
+            "(大商所、广期所、郑商所的商品期权品种), 不能用 CHINA_COMMODITY_COMBINATION"
+        )
+
+
 class InstrumentOptionMarginModelEnum(str, Enum):
     """Instrument option margin model enum."""
 
@@ -129,6 +149,9 @@ class InstrumentOptionMarginModelEnum(str, Enum):
     CHINA_SINGLE_LEG = "CHINA_SINGLE_LEG"
     US_BROKER_SINGLE_LEG = "US_BROKER_SINGLE_LEG"
     US_BROKER_SINGLE_LEG_VOL_ADJUSTED = "US_BROKER_SINGLE_LEG_VOL_ADJUSTED"
+    CHINA_COMMODITY = "CHINA_COMMODITY"
+    CHINA_INDEX = "CHINA_INDEX"
+    CHINA_COMMODITY_COMBINATION = "CHINA_COMMODITY_COMBINATION"
 
 
 InstrumentAssetTypeInput = Union[
@@ -212,7 +235,12 @@ class InstrumentConfig:
     :param strike_price: Strike price.
     :param expiry_date: Expiry date. Supports int (YYYYMMDD), date/datetime.
     :param underlying_symbol: Underlying asset symbol.
-    :param option_margin_model: 期权保证金模型，默认 "CHINA_SINGLE_LEG"。
+    :param option_margin_model: 期权保证金模型。不填时标的登记为期货用
+        "CHINA_COMMODITY"(商品期货期权, 保证金率取标的期货合约), 否则用
+        "CHINA_SINGLE_LEG"(沪深 ETF 期权); 中金所股指期权用 "CHINA_INDEX"
+        (margin_ratio 填合约保证金调整系数)。"CHINA_COMMODITY_COMBINATION" 的单腿
+        保证金同 "CHINA_COMMODITY", 并参与大商所、广期所、郑商所的组合保证金配对
+        (也可由 ``ChinaOptionsConfig.combination_margin`` 统一开启)。
     :param implied_volatility: 当前隐含波动率，用于波动率调整模式。
     :param reference_volatility: 参考波动率，用于波动率调整模式。
     :param settlement_type: Settlement mode for expiry handling.
@@ -308,9 +336,23 @@ class InstrumentConfig:
                 "CHINA_SINGLE_LEG",
                 "US_BROKER_SINGLE_LEG",
                 "US_BROKER_SINGLE_LEG_VOL_ADJUSTED",
+                "CHINA_COMMODITY",
+                "CHINA_INDEX",
+                "CHINA_COMMODITY_COMBINATION",
             }:
                 raise ValueError(
                     f"Unsupported option_margin_model: {self.option_margin_model}"
+                )
+            if self.option_margin_model == "CHINA_COMMODITY_COMBINATION":
+                _check_combination_underlying(self.symbol, self.underlying_symbol)
+            if (
+                self.option_margin_model == "CHINA_INDEX"
+                and "margin_ratio" in self.defaulted_fields
+            ):
+                raise ValueError(
+                    f"{self.symbol} 使用 CHINA_INDEX 保证金模型, 须显式填写"
+                    " margin_ratio(中金所合约保证金调整系数, 如 0.12);"
+                    " 未填时缺省的 1.0 不是调整系数"
                 )
         if self.settlement_type is not None:
             settlement_raw = (
@@ -556,6 +598,9 @@ class ChinaOptionsConfig:
     # 卖出开仓(含备兑)免收经手费与结算费; 交易所恢复收费时设为 False
     sell_open_exempt: bool = True
     fee_by_symbol_prefix: Optional[List[ChinaOptionsFeeConfig]] = None
+    # 交易所期权组合保证金: 为 True 时, 未指定保证金模型、标的为大商所/广期所/郑商所
+    # 期货的期权缺省用 CHINA_COMMODITY_COMBINATION(按交易所组合策略配对后计保证金)
+    combination_margin: bool = False
 
     def __post_init__(self) -> None:
         """Validate china options config fields."""
