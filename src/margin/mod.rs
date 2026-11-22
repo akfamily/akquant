@@ -1,4 +1,5 @@
 pub mod calculator;
+pub mod combination;
 pub mod engine;
 
 pub use calculator::{

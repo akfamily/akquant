@@ -108,6 +108,11 @@ impl MarginEngine {
                 break;
             }
         }
-        used_margin
+        if used_margin == Decimal::MAX {
+            return used_margin;
+        }
+        // 交易所期权组合保证金优惠(只对 ChinaCommodityCombination 期权生效)
+        let discount = super::combination::combination_discount(positions, prices, instruments);
+        (used_margin - discount).max(Decimal::ZERO)
     }
 }

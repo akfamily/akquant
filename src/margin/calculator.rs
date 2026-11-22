@@ -82,7 +82,9 @@ pub fn exchange_option_inputs(
     let model = instrument.option_margin_model()?;
     if !matches!(
         model,
-        OptionMarginModel::ChinaCommodity | OptionMarginModel::ChinaIndex
+        OptionMarginModel::ChinaCommodity
+            | OptionMarginModel::ChinaIndex
+            | OptionMarginModel::ChinaCommodityCombination
     ) {
         return None;
     }
@@ -107,7 +109,7 @@ fn resolve_exchange_option_inputs(
     ) else {
         return Err("缺少期权类型、行权价或标的代码".to_string());
     };
-    let (label, margin_rate) = if model == OptionMarginModel::ChinaCommodity {
+    let (label, margin_rate) = if model != OptionMarginModel::ChinaIndex {
         let Some(underlying_instrument) = instruments.get(underlying.as_str()) else {
             return Err(format!("标的期货 {underlying} 未登记为合约, 取不到标的期货保证金率"));
         };
@@ -280,9 +282,12 @@ impl MarginCalculator for OptionMarginCalculator {
         ) {
             // 需要标的合约或调整系数, 只经 MarginEngine::position_margin 计算; 直接调用本计算器时
             // 按无法计算处理, 不退化为其他公式
-            (OptionMarginModel::ChinaCommodity | OptionMarginModel::ChinaIndex, _) => {
-                Decimal::MAX
-            }
+            (
+                OptionMarginModel::ChinaCommodity
+                | OptionMarginModel::ChinaIndex
+                | OptionMarginModel::ChinaCommodityCombination,
+                _,
+            ) => Decimal::MAX,
             (OptionMarginModel::Ratio, _) | (_, None) => {
                 legacy_option_margin(abs_qty, option_price, maybe_underlying, instrument)
             }

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - **期货交易所期权保证金模型 `CHINA_COMMODITY` / `CHINA_INDEX`**：`CHINA_COMMODITY` 为大商所、郑商所、上期所、上期能源、广期所的期权卖方保证金 = 权利金 + max(标的期货保证金 − ½ × 虚值额, ½ × 标的期货保证金)，标的期货保证金率取登记为 `FUTURES` 的标的期货合约的 `margin_ratio`；`CHINA_INDEX` 为中金所股指期权 = 权利金 + max(标的指数 × 调整系数 − 虚值额, 0.5 × 调整系数 × 下限基数)，下限基数认购取指数、认沽取行权价，调整系数取期权合约的 `margin_ratio`（须显式填写）。取不到输入时卖开被拒并写明原因，不退化为其他公式。商品期权公式已用 SimNow 五个交易所 30 张期权的 CTP 期权交易成本查询与实际卖开核对，股指期权公式已用期货公司实盘账户的交易成本查询核对 IO / MO / HO 共 36 组，结果一致。
+- **期货交易所期权组合保证金 `CHINA_COMMODITY_COMBINATION`**：大商所、广期所、郑商所的商品期权按交易所组合策略优先级配对计保证金（买入/卖出垂直价差、卖出期权期货组合、跨式、宽跨式、买入期权期货组合，各交易所策略与顺序不同），账户占用 = 单腿保证金之和 − 组合优惠，下单前的保证金校验同样按组合计算。`ChinaOptionsConfig(combination_margin=True)` 统一开启，缺省关闭；标的不属于这三家交易所时配置报错。组合优惠参数（买入垂直价差 0.2、大商所买入期权期货组合 0.8）取自期货公司 CTP 查询；组合公式取自交易所规则，未经实盘核对。
 
 ### Changed
 - **期权未指定保证金模型且标的登记为期货时，缺省改用 `CHINA_COMMODITY`**：此前一律按沪深 ETF 期权口径 `CHINA_SINGLE_LEG`（12% / 7%）计算，商品期权卖方保证金不正确。标的不是期货的期权缺省仍为 `CHINA_SINGLE_LEG`。

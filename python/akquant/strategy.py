@@ -247,6 +247,7 @@ InstrumentOptionMarginModelName = Literal[
     "US_BROKER_SINGLE_LEG_VOL_ADJUSTED",
     "CHINA_COMMODITY",
     "CHINA_INDEX",
+    "CHINA_COMMODITY_COMBINATION",
 ]
 InstrumentSettlementMode = Literal["CASH", "SETTLEMENT_PRICE", "FORCE_CLOSE"]
 

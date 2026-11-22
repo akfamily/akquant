@@ -39,6 +39,7 @@ from ..akquant import (
     SettlementType,
     Tick,
     TradingSession,
+    _option_combination_exchange,
 )
 from ..analyzer_plugin import AnalyzerManager, AnalyzerPlugin
 from ..config import (
@@ -2707,13 +2708,23 @@ def _option_type_to_upper_name(value: Any) -> Optional[InstrumentOptionTypeName]
 
 
 def _default_option_margin_model(
-    underlying: Optional[str], asset_type_of: Callable[[str], Any]
+    underlying: Optional[str],
+    asset_type_of: Callable[[str], Any],
+    combination: bool = False,
 ) -> InstrumentOptionMarginModelName:
     """期权未指定保证金模型时的缺省.
 
-    标的登记为期货按商品期权规则, 否则按沪深 ETF 期权口径。
+    标的登记为期货按商品期权规则, 否则按沪深 ETF 期权口径。``combination`` 为 True
+    (``ChinaOptionsConfig.combination_margin``)时, 大商所、广期所、郑商所的商品期权
+    参与交易所组合保证金配对。
     """
     if underlying and asset_type_of(underlying) == AssetType.Futures:
+        if combination and _option_combination_exchange(underlying) in {
+            "DCE",
+            "GFEX",
+            "CZCE",
+        }:
+            return "CHINA_COMMODITY_COMBINATION"
         return "CHINA_COMMODITY"
     return "CHINA_SINGLE_LEG"
 
@@ -2730,6 +2741,8 @@ def _option_margin_model_to_upper_name(
         return "US_BROKER_SINGLE_LEG"
     if "CHINA" in text and "SINGLE" in text:
         return "CHINA_SINGLE_LEG"
+    if "CHINA" in text and "COMMODITY" in text and "COMBINATION" in text:
+        return "CHINA_COMMODITY_COMBINATION"
     if "CHINA" in text and "COMMODITY" in text:
         return "CHINA_COMMODITY"
     if "CHINA" in text and "INDEX" in text:
@@ -5460,6 +5473,8 @@ def run_backtest(
                 return OptionMarginModel.ChinaCommodity
             if s == "CHINA_INDEX":
                 return OptionMarginModel.ChinaIndex
+            if s == "CHINA_COMMODITY_COMBINATION":
+                return OptionMarginModel.ChinaCommodityCombination
         raise ValueError(f"Unsupported option_margin_model: {val}")
 
     def _parse_settlement_type(
@@ -5600,7 +5615,12 @@ def run_backtest(
                 if i_conf.option_margin_model is not None
                 else (
                     _default_option_margin_model(
-                        i_conf.underlying_symbol, session_asset_type_of
+                        i_conf.underlying_symbol,
+                        session_asset_type_of,
+                        bool(
+                            china_options_config
+                            and china_options_config.combination_margin
+                        ),
                     )
                     if p_asset_type == AssetType.Option
                     else None
@@ -7035,6 +7055,8 @@ def run_from_checkpoint(
                 return OptionMarginModel.ChinaCommodity
             if normalized == "CHINA_INDEX":
                 return OptionMarginModel.ChinaIndex
+            if normalized == "CHINA_COMMODITY_COMBINATION":
+                return OptionMarginModel.ChinaCommodityCombination
         raise ValueError(f"Unsupported option_margin_model: {val}")
 
     def _parse_settlement_type(
@@ -7169,7 +7191,13 @@ def run_from_checkpoint(
                 if conf.option_margin_model is not None
                 else (
                     _default_option_margin_model(
-                        conf.underlying_symbol, session_asset_type_of
+                        conf.underlying_symbol,
+                        session_asset_type_of,
+                        bool(
+                            config is not None
+                            and config.china_options is not None
+                            and config.china_options.combination_margin
+                        ),
                     )
                     if p_asset_type == AssetType.Option
                     else None
