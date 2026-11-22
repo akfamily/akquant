@@ -72,7 +72,7 @@ from .indicator_stream import (
     to_indicator_message,
     to_indicator_messages,
 )
-from .live import run_live
+from .live import AlertConfig, run_live
 from .normalize import (
     normalize,
     write_canonical_parquet,
@@ -196,6 +196,7 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "run_backtest",
         "run_from_checkpoint",
         "run_live",
+        "AlertConfig",
         "merge_results",
         "make_fill_policy",
         "FillMode",
@@ -306,6 +307,7 @@ else:
         "run_backtest",
         "run_from_checkpoint",
         "run_live",
+        "AlertConfig",
         "merge_results",
         "make_fill_policy",
         "FillMode",
