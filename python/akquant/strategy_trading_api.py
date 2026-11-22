@@ -10,6 +10,7 @@ from .execution.base import PositionDetail, PositionLeg
 from .gateway.broker_models import normalize_asset_type
 from .gateway.order_receipt import OrderLeg, OrderReceipt
 from .log import get_logger
+from .strategy_combo import cancel_combo
 
 logger = get_logger("trading")
 
@@ -197,6 +198,9 @@ def cancel_group(strategy: Any, group_id: Any) -> None:
             "cancel_group 接受 group_id(str) 或下单回执(OrderReceipt), "
             f"收到 {type(group_id).__name__}"
         )
+    # 组合单的组号由策略登记(各腿是独立委托), 回测与实盘都按组合单撤
+    if cancel_combo(strategy, gid):
+        return
     cancel_group_method = getattr(execution, "cancel_group", None)
     if callable(cancel_group_method):
         cancel_group_method(gid)

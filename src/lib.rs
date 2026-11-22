@@ -53,6 +53,10 @@ fn akquant(m: &Bound<'_, PyModule>) -> PyResult<()> {
     let _ = pyo3_log::init();
     m.add_class::<Bar>()?;
     m.add_function(wrap_pyfunction!(model::_restore_order, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        margin::combination::_option_combination_exchange,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(model::_restore_trade, m)?)?;
     m.add_function(wrap_pyfunction!(model::_restore_bar, m)?)?;
     m.add_function(wrap_pyfunction!(model::_restore_tick, m)?)?;

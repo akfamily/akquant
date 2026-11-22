@@ -534,6 +534,9 @@ class BrokerEventBridge:
         # 全部回调, 按 owner_strategy_id 路由到所属槽位(账户回调广播);
         # `_safe_strategy_callback` 取不到方法时跳过只为兼容单策略下的精简替身。
         if event_name == "order":
+            # 组合单先更新(腿失败时撤同组委托), 无组合单时 no-op
+            if hasattr(strategy, "_process_combo_order"):
+                self._safe_strategy_callback(strategy, "_process_combo_order", payload)
             self._safe_strategy_callback(strategy, "on_order", payload)
         elif event_name == "trade":
             self._safe_strategy_callback(strategy, "on_trade", payload)
