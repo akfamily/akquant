@@ -235,6 +235,7 @@ pub fn calculate_account_metrics(
                 price,
                 instrument,
                 prices,
+                instruments,
                 stock_ratio_override,
             );
             metrics.notional_value += notional;

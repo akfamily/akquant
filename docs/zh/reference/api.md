@@ -580,7 +580,23 @@ class InstrumentConfig:
 常用枚举（均可在 `akquant` 顶层直接访问）：
 
 - `InstrumentAssetTypeEnum`: `STOCK` / `FUTURES` / `FUND` / `OPTION`
-- `InstrumentOptionMarginModelEnum`: `RATIO` / `CHINA_SINGLE_LEG` / `US_BROKER_SINGLE_LEG` / `US_BROKER_SINGLE_LEG_VOL_ADJUSTED`
+- `InstrumentOptionMarginModelEnum`: `RATIO` / `CHINA_SINGLE_LEG` / `US_BROKER_SINGLE_LEG` / `US_BROKER_SINGLE_LEG_VOL_ADJUSTED` / `CHINA_COMMODITY` / `CHINA_INDEX` / `CHINA_COMMODITY_COMBINATION`
+    *   期权未指定 `option_margin_model` 时：标的登记为期货用 `CHINA_COMMODITY`，否则用 `CHINA_SINGLE_LEG`（沪深 ETF 期权口径）。
+    *   `CHINA_COMMODITY`：商品期货期权（大商所、郑商所、上期所、上期能源、广期所），卖方保证金 = 权利金 + max(标的期货保证金 − ½ × 虚值额, ½ × 标的期货保证金)，每单位标的计算后乘交易单位（期权乘数）。标的期货须登记为 `FUTURES`，其 `margin_ratio` 即标的期货保证金率。
+    *   `CHINA_INDEX`：中金所股指期权（IO / MO / HO），卖方保证金 = 权利金 + max(标的指数 × 调整系数 − 虚值额, 0.5 × 调整系数 × 下限基数)，下限基数认购取标的指数、认沽取行权价。调整系数填在期权合约的 `margin_ratio`（须显式填写，如 0.12），标的指数价格取 `underlying_symbol` 的行情。
+    *   两种模型取不到输入（标的未登记、不是期货、保证金率或调整系数不为正、标的没有价格）时，卖开被拒并写明原因，不退化为其他公式。回测按期权与标的的最新价计算，与交易所日终按当日结算价（股指为指数收盘价）计收的口径一致；CTP 盘中按 max(期权最新价, 期权昨结算价) 计权利金、按标的昨结算价（昨收盘）计标的部分（权利金取价由期货公司参数决定），盘中数值会与回测不同。商品期权公式已用 SimNow 五个交易所 30 张期权核对（交易成本查询与实际卖开），股指期权公式已用期货公司实盘账户的交易成本查询核对 IO / MO / HO 共 36 组。
+    *   `CHINA_COMMODITY_COMBINATION`：单腿保证金同 `CHINA_COMMODITY`，并参与交易所期权组合保证金配对（只能用于大商所、广期所、郑商所的商品期权；标的属于上期所/上期能源或不在内置品种对照表中时配置报错）。也可设 `ChinaOptionsConfig(combination_margin=True)`，让未指定模型、标的为这三家交易所期货的期权缺省使用它。账户占用 = 各合约单腿保证金之和 − 组合优惠，组合优惠按交易所规定的组合策略优先级逐项配对得出（与交易所结算时组合的做法相同，不求全局最优），同一策略内按每组节省的保证金从大到小配对（交易所未公开同一策略内的配对顺序，这里是推断）：
+
+        | 策略 | 腿（标的与到期相同） | 组合保证金 |
+        |---|---|---|
+        | 买入垂直价差 | 买低价认购 + 卖高价认购；买高价认沽 + 卖低价认沽 | 0.2 × 卖期权保证金 |
+        | 卖出期权期货组合 | 卖认购 + 买期货；卖认沽 + 卖期货 | 期货保证金 + 期权权利金 |
+        | 期权跨式 | 卖同执行价的认购、认沽 | max(两腿保证金) + 另一腿权利金 |
+        | 期权宽跨式 | 卖低价认沽 + 卖高价认购 | 同跨式 |
+        | 卖出垂直价差 | 卖低价认购 + 买高价认购；卖高价认沽 + 买低价认沽 | min(执行价差 × 交易单位, 卖期权保证金) |
+        | 买入期权期货组合 | 买认购 + 卖期货；买认沽 + 买期货 | 0.8 × 期货保证金 |
+
+        期权保证金含权利金，权利金 = 期权价 × 交易单位；跨式、宽跨式两腿保证金相等时为 max(两腿保证金) + max(两腿权利金)。优先级：大商所（2026-05-21 结算时起）买入垂直价差、卖出期权期货组合、跨式、宽跨式、卖出垂直价差、买入期权期货组合；广期所卖出期权期货组合、跨式、宽跨式、买入垂直价差、卖出垂直价差（没有买入期权期货组合，顺序按广期所参数表与大商所规则推断）；郑商所卖出期权期货组合、跨式、宽跨式。0.2、0.8 为期货公司 CTP 组合优惠参数查询值（2026-11）。持仓按合约净额记账，期权对锁与期货对锁、跨期、跨品种不在此计算；期货跨期组合在交易所优先于期权组合，持有期货跨期头寸时期权期货组合的配对可能与交易所不同。回测按最新价连续计算，相当于持仓一形成即按结算时规则组合；实盘盘中需申请组合（大商所、广期所）或用套利指令（郑商所跨式、宽跨式），未组合的持仓到结算时才享受优惠。**组合公式取自交易所规则与期货公司汇总，未经实盘核对**（SimNow 不计组合保证金）。
 - `InstrumentOptionTypeEnum`: `CALL` / `PUT`
 - `InstrumentSettlementTypeEnum`: `CASH` / `SETTLEMENT_PRICE` / `FORCE_CLOSE`
 
@@ -607,7 +623,7 @@ class InstrumentSnapshot:
     margin_ratio: float
     tick_size: float
     lot_size: float
-    option_margin_model: Optional[Literal["RATIO", "CHINA_SINGLE_LEG", "US_BROKER_SINGLE_LEG", "US_BROKER_SINGLE_LEG_VOL_ADJUSTED"]] = None
+    option_margin_model: Optional[Literal["RATIO", "CHINA_SINGLE_LEG", "US_BROKER_SINGLE_LEG", "US_BROKER_SINGLE_LEG_VOL_ADJUSTED", "CHINA_COMMODITY", "CHINA_INDEX"]] = None
     option_type: Optional[Literal["CALL", "PUT"]] = None
     strike_price: Optional[float] = None
     expiry_date: Optional[int] = None  # YYYYMMDD
@@ -720,6 +736,7 @@ config = BacktestConfig(
 | `exercise_fee_per_contract` | `0.6` | 行权结算费，到期时只向实值被行权的多头收取 |
 | `sell_open_exempt` | `True` | 卖出开仓（含备兑开仓）免收经手费与结算费；交易所恢复收费时设为 `False` |
 | `fee_by_symbol_prefix` | `None` | `ChinaOptionsFeeConfig` 列表，按品种前缀覆盖上面五项（字段同名同缺省，`commission_per_contract` 必填） |
+| `combination_margin` | `False` | 为 `True` 时，未指定保证金模型、标的为大商所/广期所/郑商所期货的期权缺省用 `CHINA_COMMODITY_COMBINATION`，按交易所组合策略计保证金（见上文保证金模型） |
 | `use_china_market` | `True` | 是否使用 ChinaMarket；只有显式设为 `False` 才走 SimpleMarket（此时期权按成交额百分比计费，行权结算费为 0） |
 
 以上缺省值只适用于沪深 ETF 期权；商品期货期权 / 股指期权（如 RB、MO、IO 等）费率与减免规则不同，请用 `fee_by_symbol_prefix` 显式设置费率与 `sell_open_exempt`。

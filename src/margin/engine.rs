@@ -1,5 +1,6 @@
 use crate::margin::{
     FuturesMarginCalculator, LinearMarginCalculator, MarginCalculator, OptionMarginCalculator,
+    exchange_option_inputs, exchange_option_margin,
 };
 use crate::model::{AssetType, Instrument};
 use rust_decimal::Decimal;
@@ -41,10 +42,19 @@ impl MarginEngine {
         price: Decimal,
         instrument: &Instrument,
         prices: &HashMap<String, Decimal>,
+        instruments: &HashMap<String, Instrument>,
         stock_margin_ratio_override: Option<Decimal>,
     ) -> Decimal {
         match instrument.asset_type {
             AssetType::Option => {
+                // 期货交易所模型: 输入不全时按无法计算处理(下单前风控已报出原因并拒单)
+                if let Some(inputs) = exchange_option_inputs(instrument, instruments, prices) {
+                    return match inputs {
+                        Ok(inputs) => exchange_option_margin(quantity, price, instrument, &inputs),
+                        Err(_) if quantity >= Decimal::ZERO => Decimal::ZERO,
+                        Err(_) => Decimal::MAX,
+                    };
+                }
                 let underlying_price = instrument
                     .underlying_symbol()
                     .and_then(|symbol| prices.get(symbol.as_str()).copied());
@@ -90,6 +100,7 @@ impl MarginEngine {
                 *price,
                 instrument,
                 prices,
+                instruments,
                 stock_margin_ratio_override,
             );
             used_margin = used_margin.checked_add(margin).unwrap_or(Decimal::MAX);
@@ -97,6 +108,11 @@ impl MarginEngine {
                 break;
             }
         }
-        used_margin
+        if used_margin == Decimal::MAX {
+            return used_margin;
+        }
+        // 交易所期权组合保证金优惠(只对 ChinaCommodityCombination 期权生效)
+        let discount = super::combination::combination_discount(positions, prices, instruments);
+        (used_margin - discount).max(Decimal::ZERO)
     }
 }
