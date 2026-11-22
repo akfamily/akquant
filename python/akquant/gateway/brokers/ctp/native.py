@@ -472,6 +472,10 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
             )
         return price
 
+    def closable_quantity(self, symbol: str, side: str) -> float:
+        """按本地持仓账, ``side`` 方向委托可平的数量(扣除平仓挂单冻结)."""
+        return self.offset_book.closable(symbol, str(side).strip().lower())
+
     def split_close(
         self, symbol: str, side: str, quantity: float
     ) -> list[tuple[str, float]]:

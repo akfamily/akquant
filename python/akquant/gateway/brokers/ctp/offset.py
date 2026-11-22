@@ -157,6 +157,27 @@ class OffsetBook:
         overflow = max(today - closed.today, 0.0)
         return today - overflow, yesterday + overflow
 
+    def _available(self, symbol: str, side: str) -> tuple[_Side, bool, float, float]:
+        """(持仓, 是否区分今昨仓, 冻结今仓, 冻结昨仓); 未同步时抛 ``ValueError``."""
+        if not self._synced:
+            raise ValueError(
+                f"{symbol} 平仓无法拆分今昨仓: 本地持仓账尚未从柜台持仓查询同步"
+            )
+        holding = self._holdings.get(symbol)
+        if holding is None:
+            return _Side(), False, 0.0, 0.0
+        cfe = holding.exchange in CLOSE_TODAY_EXCHANGES
+        frozen_today, frozen_yd = self._frozen(symbol, side, cfe)
+        return _closed_side(holding, side), cfe, frozen_today, frozen_yd
+
+    def closable(self, symbol: str, side: str) -> float:
+        """``side`` 方向可平的数量(今仓 + 昨仓, 扣除平仓挂单冻结)."""
+        with self._lock:
+            closed, _, frozen_today, frozen_yd = self._available(symbol, side)
+            return max(closed.today - frozen_today, 0.0) + max(
+                closed.yesterday - frozen_yd, 0.0
+            )
+
     def split_close(
         self, symbol: str, side: str, quantity: float
     ) -> list[tuple[str, float]]:
@@ -166,17 +187,7 @@ class OffsetBook:
         尚未同步时抛 ``ValueError``。
         """
         with self._lock:
-            if not self._synced:
-                raise ValueError(
-                    f"{symbol} 平仓无法拆分今昨仓: 本地持仓账尚未从柜台持仓查询同步"
-                )
-            holding = self._holdings.get(symbol)
-            if holding is None:
-                closed, cfe, frozen_today, frozen_yd = _Side(), False, 0.0, 0.0
-            else:
-                closed = _closed_side(holding, side)
-                cfe = holding.exchange in CLOSE_TODAY_EXCHANGES
-                frozen_today, frozen_yd = self._frozen(symbol, side, cfe)
+            closed, cfe, frozen_today, frozen_yd = self._available(symbol, side)
             today = max(closed.today - frozen_today, 0.0)
             yesterday = max(closed.yesterday - frozen_yd, 0.0)
             if quantity > today + yesterday:

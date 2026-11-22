@@ -130,14 +130,7 @@ def _split_close_legs(
     supported_effects: set[str],
     payload_field: Callable[[Any, str], Any],
 ) -> list[tuple[str, float]]:
-    """把一段平仓量拆成 close_today/close_yesterday；能力不足则整段 close.
-
-    柜台网关提供 ``split_close(symbol, side, quantity)`` 时(CTP: 本地持仓账)由它
-    拆分, 不在下单路径上查询持仓; 可平数量不足时它抛 ``ValueError``。
-    """
-    split_close = getattr(trader_gateway, "split_close", None)
-    if callable(split_close):
-        return list(split_close(symbol, side, quantity))
+    """把一段平仓量拆成 close_today/close_yesterday；能力不足则整段 close."""
     if not capability.position_details:
         return [("close", quantity)]
     if (
@@ -178,6 +171,37 @@ def _split_close_legs(
     return legs
 
 
+def _resolve_with_offset_book(
+    trader_gateway: Any,
+    symbol: str,
+    side: str,
+    quantity: float,
+    position_effect: str,
+    reduce_only: bool,
+) -> list[tuple[str, float]] | None:
+    """柜台网关有本地持仓账(CTP 的 ``closable_quantity`` / ``split_close``)时定开平.
+
+    ``close``: 按持仓账拆平今/平昨。``auto``: 先平到可平数量, 余量开仓(只减仓时
+    不开仓, 没有可平持仓则拒绝)。不在下单路径上查询持仓; 可平不足或持仓账未同步时
+    抛 ``ValueError``。网关没有持仓账时返回 None, 由调用方走原有逻辑。
+    """
+    split_close = getattr(trader_gateway, "split_close", None)
+    if not callable(split_close):
+        return None
+    if position_effect == "close":
+        return list(split_close(symbol, side, quantity))
+    closable_quantity = getattr(trader_gateway, "closable_quantity", None)
+    if not callable(closable_quantity):
+        return None
+    close_qty = min(quantity, float(closable_quantity(symbol, side)))
+    legs = list(split_close(symbol, side, close_qty)) if close_qty > 0 else []
+    if quantity > close_qty and not reduce_only:
+        legs.append(("open", quantity - close_qty))
+    if not legs:
+        raise ValueError(f"{symbol} 只减仓委托没有可平持仓")
+    return legs
+
+
 def resolve_live_order_legs(
     trader_gateway: Any,
     capability: BrokerCapability,
@@ -195,6 +219,12 @@ def resolve_live_order_legs(
     declares it handles reversal itself via `"auto_reverse" in capability.features`.
     """
     normalized_effect = str(position_effect).strip().lower()
+    if quantity > 0 and normalized_effect in {"auto", "close"}:
+        legs = _resolve_with_offset_book(
+            trader_gateway, symbol, side, quantity, normalized_effect, reduce_only
+        )
+        if legs is not None:
+            return legs
     if quantity <= 0 or reduce_only:
         return [(normalized_effect, quantity)]
 

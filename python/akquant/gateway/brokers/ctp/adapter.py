@@ -216,6 +216,10 @@ class CTPTraderAdapter:
         self._emit_execution_report(report)
         return broker_order_id
 
+    def closable_quantity(self, symbol: str, side: str) -> float:
+        """按本地持仓账的可平数量(见 ``CTPTraderGateway.closable_quantity``)."""
+        return self.gateway.closable_quantity(symbol, side)
+
     def split_close(
         self, symbol: str, side: str, quantity: float
     ) -> list[tuple[str, float]]:

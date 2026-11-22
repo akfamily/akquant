@@ -380,3 +380,54 @@ def test_submitter_rejects_locally_when_split_fails() -> None:
     assert receipt.failure == "rejected"
     assert placed == []
     assert rejects == ["rb2701 平多头 5 手, 超过可平 4 手"]
+
+
+def test_auto_and_reduce_only_use_offset_book() -> None:
+    """开平自动判断: 先平到可平数量再开仓, 只减仓不开仓; 不在下单路径上查询持仓."""
+    from akquant.gateway.order_submitter import resolve_live_order_legs
+
+    book = OffsetBook()
+    book.apply_snapshot([_row("rb2701", "Buy", 1, 1, "SHFE")])
+
+    class _Gw:
+        def query_positions(self) -> Any:
+            raise AssertionError("下单路径不应查询持仓")
+
+        def closable_quantity(self, symbol: str, side: str) -> float:
+            return book.closable(symbol, side.lower())
+
+        def split_close(self, symbol: str, side: str, quantity: float) -> Any:
+            return book.split_close(symbol, side.lower(), quantity)
+
+    cap = BrokerCapability(
+        broker_name="ctp",
+        position_effect=True,
+        position_details=True,
+        supported_position_effects=("auto", "open", "close"),
+    )
+
+    def legs(side: str, qty: float, effect: str, reduce_only: bool = False) -> Any:
+        return resolve_live_order_legs(
+            _Gw(), cap, "rb2701", side, qty, effect, reduce_only, getattr
+        )
+
+    # 卖出不超过可平: 只平不开(此前原样报 auto, CTP 映射成开仓)
+    assert legs("Sell", 1, "auto") == [("close_today", 1)]
+    assert legs("Sell", 3, "auto") == [
+        ("close_today", 1),
+        ("close_yesterday", 1),
+        ("open", 1),
+    ]
+    assert legs("Buy", 2, "auto") == [("open", 2)]
+    # 只减仓: close 照样拆今昨, auto 不开仓, 没有可平持仓时拒绝
+    assert legs("Sell", 2, "close", reduce_only=True) == [
+        ("close_today", 1),
+        ("close_yesterday", 1),
+    ]
+    assert legs("Sell", 3, "auto", reduce_only=True) == [
+        ("close_today", 1),
+        ("close_yesterday", 1),
+    ]
+    with pytest.raises(ValueError) as exc:
+        legs("Buy", 1, "auto", reduce_only=True)
+    assert str(exc.value) == "rb2701 只减仓委托没有可平持仓"
