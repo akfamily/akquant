@@ -1096,6 +1096,42 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   这些接口在 `on_start` 即可使用（启动阶段已注入快照）。
 *   推荐优先使用这些接口读取静态属性，而不是依赖 `bar.extra`。
 
+**期权（链、选合约、Greeks、Delta 对冲）:**
+
+期权方法基于已登记的期权合约（`InstrumentConfig` 的 `option_type`、`strike_price`、`expiry_date`、`underlying_symbol`）和各合约的最新价。`underlying` 指期权登记的 `underlying_symbol`：商品期权是标的期货（如 `m2701`），股指期权可登记为指数代码。
+
+*   `option_rate: float`: 类属性，默认 `0.0`；期权定价用的无风险利率（连续复利、年化），各方法未显式传 `rate` 时使用。
+*   `option_price_source: Literal["last", "mid"]`: 类属性，默认 `"last"`；期权链的取价方式。`"last"` 取最新价（K 线回测只有这一种价格）；`"mid"` 按 Cboe VIX 的取价规则取买一、卖一的中间价，仅当两侧都有报价、都为正且买价不高于卖价，否则该合约不计算隐含波动率，`get_greeks` / `portfolio_greeks` 报出具体原因（如“只有卖一价 X, 没有买一价”）。报价来自 tick 的 `bid_price` / `ask_price`。标的期货始终取最新价。
+*   `option_refresh_interval: float`: 类属性，默认 `1.0`（秒，按行情时间）；期权链整批计算的刷新间隔。间隔内第一次调用期权方法时，一次批量算出全部已登记标的的期权链，间隔内的后续调用（`option_chain`、`option_chains`、`select_option`、`get_greeks`、`portfolio_greeks`、`hedge_delta`）复用该结果；缓存按取价方式、利率、模型区分。CTP 对每个合约每秒最多推送 2 笔快照，间隔设到 0.5 秒以下没有意义；对冲、持仓监控用 1 到 5 秒即可，报价、做市类策略可设 0.5 秒。设为 0 则每次调用都按当前报价只算所需标的的链。实测 SimNow 合约表（6 核机器）：10 条链约 2,600 个合约一批约 8 毫秒，50 条链约 7,300 个合约约 22 毫秒，全市场 224 条链约 16,000 个合约约 50 毫秒。K 线回测中每个 K 线时刻都会重新计算；但同一时刻的 K 线逐个标的派发给 `on_bar` 时，本时刻第一次调用之后才到达的标的价格不进入本时刻的结果，需要本时刻全部价格时在 `on_bars` 中调用，或设为 0。
+*   `get_expiries(underlying) -> List[int]`: 未到期的到期日（YYYYMMDD），由近到远。同一标的可能有多个到期（如大商所月度期权）。
+*   `option_chain(underlying, expiry=None, rate=None, model="black76") -> pd.DataFrame`: 期权链，列为 `symbol`、`option_type`、`strike`、`expiry_date`、`t`、`bid`、`ask`、`price`、`forward`、`iv`、`delta`、`gamma`、`vega`、`theta`。
+    *   远期价格：标的登记为期货时取期货最新价；否则用同一到期的认购、认沽价格按平价关系反推（股指期权由此吸收基差），缺报价时退回标的最新价按利率前推。
+    *   到期时刻取到期日 15:00，期限按自然日 365 天计。
+    *   `model` 决定隐含波动率的求解模型：`"black76"`（默认）或 `"baw"`（美式近似）。Greeks 一律按 Black-76 以该隐含波动率计算。没有最新价的合约 `iv` 与 Greeks 为 NaN。
+*   `option_chains(underlyings=None, rate=None, model="black76") -> pd.DataFrame`: 多个标的的期权链合并为一张表，首列为 `underlying`，其余列同 `option_chain`，按标的、到期日、行权价、类型排序；`underlyings` 不填返回全部已登记标的。同时盯多条链时使用。
+*   `select_option(underlying, option_type, expiry=None, strike_offset=0, delta=None, rate=None, model="black76") -> Optional[str]`: 选出一个合约代码。给 `delta` 时选 |Delta| 最接近 `abs(delta)` 的合约；否则以最接近远期价的行权价为平值，按 `strike_offset` 偏移档位（正数向上）。`expiry` 不填取最近到期；选不到返回 `None`。
+*   `get_greeks(symbol, rate=None, model="black76") -> Dict[str, float]`: 单个合约每单位标的的 `price`、`forward`、`t`、`iv`、`delta`、`gamma`、`vega`、`theta`。算不出时抛 `ValueError`，信息写明具体原因：没有行情时间、已到期、没有最新价、标的没有最新价、最新价不高于内在价值、最新价超出波动率 500% 时的理论价等。
+*   `portfolio_greeks(underlying, include=(), rate=None, model="black76") -> Dict[str, float]`: 该标的全部期权持仓、标的本身持仓、以及 `include` 中线性品种（Delta 记为 1）的合计 `delta`、`gamma`、`vega`、`theta`、`cash_delta`，已乘持仓数量与合约乘数。`cash_delta` = Σ 数量×乘数×Delta×远期价，用于跨到期、跨对冲品种相加。有持仓算不出 Greeks（含线性持仓没有最新价）时抛 `ValueError`，逐个列出合约与具体原因，不按 0 计。
+*   `hedge_delta(underlying, hedge_symbol=None, band=0.0, rate=None, model="black76", **kwargs) -> Optional[str]`: 用线性品种把 `cash_delta` 调回 0，数量按对冲品种的 `lot_size` 取整，调整量不超过 `band` 时不下单；`hedge_symbol` 不填即用标的本身（商品期权的标的期货），股指期权传对应的股指期货（如 `IF2612`）。`kwargs` 透传给 `order_target`。
+*   `vol_surface(underlying, model="svi", beta=1.0, rate=None, pricing_model="black76") -> VolSurface`: 由期权链拟合波动率曲面，每个到期日一条微笑（见下文 `akquant.option.fit_surface`）。`underlying` 可传一个标的或多个标的：商品期权各月份标的不同，传 `["m2605", "m2609"]` 把各月的期权链合成一个曲面；股指期权传指数代码一个即可。`pricing_model` 是期权链求隐含波动率的模型。期权链与 `option_chain` 同一批计算，同一批期权链只拟合一次，节奏由 `option_refresh_interval` 控制。成交稀少的期权最新价可能过时，拟合宜用 `option_price_source = "mid"`。
+
+Greeks 单位为原始偏导数：`vega` 对应波动率变化 1.0（按 1% 计除以 100），`theta` 为每年（按天计除以 365）。
+
+**`akquant.option` 函数:** 均支持标量或可广播数组，以远期价格为输入。Black-76 的定价、Greeks 与隐含波动率在 Rust 中批量计算，数组较长时多线程（实测 6 核机器上 5 万个合约求隐含波动率约 10 毫秒）；BAW 逐个合约在 Python 中计算，慢得多。
+
+*   `black76_price(forward, strike, t, rate, sigma, option_type)` / `black76_greeks(...)`: Black-76 欧式定价与 Greeks（`delta`、`gamma`、`vega`、`theta`、`rho`）。
+*   `baw_price(forward, strike, t, rate, sigma, option_type)`: 美式期货期权的 Barone-Adesi-Whaley 近似。
+*   `implied_vol(price, forward, strike, t, rate, option_type, model="black76")`: 隐含波动率，波动率步长小于 1e-10 即收敛；已到期、时间价值不超过价格容差 1e-8、价格不低于波动率 500% 时的理论价、迭代不收敛时为 NaN。
+*   `implied_forward(strikes, call_prices, put_prices, t, rate) -> float`: 按认购-认沽平价反推远期。
+*   `year_fraction(start, end) -> float`: 按自然日 365 天计的年化期限。
+*   `fit_smile(strikes, ivs, forward, t, model="svi", weights=None, beta=1.0, expiry_date=None) -> VolSmile`: 拟合一个到期日的波动率微笑。`model="svi"` 用 SVI 原始参数 `w(k) = a + b(ρ(k−m) + sqrt((k−m)² + σ²))`（`w` 为总方差 σ²t，`k = ln(K/F)`），按 Zeliade 准显式法标定：固定 (m, σ) 后对其余参数做带约束的线性最小二乘、精确求解，外层在 (m, σ) 上用 Nelder-Mead 搜索；约束保证 `a ≥ 0` 与 Lee 矩条件 `b(1+|ρ|) ≤ 4`。`model="sabr"` 用 Hagan（2002）对数正态近似，β 固定（默认 1），拟合 α、ρ、ν。`weights` 为各点权重，不填等权；SVI 在总方差上、SABR 在波动率上做加权最小二乘。至少需要 SVI 5 个、SABR 3 个报价；输入不合法时抛 `ValueError` 并写明原因。
+*   `fit_surface(chain, model="svi", beta=1.0) -> VolSurface`: 由期权链（`option_chain` / `option_chains` 的输出，需含 `expiry_date`、`t`、`forward`、`strike`、`option_type`、`iv` 列）按到期日拟合，每组用自己的远期价格。每个行权价只取虚值一侧（低于远期用认沽，否则用认购），剔除 `iv` 为 NaN 的合约；有效报价不足、远期或期限缺失的到期日记入 `failures`，同一到期日出现不同远期价格（多个标的同一到期日）时报错。多个到期日在 Rust 中并行拟合，本机（6 核）实测原油期权 3 个到期日共 139 个报价，SVI 约 9 毫秒、SABR 约 5 毫秒。
+*   `VolSmile`: `model`、`forward`、`t`、`params`（SVI 为 `a`、`b`、`rho`、`m`、`sigma`，总方差口径；SABR 为 `alpha`、`beta`、`rho`、`nu`）、`rmse`（拟合点上隐含波动率的加权均方根误差）、`n_points`、`converged`、`k_range`（参与拟合的对数在值程度范围，范围外是外推）、`butterfly_min_g`（`k_range` 内 Gatheral 密度函数 g(k) 的最小值）、`butterfly_arbitrage`（g 小于 0，即范围内存在蝶式套利）、`expiry_date`；`vol(strike)` / `total_variance(strike)` 取行权价处的波动率、总方差。行权价范围窄或报价噪声大时，SVI 的 ρ、m、σ 在相邻时刻之间可能大幅跳动而拟合曲线基本不变，需要稳定参数时用 SABR。
+*   `VolSurface`: `smiles`（到期日 → `VolSmile`）、`expiries`（按期限升序）、`failures`（到期日 → 未能拟合的原因）、`calendar_arbitrage`（相邻到期日在共同拟合范围内远月总方差低于近月的 (近, 远) 对）；`smile(expiry_date)` 取单个到期日，未能拟合时报出原因；`vol(strike, t)` 取任意期限 t（年）的波动率：在相邻两个到期日之间，远期按期限线性插值，在 `k = ln(K/F(t))` 处对两条微笑的总方差按期限线性插值，t 超出已拟合的期限范围时报错、不外推。只检查、不修正套利。
+*   `parse_option_symbol(symbol) -> Optional[OptionSymbol]`: 解析期货交易所期权代码（`m2701-C-3100`、`m2703-MS-C-3300`、`SR701C5700`、`cu2612P94000`、`IO2612-C-4000`），得到 `underlying`、`option_type`、`strike`；代码不含到期日，ETF 期权数字代码返回 `None`。
+
+当前限制：保证金、行权与到期结算仍按引擎现有规则（单腿保证金模型、到期按内在价值现金结算），见[第 8 章](../textbook/08_options.md)。
+
 **策略绘图与运行时统计:**
 
 *   `draw`: 绑定到当前策略的绘图入口（`DrawingApi`），提供 `line` / `box` / `label` / `polyline` / `fib` / `table` / `delete` / `clear`。第一个参数是非空 `id`，同一 `(owner, symbol, id)` 再次调用整体覆盖，内容不变不发事件；不同 kind 不能共用 id（`ValueError`）；颜色只接受 `#RRGGBB` / `#RRGGBBAA`。`aq.Indicator` 继承同一入口。参数与上限见[可视化指南](../guide/visualization.md#策略绘图与统计表)。
@@ -1194,6 +1230,7 @@ Tick 数据对象。
     *   与之相对，网关内部用于 `freq` 聚合（tick 合成 bar）的 `BarAggregator` 吃的是**原始累计量**（构造时声明 `volume_is_cumulative=True`，由聚合器自己差分求和）——这是刻意的分工，不要把它当成 bug "修" 成单笔量，否则聚合量会被腰斩。
     *   **已知代价**：进程盘中启动时，某 symbol 收到的第一帧行情因为没有上一次累计量可比对，换算不出真实单笔量，此时 `Tick.volume` 记为 `0`（表示"未知"，而非误用累计量冒充单笔量）。若策略里有「`volume == 0` 就跳过」之类的防御逻辑，会连带跳过每个 symbol 的第一笔行情。
 *   `symbol`: 标的代码。
+*   `bid_price` / `ask_price` / `bid_volume` / `ask_volume`: 一档盘口（买一价、卖一价及挂单量），无报价的一侧为 `None`；构造时以同名关键字参数传入，不传即无报价。CTP 网关按 `BidPrice1` / `AskPrice1` / `BidVolume1` / `AskVolume1` 填充，CTP 以 DBL_MAX 或 0 表示无报价，与最新价同一判定（大于 1e7 或不为正）转为 `None`。其他网关目前不填。
 
 ### `akquant.run_live`（选择 broker 与连接参数） {: #live-broker-options }
 

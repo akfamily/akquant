@@ -3440,15 +3440,31 @@ class Tick:
     :ivar price: 最新价
     :ivar volume: 成交量
     :ivar symbol: 标的代码
+    :ivar bid_price: 买一价, 无报价为 None
+    :ivar ask_price: 卖一价, 无报价为 None
+    :ivar bid_volume: 买一量, 无报价为 None
+    :ivar ask_volume: 卖一量, 无报价为 None
     """
 
     timestamp: int
     symbol: str
     price: float
     volume: float
+    bid_price: typing.Optional[float]
+    ask_price: typing.Optional[float]
+    bid_volume: typing.Optional[float]
+    ask_volume: typing.Optional[float]
     timestamp_iso: str
     def __new__(
-        cls, timestamp: typing.Any, price: typing.Any, volume: typing.Any, symbol: str
+        cls,
+        timestamp: typing.Any,
+        price: typing.Any,
+        volume: typing.Any,
+        symbol: str,
+        bid_price: typing.Optional[typing.Any] = None,
+        ask_price: typing.Optional[typing.Any] = None,
+        bid_volume: typing.Optional[typing.Any] = None,
+        ask_volume: typing.Optional[typing.Any] = None,
     ) -> "Tick": ...
     def set_price(self, value: typing.Any) -> None: ...
     def set_volume(self, value: typing.Any) -> None: ...
@@ -3705,3 +3721,85 @@ def vec_zscore(values: numpy.ndarray, period: int) -> numpy.ndarray: ...
 def vec_returns(values: numpy.ndarray) -> numpy.ndarray: ...
 def vec_log_returns(values: numpy.ndarray) -> numpy.ndarray: ...
 def vec_cumsum(values: numpy.ndarray) -> numpy.ndarray: ...
+def _option_black76_price(
+    forward: numpy.ndarray,
+    strike: numpy.ndarray,
+    t: numpy.ndarray,
+    rate: numpy.ndarray,
+    sigma: numpy.ndarray,
+    is_call: numpy.ndarray,
+) -> numpy.ndarray: ...
+def _option_black76_greeks(
+    forward: numpy.ndarray,
+    strike: numpy.ndarray,
+    t: numpy.ndarray,
+    rate: numpy.ndarray,
+    sigma: numpy.ndarray,
+    is_call: numpy.ndarray,
+) -> tuple[
+    numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray
+]: ...
+def _option_black76_implied_vol(
+    price_: numpy.ndarray,
+    forward: numpy.ndarray,
+    strike: numpy.ndarray,
+    t: numpy.ndarray,
+    rate: numpy.ndarray,
+    is_call: numpy.ndarray,
+    price_tol: float,
+    sigma_tol: float,
+    sigma_low: float,
+    sigma_high: float,
+    max_iter: int,
+) -> numpy.ndarray: ...
+def _svi_fit(
+    k: numpy.ndarray,
+    w: numpy.ndarray,
+    weight: numpy.ndarray,
+    offsets: numpy.ndarray,
+    sigma_low: float,
+    sigma_high: float,
+    m_margin: float,
+    xtol: float,
+    ftol: float,
+    max_iter: int,
+) -> tuple[
+    numpy.ndarray,
+    numpy.ndarray,
+    numpy.ndarray,
+    numpy.ndarray,
+    numpy.ndarray,
+    numpy.ndarray,
+    numpy.ndarray,
+]: ...
+def _svi_total_variance(
+    k: numpy.ndarray,
+    a: numpy.ndarray,
+    b: numpy.ndarray,
+    rho: numpy.ndarray,
+    m: numpy.ndarray,
+    sigma: numpy.ndarray,
+) -> numpy.ndarray: ...
+def _sabr_fit(
+    forward: numpy.ndarray,
+    t: numpy.ndarray,
+    k: numpy.ndarray,
+    vol: numpy.ndarray,
+    weight: numpy.ndarray,
+    offsets: numpy.ndarray,
+    beta: float,
+    xtol: float,
+    ftol: float,
+    max_iter: int,
+) -> tuple[
+    numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray, numpy.ndarray
+]: ...
+def _sabr_vol(
+    forward: numpy.ndarray,
+    k: numpy.ndarray,
+    t: numpy.ndarray,
+    alpha: numpy.ndarray,
+    beta: float,
+    rho: numpy.ndarray,
+    nu: numpy.ndarray,
+) -> numpy.ndarray: ...

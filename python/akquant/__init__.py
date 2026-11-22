@@ -12,7 +12,7 @@ __engine_rule_version__ = "2.5.0"  # Increment on behavior-changing updates
 
 from . import akquant as _akquant
 from . import log as _log
-from . import talib
+from . import option, talib
 from .akquant import *  # noqa: F403
 from .akquant import ATR, EMA, MACD, RSI, SMA, BollingerBands, Engine
 from .analyzer_plugin import AnalyzerManager, AnalyzerTemplate
@@ -247,6 +247,7 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "PositionDetail",
         "PositionLeg",
         "talib",
+        "option",
     ]
 else:
     __all__ = [
@@ -357,6 +358,7 @@ else:
         "PositionDetail",
         "PositionLeg",
         "talib",
+        "option",
     ]
 
 

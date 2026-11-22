@@ -1,4 +1,5 @@
 import importlib.util
+import re
 import sys
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
@@ -236,3 +237,35 @@ def test_ch07_futures_example_reports_real_equity_and_flips() -> None:
     end_value = float(str(metrics.loc["end_market_value", "value"]))
     assert end_value > 0.0
     assert end_value == pytest.approx(float(result.equity_curve.iloc[-1]))
+
+
+def test_option_chain_greeks_example_main_runs(capsys: Any) -> None:
+    """期权链示例: 微笑还原、平值选合约、每日对冲到收益输出."""
+    module = _load_example_module(
+        "example_option_chain_greeks", "examples/80_option_chain_greeks.py"
+    )
+
+    module.main()
+    output = capsys.readouterr().out
+
+    assert "平值认购 m2401-C-3000: 价格 102.15, iv 20.00%" in output
+    assert "25 Delta 认沽 m2401-P-2850" in output
+    assert output.count("对冲前 期货") == 6
+    assert "对冲调仓 25 次" in output
+    assert "总收益率:" in output
+
+
+def test_vol_surface_example_main_runs(capsys: Any) -> None:
+    """波动率曲面示例: 每周曲面摘要、SVI/SABR 对比与相对价值输出."""
+    module = _load_example_module("example_vol_surface", "examples/81_vol_surface.py")
+
+    module.main()
+    output = capsys.readouterr().out
+
+    weekly = re.findall(r"20231207 90%/平值/110% [\d.]+%/([\d.]+)%/", output)
+    assert len(weekly) == 6
+    # 合成数据近月平值波动率约 18.9%(SVI 真值), 噪声 1 个波动率点
+    assert all(18.0 < float(v) < 20.0 for v in weekly)
+    assert output.count("蝶式套利 False") == 2
+    assert "日历套利: 无" in output
+    assert "相对 SVI 微笑最贵: " in output and "nan" not in output
