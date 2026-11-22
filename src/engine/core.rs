@@ -237,6 +237,8 @@ pub struct Engine {
     pub(crate) trading_day_ends: Vec<(NaiveDate, i64)>,
     /// 最近一个已完成日终结算的交易日。
     pub(crate) last_settled_trading_day: Option<NaiveDate>,
+    /// 策略提交、尚未结算的期货期权行权申请(与各策略上下文共享, 日终结算时取走执行)。
+    pub(crate) exercise_requests: Arc<Mutex<Vec<crate::settlement::ExerciseRequest>>>,
     /// 当前交易日最后一个已处理行情事件的时间戳（Day 单豁免判据）。
     pub(crate) last_event_ts_in_day: Option<i64>,
     /// 已登记收盘定时器的交易日（避免重复登记）。
@@ -2262,6 +2264,7 @@ impl Engine {
                 .current_step_finalized_orders
                 .clone(),
             recent_expiry_events: self.recent_expiry_events.clone(),
+            exercise_requests: Arc::clone(&self.exercise_requests),
             history_buffer: Some(self.history_buffer.clone()),
             window_aggregator: Some(self.window_aggregator.clone()),
             event_tx: Some(self.event_manager.sender()),

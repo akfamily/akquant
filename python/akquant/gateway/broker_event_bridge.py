@@ -542,5 +542,8 @@ class BrokerEventBridge:
             self._safe_strategy_callback(strategy, "_process_order_groups", payload)
         elif event_name == "execution_report":
             self._safe_strategy_callback(strategy, "on_execution_report", payload)
+        elif event_name == "expiry":
+            # 实盘行权/放弃指令的盘后处理结果(柜台网关的 on_expiry 回调)
+            self._safe_strategy_callback(strategy, "on_expiry", payload)
         elif event_name == "account":
             self._safe_strategy_callback(strategy, "on_portfolio_update", payload)

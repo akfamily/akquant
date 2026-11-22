@@ -384,6 +384,9 @@ class _StrategyCallbackFanout:
     def on_execution_report(self, report: Any) -> None:
         self._route("on_execution_report", report)
 
+    def on_expiry(self, event: Any) -> None:
+        self._route("on_expiry", event)
+
     def _process_order_groups(self, trade: Any) -> None:
         # OCO/Bracket 组登记在下单的槽位上, 只有它能撤对手腿/激活子单。
         self._route("_process_order_groups", trade)
@@ -2008,6 +2011,10 @@ class LiveRunner:
         if hasattr(trader_gateway, "on_execution_report"):
             trader_gateway.on_execution_report(
                 lambda report: self._queue_broker_event("execution_report", report)
+            )
+        if hasattr(trader_gateway, "on_expiry"):
+            trader_gateway.on_expiry(
+                lambda event: self._queue_broker_event("expiry", event)
             )
         self._start_broker_dispatcher(strategy)
 

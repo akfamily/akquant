@@ -509,6 +509,36 @@ class BrokerExecution:
         """返回当前执行后端支持的能力标记."""
         return dict(self._submitter._get_execution_capabilities())
 
+    def exercise(self, symbol: str, quantity: float) -> None:
+        """经柜台提交期权行权指令; 柜台受理后返回, 拒绝时抛出柜台原因."""
+        exercise = getattr(self._gw, "exercise", None)
+        if not callable(exercise):
+            raise RuntimeError(
+                f"柜台网关 {type(self._gw).__name__} 没有实现 "
+                "exercise(symbol, quantity), 不能提交行权指令"
+            )
+        exercise(symbol, quantity)
+
+    def abandon_exercise(self, symbol: str, quantity: float) -> None:
+        """经柜台提交期权放弃行权指令; 柜台受理后返回, 拒绝时抛出柜台原因."""
+        abandon = getattr(self._gw, "abandon_exercise", None)
+        if not callable(abandon):
+            raise RuntimeError(
+                f"柜台网关 {type(self._gw).__name__} 没有实现 "
+                "abandon_exercise(symbol, quantity), 不能提交放弃行权指令"
+            )
+        abandon(symbol, quantity)
+
+    def cancel_exercise(self, symbol: str) -> float:
+        """经柜台撤销该合约未执行的全部行权与放弃指令, 返回撤销的手数."""
+        cancel = getattr(self._gw, "cancel_exercise", None)
+        if not callable(cancel):
+            raise RuntimeError(
+                f"柜台网关 {type(self._gw).__name__} 没有实现 "
+                "cancel_exercise(symbol), 不能撤销行权指令"
+            )
+        return float(cancel(symbol))
+
     @property
     def state_cache(self) -> BrokerStateCache:
         """暴露底层状态缓存，便于测试/上层复用."""

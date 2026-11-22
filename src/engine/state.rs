@@ -71,6 +71,10 @@ pub struct EngineSnapshot {
     /// 各策略槽的订单账本(在途订单与已通知成交); 旧存档无此字段, 恢复为空。
     #[serde(default)]
     pub order_ledgers: HashMap<String, crate::order_ledger::OrderLedgerSnapshot>,
+    /// 存档时尚未结算的期货期权行权申请（旧存档无此字段，恢复为空）。msgpack 按位置
+    /// 编码, 新字段只能追加在末尾。
+    #[serde(default)]
+    pub exercise_requests: Vec<crate::settlement::ExerciseRequest>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
