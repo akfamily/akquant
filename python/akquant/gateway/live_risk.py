@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Sequence
 
 from ..log import build_log_extra, get_logger
+from .order_audit import _pick as _field
 
 logger = get_logger("gateway.live_risk")
 
@@ -74,12 +75,6 @@ class LiveRiskConfig:
                 "LiveRiskConfig.order_flow_window 须为正数, 实际: "
                 f"{self.order_flow_window}"
             )
-
-
-def _field(obj: Any, name: str) -> Any:
-    if isinstance(obj, dict):
-        return obj.get(name)
-    return getattr(obj, name, None)
 
 
 def _side_name(value: Any) -> str:
