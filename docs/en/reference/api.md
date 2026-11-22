@@ -612,7 +612,11 @@ Expiry settlement is recorded as a synthetic closing trade in `trades_df` (`orde
 Common enums (available directly from top-level `akquant`):
 
 - `InstrumentAssetTypeEnum`: `STOCK` / `FUTURES` / `FUND` / `OPTION`
-- `InstrumentOptionMarginModelEnum`: `RATIO` / `CHINA_SINGLE_LEG` / `US_BROKER_SINGLE_LEG` / `US_BROKER_SINGLE_LEG_VOL_ADJUSTED`
+- `InstrumentOptionMarginModelEnum`: `RATIO` / `CHINA_SINGLE_LEG` / `US_BROKER_SINGLE_LEG` / `US_BROKER_SINGLE_LEG_VOL_ADJUSTED` / `CHINA_COMMODITY` / `CHINA_INDEX`
+    *   Without `option_margin_model`, an option uses `CHINA_COMMODITY` when its underlying is registered as futures, otherwise `CHINA_SINGLE_LEG` (SSE/SZSE ETF options).
+    *   `CHINA_COMMODITY`: commodity futures options (DCE, CZCE, SHFE, INE, GFEX); short margin = premium + max(underlying futures margin − ½ × out-of-the-money amount, ½ × underlying futures margin), per unit of underlying times the trading unit (option multiplier). The underlying futures must be registered as `FUTURES`; its `margin_ratio` is the futures margin rate.
+    *   `CHINA_INDEX`: CFFEX index options (IO / MO / HO); short margin = premium + max(index × adjustment coefficient − out-of-the-money amount, 0.5 × adjustment coefficient × floor base), where the floor base is the index for calls and the strike for puts. The adjustment coefficient goes in the option's `margin_ratio` (must be given explicitly, e.g. 0.12); the index price comes from `underlying_symbol`.
+    *   When inputs are missing (underlying not registered or not futures, non-positive rate or coefficient, no underlying price), a short-opening order is rejected with that cause instead of falling back to another formula. Backtests price at the latest prices, matching the exchanges' day-end charge at settlement prices (index close for CFFEX); intraday, CTP charges the premium at max(option last, option previous settlement) and the underlying part at the underlying's previous settlement (close), the premium price being a broker setting, so intraday figures differ from the backtest. The commodity formula was checked against 30 options across five exchanges on SimNow (trade-cost queries and actual short opens), and the index formula against 36 trade-cost queries on IO / MO / HO from a futures broker's live account.
 - `InstrumentOptionTypeEnum`: `CALL` / `PUT`
 - `InstrumentSettlementTypeEnum`: `CASH` / `SETTLEMENT_PRICE` / `FORCE_CLOSE`
 
@@ -639,7 +643,7 @@ class InstrumentSnapshot:
     margin_ratio: float
     tick_size: float
     lot_size: float
-    option_margin_model: Optional[Literal["RATIO", "CHINA_SINGLE_LEG", "US_BROKER_SINGLE_LEG", "US_BROKER_SINGLE_LEG_VOL_ADJUSTED"]] = None
+    option_margin_model: Optional[Literal["RATIO", "CHINA_SINGLE_LEG", "US_BROKER_SINGLE_LEG", "US_BROKER_SINGLE_LEG_VOL_ADJUSTED", "CHINA_COMMODITY", "CHINA_INDEX"]] = None
     option_type: Optional[Literal["CALL", "PUT"]] = None
     strike_price: Optional[float] = None
     expiry_date: Optional[int] = None  # YYYYMMDD
@@ -1163,6 +1167,37 @@ run_live(
 ```
 
 Giving only some of the six trading keys raises `ValueError` naming the missing ones: SimNow defaults are not filled in for you, and the trading channel is never silently skipped.
+
+### `akquant.gateway.CTPOptionUniverse` (register option contracts from CTP and refresh them mid-session) {: #ctp-option-universe }
+
+When a live session tracks dozens of option chains you no longer write an `Instrument` per option: `CTPOptionUniverse` logs into the CTP trading front, queries all contracts, picks the options of the tracked underlyings plus their underlying futures, and converts them to `Instrument`. Queries use a separate short-lived session (login, query, disconnect), so they do not consume the order gateway's query rate limit; it never confirms the settlement statement and never places orders. Requires `openctp-ctp`.
+
+```python
+from akquant import run_live
+from akquant.gateway import CTPOptionUniverse
+
+ctp = {
+    "td_front": "tcp://...", "broker_id": "9999", "user_id": "YOUR_USER_ID",
+    "password": "YOUR_PASSWORD", "app_id": "...", "auth_code": "...",
+}
+universe = CTPOptionUniverse(
+    ctp,
+    underlyings=["m", "au2702", "IO"],   # underlying product (all months) or contract
+    index_underlyings={"IO": "000300.SH"},  # required when tracking CFFEX options
+)
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=universe.load(),
+    instrument_source=universe,   # register newly listed contracts at each refresh time
+    broker="ctp",
+    gateway_options={**ctp, "md_front": "tcp://..."},
+)
+```
+
+*   **Commodity options**: the underlying futures are registered too, with `margin_ratio` taken from the investor short margin rate of `ReqQryInstrumentMarginRate` (by money; per-lot margins raise an error); options use `option_margin_model="CHINA_COMMODITY"`.
+*   **CFFEX index options**: CTP reports the option series (e.g. `IO2612`) as the underlying and does not stream index quotes, so `index_underlyings` must map each product to the index symbol of your index data source; a missing product is named in the error. The margin coefficient is derived from `ReqQryOptionInstrTradeCost`: for one call per product it queries with underlying prices of 1.2× and 0.8× the strike, getting one coefficient from the in-the-money branch and one from the floor branch; if they differ it raises (the broker's algorithm differs from the `CHINA_INDEX` formula). Options use `option_margin_model="CHINA_INDEX"`.
+*   **Cache and refresh times**: exchanges list new options for both the night and day sessions, so `refresh_times` defaults to `("08:30", "20:30")` (30 minutes before each session). Results are cached in `cache_dir` (default `.akquant_ctp`) keyed by the latest refresh time already passed: restarting within the same session `load()` reads the cache; a different set of underlyings or a new session triggers a query; `refresh()` always queries.
+*   **Mid-session refresh (`run_live(instrument_source=...)`)**: a background thread calls `refresh()` at each refresh time; new and re-parameterised contracts are registered into the engine (before the next event is processed, ahead of any order on them), added to the market-data subscription, and finally exposed through the strategy's `get_instrument()` / `get_instruments()`, without restarting the session. Parameter changes (e.g. a broker raising a margin rate) are logged field by field at WARNING; a failed query is logged and retried at the next refresh time, trading continues. `instrument_source` may be any object providing `refresh()` and `next_refresh()`.
 
 ### `akquant.run_live` (broker live semantics) {: #live-broker-semantics }
 

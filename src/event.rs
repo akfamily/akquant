@@ -1,4 +1,4 @@
-use crate::model::{Bar, Order, Tick, Timer, Trade};
+use crate::model::{Bar, Instrument, Order, Tick, Timer, Trade};
 use chrono::NaiveDate;
 
 #[derive(Debug, Clone)]
@@ -20,4 +20,6 @@ pub enum Event {
         trading_day: NaiveDate,
         source: String,
     },
+    /// 运行中登记(或按新参数覆盖)合约, 由 `InstrumentPort` 从引擎线程之外投递。
+    RegisterInstruments(Vec<Instrument>),
 }

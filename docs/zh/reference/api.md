@@ -580,7 +580,11 @@ class InstrumentConfig:
 常用枚举（均可在 `akquant` 顶层直接访问）：
 
 - `InstrumentAssetTypeEnum`: `STOCK` / `FUTURES` / `FUND` / `OPTION`
-- `InstrumentOptionMarginModelEnum`: `RATIO` / `CHINA_SINGLE_LEG` / `US_BROKER_SINGLE_LEG` / `US_BROKER_SINGLE_LEG_VOL_ADJUSTED`
+- `InstrumentOptionMarginModelEnum`: `RATIO` / `CHINA_SINGLE_LEG` / `US_BROKER_SINGLE_LEG` / `US_BROKER_SINGLE_LEG_VOL_ADJUSTED` / `CHINA_COMMODITY` / `CHINA_INDEX`
+    *   期权未指定 `option_margin_model` 时：标的登记为期货用 `CHINA_COMMODITY`，否则用 `CHINA_SINGLE_LEG`（沪深 ETF 期权口径）。
+    *   `CHINA_COMMODITY`：商品期货期权（大商所、郑商所、上期所、上期能源、广期所），卖方保证金 = 权利金 + max(标的期货保证金 − ½ × 虚值额, ½ × 标的期货保证金)，每单位标的计算后乘交易单位（期权乘数）。标的期货须登记为 `FUTURES`，其 `margin_ratio` 即标的期货保证金率。
+    *   `CHINA_INDEX`：中金所股指期权（IO / MO / HO），卖方保证金 = 权利金 + max(标的指数 × 调整系数 − 虚值额, 0.5 × 调整系数 × 下限基数)，下限基数认购取标的指数、认沽取行权价。调整系数填在期权合约的 `margin_ratio`（须显式填写，如 0.12），标的指数价格取 `underlying_symbol` 的行情。
+    *   两种模型取不到输入（标的未登记、不是期货、保证金率或调整系数不为正、标的没有价格）时，卖开被拒并写明原因，不退化为其他公式。回测按期权与标的的最新价计算，与交易所日终按当日结算价（股指为指数收盘价）计收的口径一致；CTP 盘中按 max(期权最新价, 期权昨结算价) 计权利金、按标的昨结算价（昨收盘）计标的部分（权利金取价由期货公司参数决定），盘中数值会与回测不同。商品期权公式已用 SimNow 五个交易所 30 张期权核对（交易成本查询与实际卖开），股指期权公式已用期货公司实盘账户的交易成本查询核对 IO / MO / HO 共 36 组。
 - `InstrumentOptionTypeEnum`: `CALL` / `PUT`
 - `InstrumentSettlementTypeEnum`: `CASH` / `SETTLEMENT_PRICE` / `FORCE_CLOSE`
 
@@ -607,7 +611,7 @@ class InstrumentSnapshot:
     margin_ratio: float
     tick_size: float
     lot_size: float
-    option_margin_model: Optional[Literal["RATIO", "CHINA_SINGLE_LEG", "US_BROKER_SINGLE_LEG", "US_BROKER_SINGLE_LEG_VOL_ADJUSTED"]] = None
+    option_margin_model: Optional[Literal["RATIO", "CHINA_SINGLE_LEG", "US_BROKER_SINGLE_LEG", "US_BROKER_SINGLE_LEG_VOL_ADJUSTED", "CHINA_COMMODITY", "CHINA_INDEX"]] = None
     option_type: Optional[Literal["CALL", "PUT"]] = None
     strike_price: Optional[float] = None
     expiry_date: Optional[int] = None  # YYYYMMDD
@@ -1230,6 +1234,37 @@ run_live(
 ```
 
 交易通道六项只给了一部分时会抛 `ValueError` 并指出缺哪几项：不会替你补 SimNow 仿真环境的默认值，也不会因为缺一项就悄悄不建交易通道。
+
+### `akquant.gateway.CTPOptionUniverse`（从 CTP 登记期权合约并在运行中刷新） {: #ctp-option-universe }
+
+实盘同时跟踪几十条期权链时，不必手工为每个期权写 `Instrument`：`CTPOptionUniverse` 登录 CTP 交易前置查询全部合约，选出跟踪标的的期权及其标的期货，转为 `Instrument`。查询走独立的短连接（登录、查询、断开），不占用下单网关的查询流控；不确认结算单，不下单。需要安装 `openctp-ctp`。
+
+```python
+from akquant import run_live
+from akquant.gateway import CTPOptionUniverse
+
+ctp = {
+    "td_front": "tcp://...", "broker_id": "9999", "user_id": "YOUR_USER_ID",
+    "password": "YOUR_PASSWORD", "app_id": "...", "auth_code": "...",
+}
+universe = CTPOptionUniverse(
+    ctp,
+    underlyings=["m", "au2702", "IO"],   # 标的品种代码（全部月份）或标的合约代码
+    index_underlyings={"IO": "000300.SH"},  # 跟踪中金所期权时必填
+)
+run_live(
+    strategy_cls=MyStrategy,
+    instruments=universe.load(),
+    instrument_source=universe,   # 运行中按刷新时刻登记新挂合约
+    broker="ctp",
+    gateway_options={**ctp, "md_front": "tcp://..."},
+)
+```
+
+*   **商品期权**：标的期货一并登记，`margin_ratio` 取 `ReqQryInstrumentMarginRate` 的投资者卖方保证金率（按金额；期货公司按手数收取时报错）；期权 `option_margin_model="CHINA_COMMODITY"`。
+*   **中金所股指期权**：CTP 的标的字段是期权系列（如 `IO2612`），行情也不推送指数，标的指数代码须由 `index_underlyings` 按品种给出，与指数行情来源的代码一致，缺哪个品种报哪个。保证金调整系数由 `ReqQryOptionInstrTradeCost` 反推：每个品种取一张认购，分别以 1.2 倍、0.8 倍行权价作为标的价格查询，实值分支与下限分支各得一个系数，两者不一致时报错（说明期货公司的算法与 `CHINA_INDEX` 公式不同）；期权 `option_margin_model="CHINA_INDEX"`。
+*   **缓存与刷新时刻**：交易所在夜盘、日盘都会新挂期权，`refresh_times` 默认 `("08:30", "20:30")`（两个时段开盘前 30 分钟）。查询结果按“最近一个已过的刷新时刻”缓存在 `cache_dir`（默认 `.akquant_ctp`）：同一时段内重启时 `load()` 读缓存，跟踪标的变化或进入下一时段时重新查询；`refresh()` 总是查询。
+*   **运行中刷新（`run_live(instrument_source=...)`）**：后台线程在每个刷新时刻调用 `refresh()`，新增与参数变化的合约依次登记进引擎（在处理下一个事件前登记，先于随后对它下的单）、加入行情订阅，最后进入策略的 `get_instrument()` / `get_instruments()`，会话不用重启。参数变化（如期货公司调整保证金率）逐项记 WARNING 日志；查询失败记日志，下一个刷新时刻再查，交易不中断。`instrument_source` 也可以是任何提供 `refresh()` 与 `next_refresh()` 的对象。
 
 ### `akquant.run_live`（broker_live 执行语义） {: #live-broker-semantics }
 

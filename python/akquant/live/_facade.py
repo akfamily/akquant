@@ -86,6 +86,7 @@ def run_live(
     on_broker_event: Optional[Callable[[Dict[str, Any]], None]] = None,
     signal_port_ready: Optional[Callable[[Any], None]] = None,
     signal_source: Optional[Any] = None,
+    instrument_source: Optional[Any] = None,
     indicator_recorder: Optional[IndicatorSink] = None,
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = None,
     strategy_runtime_config: Optional[
@@ -188,6 +189,14 @@ def run_live(
         size / position size) are enforced up front. If the source fails to
         start the session aborts — it is the only order origin, so continuing
         would silently produce a session that never trades.
+    :param instrument_source: Optional contract source refreshed while the
+        session runs (e.g. :class:`~akquant.gateway.CTPOptionUniverse`): at
+        each of its refresh times (default 08:30 and 20:30, 30 minutes before
+        the day and night sessions) newly listed or re-parameterised contracts
+        are registered into the engine and strategies and subscribed, without
+        restarting the session. It must provide ``refresh()`` and
+        ``next_refresh()``. Pass its initial contracts via ``instruments``
+        (``source.load()``).
     :param indicator_recorder: Optional public :class:`IndicatorSink` to collect
         indicator points; defaults to a streaming sink when ``on_event`` is set.
     :param on_event: Optional stream event callback for realtime indicator flow.
@@ -381,6 +390,7 @@ def run_live(
         on_broker_event=on_broker_event,
         signal_port_ready=signal_port_ready,
         signal_source=signal_source,
+        instrument_source=instrument_source,
         strategy_runtime_config=strategy_runtime_config,
         runtime_config_override=runtime_config_override,
         session_tag=session_tag,

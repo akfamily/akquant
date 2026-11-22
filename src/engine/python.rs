@@ -608,6 +608,16 @@ impl Engine {
         crate::signal_port::SignalPort::new(self.event_manager.sender(), owner)
     }
 
+    /// 取一个运行中合约登记端口
+    ///
+    /// **必须在 `run()` 之前调用**(同 `signal_port`)。会话中经它投递的合约在引擎
+    /// 处理下一个事件前登记, 同名合约按新参数覆盖。
+    ///
+    /// :return: InstrumentPort 实例
+    fn instrument_port(&self) -> crate::instrument_port::InstrumentPort {
+        crate::instrument_port::InstrumentPort::new(self.event_manager.sender())
+    }
+
     /// 初始化回测引擎.
     ///
     /// :return: Engine 实例

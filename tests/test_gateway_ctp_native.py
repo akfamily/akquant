@@ -333,3 +333,34 @@ def test_ctp_native_order_return_carries_side_quantity_and_price(
         3.0,
         512.5,
     )
+
+
+def test_ctp_native_market_updates_subscriptions_after_login() -> None:
+    """登录后替换订阅集: 新增的立即订阅、移除的立即退订; 登录前只记下."""
+    calls: list[tuple[str, list[bytes], int]] = []
+    gateway = CTPMarketGateway.__new__(CTPMarketGateway)
+    gateway.symbols = ["au2606", "ag2606"]
+
+    def recorder(kind: str) -> Any:
+        def call(symbols: list[bytes], count: int) -> int:
+            calls.append((kind, symbols, count))
+            return 0
+
+        return call
+
+    gateway.api = SimpleNamespace(
+        SubscribeMarketData=recorder("sub"), UnSubscribeMarketData=recorder("unsub")
+    )
+
+    gateway.logged_in = False
+    gateway.update_subscriptions(["au2606", "cu2606"])
+    assert gateway.symbols == ["au2606", "cu2606"]
+    assert calls == []
+
+    gateway.logged_in = True
+    gateway.update_subscriptions(["au2606", "m2701-C-3000"])
+    assert gateway.symbols == ["au2606", "m2701-C-3000"]
+    assert calls == [
+        ("sub", [b"m2701-C-3000"], 1),
+        ("unsub", [b"cu2606"], 1),
+    ]
