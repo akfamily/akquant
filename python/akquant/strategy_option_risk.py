@@ -109,3 +109,19 @@ def greek_limit_violation(
     if not breaches:
         return None
     return f"期权 Greeks 限额(标的 {underlying}): " + "; ".join(breaches)
+
+
+def greek_limit_reject(
+    strategy: Any, symbol: str, side: str, quantity: float, price: Any, tag: Any
+) -> Optional[List[str]]:
+    """回测下单入口的 Greeks 限额: 对用户提交的这一笔逻辑委托校验(拆腿之前).
+
+    超限时作为风控拒单交给引擎(进订单账本, 触发 ``on_reject``), 不撮合, 返回拒单
+    的订单号; 通过时返回 None。
+    """
+    reason = greek_limit_violation(strategy, symbol, side, float(quantity))
+    if reason is None:
+        return None
+    return [
+        str(strategy.ctx.reject_order(symbol, side, quantity, reason, price, tag or ""))
+    ]

@@ -10,7 +10,7 @@ from .execution.base import PositionDetail, PositionLeg
 from .gateway.broker_models import normalize_asset_type
 from .gateway.order_receipt import OrderLeg, OrderReceipt
 from .log import get_logger
-from .strategy_option_risk import greek_limit_violation
+from .strategy_option_risk import greek_limit_reject
 
 logger = get_logger("trading")
 
@@ -424,18 +424,9 @@ def _submit_buy_side_orders(
         return []
 
     if check_greek_limits:
-        # 期权 Greeks 限额: 对用户提交的这一笔逻辑委托校验(拆腿之前), 超限时
-        # 作为风控拒单交给引擎(进订单账本, 触发 on_reject), 不撮合。
-        reason = greek_limit_violation(strategy, symbol, "Buy", float(quantity))
-        if reason is not None:
-            return [
-                cast(
-                    str,
-                    strategy.ctx.reject_order(
-                        symbol, "Buy", quantity, reason, price, tag or ""
-                    ),
-                )
-            ]
+        rejected = greek_limit_reject(strategy, symbol, "Buy", quantity, price, tag)
+        if rejected is not None:
+            return rejected
 
     if position_effect == "auto":
         # 用可平持仓而非结算仓：同一 on_bar 内已提交未成交的平仓单必须扣除，
@@ -616,18 +607,9 @@ def _submit_sell_side_orders(
         return []
 
     if check_greek_limits:
-        # 期权 Greeks 限额: 对用户提交的这一笔逻辑委托校验(拆腿之前), 超限时
-        # 作为风控拒单交给引擎(进订单账本, 触发 on_reject), 不撮合。
-        reason = greek_limit_violation(strategy, symbol, "Sell", float(quantity))
-        if reason is not None:
-            return [
-                cast(
-                    str,
-                    strategy.ctx.reject_order(
-                        symbol, "Sell", quantity, reason, price, tag or ""
-                    ),
-                )
-            ]
+        rejected = greek_limit_reject(strategy, symbol, "Sell", quantity, price, tag)
+        if rejected is not None:
+            return rejected
 
     if position_effect == "auto":
         # 与 buy 侧对称：可平持仓已扣除在途平仓单，避免反手第二腿误判（#361）。
