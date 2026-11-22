@@ -346,3 +346,24 @@ def test_broker_execution_routes_abandon_to_gateway() -> None:
         BrokerExecution(object(), SimpleNamespace(), None, None).abandon_exercise(  # type: ignore[arg-type]
             "m2701-C-3000", 1
         )
+
+
+def test_exec_results_are_logged_with_alert_mark(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """盘后结果另记带提醒标记的日志(成功 INFO, 失败 WARNING), 未注册 on_expiry 也记."""
+    with pytest.MonkeyPatch.context() as mp:
+        gateway, _ = _gateway(mp, "SHFE", today=0, yesterday=0)
+        adapter = CTPTraderAdapter.__new__(CTPTraderAdapter)
+        adapter.gateway = gateway
+        adapter.expiry_callback = None
+        gateway.set_exercise_result_handler(adapter._handle_native_exercise_result)
+        with caplog.at_level("INFO", logger="akquant.gateway.ctp_adapter"):
+            gateway.OnRtnExecOrder(_result("7", "0"))
+            gateway.OnRtnExecOrder(_result("8", "1"))
+    assert [
+        (r.levelname, r.getMessage(), getattr(r, "alert", None)) for r in caplog.records
+    ] == [
+        ("INFO", "ag2702C10300 行权指令 7 2 手已执行", "行权"),
+        ("WARNING", "ag2702C10300 行权指令 8 2 手未执行: 期权持仓不够", "行权"),
+    ]

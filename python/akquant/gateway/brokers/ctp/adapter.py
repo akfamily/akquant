@@ -1,7 +1,9 @@
+import logging
 import time
 from typing import Any, Callable, Sequence
 
 from ....akquant import DataFeed
+from ....log import build_log_extra, get_logger
 from ...broker_event_mapper import BrokerEventMapper, create_default_mapper
 from ...broker_models import (
     BrokerCapability,
@@ -15,6 +17,8 @@ from ...broker_models import (
     validate_execution_semantics,
 )
 from .native import CTPMarketGateway, CTPTraderGateway
+
+logger = get_logger("gateway.ctp_adapter")
 
 
 class CTPMarketAdapter:
@@ -241,10 +245,9 @@ class CTPTraderAdapter:
         """把交易所盘后处理完的行权/放弃指令转为 ``on_expiry`` 事件.
 
         柜台不推送行权得到的期货持仓价格与费用, ``quantity_before``、``cash_flow``、
-        ``fee`` 为 None; 期货持仓随柜台持仓同步。
+        ``fee`` 为 None; 期货持仓随柜台持仓同步。结果另记一条带提醒标记的日志
+        (执行成功 INFO, 失败 WARNING)。
         """
-        if self.expiry_callback is None:
-            return
         symbol = str(payload["symbol"])
         volume = float(payload["volume"])
         action = "放弃行权" if payload["abandon"] else "行权"
@@ -257,6 +260,13 @@ class CTPTraderAdapter:
             description = f"{head}未执行: {payload['failure']}"
         if payload["status_msg"]:
             description += f"(柜台: {payload['status_msg']})"
+        logger.log(
+            logging.INFO if payload["executed"] else logging.WARNING,
+            description,
+            extra={**build_log_extra(phase="gateway", symbol=symbol), "alert": "行权"},
+        )
+        if self.expiry_callback is None:
+            return
         self.expiry_callback(
             {
                 "symbol": symbol,
