@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **商品期货期权保证金模型 `option_margin_model="CHINA_COMMODITY"`**：大商所、郑商所、上期所、上期能源、广期所的期权卖方保证金 = 权利金 + max(标的期货保证金 − ½ × 虚值额, ½ × 标的期货保证金)，标的期货保证金率取登记为 `FUTURES` 的标的期货合约的 `margin_ratio`。标的未登记、不是期货、保证金率不为正或没有价格时，卖开被拒并写明原因，不退化为其他公式。公式已用 SimNow 五个交易所 30 张期权（实值、平值、深度虚值的认购与认沽）的 CTP 期权交易成本查询与实际卖开核对，结果一致。期权缺省的 `CHINA_SINGLE_LEG` 为沪深 ETF 期权口径，不变。
+
 ## [0.3.95] - 2026-11-21
 
 > 规则版本仍为 2.5.0，回测结果不变。

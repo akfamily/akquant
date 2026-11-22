@@ -39,6 +39,8 @@ python examples/textbook/ch08_options_functional.py
 
 沪深 ETF 期权合约推荐直接用品种预设 `asset_type="ETF_OPTION"`：它展开为 `OPTION`，并自动带上合约乘数 10000、最小变动价位 0.0001、1 张一手、T+0 和中国单腿保证金模型（`CHINA_SINGLE_LEG`）。显式传入的字段一律优先于预设。
 
+商品期货期权的卖方保证金规则不同（权利金 + max(标的期货保证金 − ½ × 虚值额, ½ × 标的期货保证金)），需显式设置 `option_margin_model="CHINA_COMMODITY"`，并把标的期货登记为 `asset_type="FUTURES"`、`margin_ratio` 填标的期货保证金率。
+
 费率通过 `BacktestConfig.china_options`（`ChinaOptionsConfig`）配置，单位均为元/张，缺省值即沪深 ETF 期权现行口径：
 
 - `commission_per_contract`: 券商佣金，缺省 5.0

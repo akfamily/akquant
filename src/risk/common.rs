@@ -303,6 +303,25 @@ fn calc_required_margin_delta(
     prices: &HashMap<String, Decimal>,
     portfolio: &crate::portfolio::Portfolio,
 ) -> Result<Decimal, AkQuantError> {
+    // 商品期权保证金需要标的期货保证金率与标的价格, 卖方持仓取不到时拒单并写明原因
+    if let Some(instr) = instruments.get(&order.symbol)
+        && instr.option_margin_model() == Some(crate::model::OptionMarginModel::ChinaCommodity)
+    {
+        let current = portfolio
+            .positions
+            .get(&order.symbol)
+            .copied()
+            .unwrap_or(Decimal::ZERO);
+        let next = project_position_after(order.side, order.position_effect, current, order.quantity);
+        if current < Decimal::ZERO || next < Decimal::ZERO {
+            crate::margin::commodity_option_inputs(instr, instruments, prices).map_err(|reason| {
+                AkQuantError::OrderError(format!(
+                    "{} 无法计算商品期权保证金: {reason}",
+                    order.symbol
+                ))
+            })?;
+        }
+    }
     if let Some(instr) = instruments.get(&order.symbol)
         && config.is_margin_account()
         && (instr.asset_type == AssetType::Stock || instr.asset_type == AssetType::Fund)
@@ -648,7 +667,14 @@ mod tests {
             calc_required_margin_delta(&order, ctx.instruments, ctx.config, &prices, &portfolio)
                 .unwrap();
         let expected =
-            MarginEngine::position_margin(dec!(-1), dec!(4), instrument_ref, &prices, None);
+            MarginEngine::position_margin(
+                dec!(-1),
+                dec!(4),
+                instrument_ref,
+                &prices,
+                ctx.instruments,
+                None,
+            );
 
         assert_eq!(required, dec!(1100));
         assert_eq!(required, expected);

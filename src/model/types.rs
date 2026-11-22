@@ -132,6 +132,9 @@ pub enum OptionMarginModel {
     ChinaSingleLeg,
     USBrokerSingleLeg,
     USBrokerSingleLegVolAdjusted,
+    /// 商品期货期权(大商所、郑商所、上期所、上期能源、广期所): 权利金 +
+    /// max(标的期货保证金 - 虚值额/2, 标的期货保证金/2), 标的期货保证金率取标的合约
+    ChinaCommodity,
 }
 
 #[pymethods]

@@ -1,7 +1,8 @@
 use crate::margin::{
     FuturesMarginCalculator, LinearMarginCalculator, MarginCalculator, OptionMarginCalculator,
+    china_commodity_option_margin, commodity_option_inputs,
 };
-use crate::model::{AssetType, Instrument};
+use crate::model::{AssetType, Instrument, OptionMarginModel};
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 
@@ -41,9 +42,22 @@ impl MarginEngine {
         price: Decimal,
         instrument: &Instrument,
         prices: &HashMap<String, Decimal>,
+        instruments: &HashMap<String, Instrument>,
         stock_margin_ratio_override: Option<Decimal>,
     ) -> Decimal {
         match instrument.asset_type {
+            AssetType::Option
+                if instrument.option_margin_model() == Some(OptionMarginModel::ChinaCommodity) =>
+            {
+                // 输入不全时按无法计算处理(下单前风控已逐项报出原因并拒单)
+                match commodity_option_inputs(instrument, instruments, prices) {
+                    Ok(inputs) => {
+                        china_commodity_option_margin(quantity, price, instrument, &inputs)
+                    }
+                    Err(_) if quantity >= Decimal::ZERO => Decimal::ZERO,
+                    Err(_) => Decimal::MAX,
+                }
+            }
             AssetType::Option => {
                 let underlying_price = instrument
                     .underlying_symbol()
@@ -90,6 +104,7 @@ impl MarginEngine {
                 *price,
                 instrument,
                 prices,
+                instruments,
                 stock_margin_ratio_override,
             );
             used_margin = used_margin.checked_add(margin).unwrap_or(Decimal::MAX);

@@ -1,5 +1,6 @@
-use crate::model::{Instrument, OptionMarginModel, OptionType};
+use crate::model::{AssetType, Instrument, OptionMarginModel, OptionType};
 use rust_decimal::Decimal;
+use std::collections::HashMap;
 
 fn checked_mul_or_cap(lhs: Decimal, rhs: Decimal) -> Decimal {
     lhs.checked_mul(rhs).unwrap_or(Decimal::MAX)
@@ -55,6 +56,86 @@ fn calculate_single_leg_margin_per_unit(
     };
     let floor_component = checked_mul_or_cap(floor_base, floor_ratio);
     checked_add_or_cap(option_price, exposure_component.max(floor_component))
+}
+
+/// 商品期货期权卖方保证金的计算输入, 由 [`commodity_option_inputs`] 校验后给出.
+#[derive(Debug, Clone, Copy)]
+pub struct CommodityOptionInputs {
+    pub option_type: OptionType,
+    pub strike_price: Decimal,
+    pub underlying_price: Decimal,
+    pub underlying_margin_ratio: Decimal,
+}
+
+/// 取商品期货期权保证金的计算输入; 取不到时返回确切原因.
+///
+/// 标的期货保证金率取已登记的标的期货合约的 `margin_ratio`, 标的价格取 `prices`。
+pub fn commodity_option_inputs(
+    instrument: &Instrument,
+    instruments: &HashMap<String, Instrument>,
+    prices: &HashMap<String, Decimal>,
+) -> Result<CommodityOptionInputs, String> {
+    let (Some(option_type), Some(strike_price), Some(underlying)) = (
+        instrument.option_type(),
+        instrument.strike_price(),
+        instrument.underlying_symbol(),
+    ) else {
+        return Err("缺少期权类型、行权价或标的代码".to_string());
+    };
+    let Some(underlying_instrument) = instruments.get(underlying.as_str()) else {
+        return Err(format!("标的期货 {underlying} 未登记为合约, 取不到标的期货保证金率"));
+    };
+    if underlying_instrument.asset_type != AssetType::Futures {
+        return Err(format!(
+            "标的 {underlying} 登记的资产类型是 {:?}, 商品期权保证金模型要求标的为期货",
+            underlying_instrument.asset_type
+        ));
+    }
+    let underlying_margin_ratio = underlying_instrument.margin_ratio();
+    if underlying_margin_ratio <= Decimal::ZERO {
+        return Err(format!("标的期货 {underlying} 的保证金率 {underlying_margin_ratio} 不为正"));
+    }
+    let Some(&underlying_price) = prices.get(underlying.as_str()) else {
+        return Err(format!("标的期货 {underlying} 没有价格"));
+    };
+    if underlying_price <= Decimal::ZERO {
+        return Err(format!("标的期货 {underlying} 的价格 {underlying_price} 不为正"));
+    }
+    Ok(CommodityOptionInputs {
+        option_type,
+        strike_price,
+        underlying_price,
+        underlying_margin_ratio,
+    })
+}
+
+/// 商品期货期权持仓保证金(多头为 0).
+///
+/// 大商所、郑商所、上期所、上期能源、广期所的期权卖方交易保证金取下列较大者:
+/// 权利金 + 标的期货保证金 - 虚值额/2; 权利金 + 标的期货保证金/2。
+/// 按每单位标的计算后乘交易单位(期权合约乘数)与手数。
+pub fn china_commodity_option_margin(
+    quantity: Decimal,
+    option_price: Decimal,
+    instrument: &Instrument,
+    inputs: &CommodityOptionInputs,
+) -> Decimal {
+    if quantity >= Decimal::ZERO {
+        return Decimal::ZERO;
+    }
+    let half = Decimal::new(5, 1);
+    let futures_margin = checked_mul_or_cap(inputs.underlying_price, inputs.underlying_margin_ratio);
+    let otm = match inputs.option_type {
+        OptionType::Call => checked_sub_or_zero(inputs.strike_price, inputs.underlying_price),
+        OptionType::Put => checked_sub_or_zero(inputs.underlying_price, inputs.strike_price),
+    };
+    let reduced = checked_sub_or_zero(futures_margin, checked_mul_or_cap(otm, half));
+    let floor = checked_mul_or_cap(futures_margin, half);
+    let per_unit = checked_add_or_cap(option_price.abs(), reduced.max(floor));
+    checked_mul_or_cap(
+        checked_mul_or_cap(per_unit, instrument.multiplier().abs()),
+        quantity.abs(),
+    )
 }
 
 /// Trait for calculating margin requirements for a position.
@@ -149,6 +230,9 @@ impl MarginCalculator for OptionMarginCalculator {
             instrument.option_margin_model().unwrap_or_default(),
             maybe_underlying,
         ) {
+            // 需要标的期货保证金率, 只经 MarginEngine::position_margin 计算; 直接调用本计算器时
+            // 按无法计算处理, 不退化为其他公式
+            (OptionMarginModel::ChinaCommodity, _) => Decimal::MAX,
             (OptionMarginModel::Ratio, _) | (_, None) => {
                 legacy_option_margin(abs_qty, option_price, maybe_underlying, instrument)
             }
@@ -387,5 +471,109 @@ mod tests {
         assert_eq!(low_margin, dec!(2700));
         assert_eq!(high_margin, dec!(5400));
         assert!(high_margin > low_margin);
+    }
+
+    fn commodity_option(
+        symbol: &str,
+        underlying: &str,
+        option_type: OptionType,
+        strike: Decimal,
+        unit: Decimal,
+    ) -> Instrument {
+        Instrument {
+            asset_type: AssetType::Option,
+            inner: InstrumentEnum::Option(OptionInstrument {
+                symbol: symbol.to_string(),
+                multiplier: unit,
+                margin_ratio: dec!(0),
+                tick_size: dec!(0.5),
+                option_margin_model: OptionMarginModel::ChinaCommodity,
+                option_type,
+                strike_price: strike,
+                expiry_date: 20261216,
+                underlying_symbol: underlying.to_string(),
+                settlement_type: None,
+                settlement_price: None,
+                implied_volatility: None,
+                reference_volatility: None,
+            }),
+        }
+    }
+
+    fn futures(symbol: &str, unit: Decimal, margin_ratio: Decimal) -> Instrument {
+        Instrument {
+            asset_type: AssetType::Futures,
+            inner: InstrumentEnum::Futures(FuturesInstrument {
+                symbol: symbol.to_string(),
+                multiplier: unit,
+                margin_ratio,
+                tick_size: Decimal::ONE,
+                expiry_date: None,
+                settlement_type: None,
+                settlement_price: None,
+            }),
+        }
+    }
+
+    /// 期望值取自 SimNow 实测(交易日 20261120): CTP ReqQryOptionInstrTradeCost 以期权、
+    /// 标的昨结算价计算的 Royalty + FixedMargin, 与实际卖开 1 手后的持仓占用一致。
+    #[test]
+    fn china_commodity_margin_matches_simnow_samples() {
+        use crate::margin::MarginEngine;
+        // (期权, 标的, 类型, 行权价, 交易单位, 标的保证金率, 标的价, 期权价, 1 手保证金)
+        let cases = [
+            ("eb2701-C-8000", "eb2701", OptionType::Call, dec!(8000), dec!(5), dec!(0.19), dec!(8468), dec!(607.5), dec!(11082.10)),
+            ("eb2701-C-8500", "eb2701", OptionType::Call, dec!(8500), dec!(5), dec!(0.19), dec!(8468), dec!(313), dec!(9529.60)),
+            ("eb2701-P-6000", "eb2701", OptionType::Put, dec!(6000), dec!(5), dec!(0.19), dec!(8468), dec!(2.5), dec!(4034.80)),
+            ("FG701C910", "FG701", OptionType::Call, dec!(910), dec!(20), dec!(0.17), dec!(907), dec!(23), dec!(3513.80)),
+            ("FG701P730", "FG701", OptionType::Put, dec!(730), dec!(20), dec!(0.17), dec!(907), dec!(0.5), dec!(1551.90)),
+            ("ag2702C10300", "ag2702", OptionType::Call, dec!(10300), dec!(15), dec!(0.19), dec!(10806), dec!(1182), dec!(48527.10)),
+            ("ag2702C22100", "ag2702", OptionType::Call, dec!(22100), dec!(15), dec!(0.19), dec!(10806), dec!(0.5), dec!(15406.05)),
+            ("sc2701P610", "sc2701", OptionType::Put, dec!(610), dec!(1000), dec!(0.17), dec!(576.9), dec!(56.8), dec!(154873.00)),
+            ("sc2701C580", "sc2701", OptionType::Call, dec!(580), dec!(1000), dec!(0.17), dec!(576.9), dec!(35.45), dec!(131973.00)),
+            ("lc2704-P-89000", "lc2704", OptionType::Put, dec!(89000), dec!(1), dec!(0.09), dec!(89400), dec!(13610), dec!(21456.00)),
+            ("lc2704-P-69000", "lc2704", OptionType::Put, dec!(69000), dec!(1), dec!(0.09), dec!(89400), dec!(4630), dec!(8653.00)),
+        ];
+        for (symbol, underlying, kind, strike, unit, ratio, f, p, expected) in cases {
+            let option = commodity_option(symbol, underlying, kind, strike, unit);
+            let instruments = HashMap::from([
+                (symbol.to_string(), option.clone()),
+                (underlying.to_string(), futures(underlying, unit, ratio)),
+            ]);
+            let prices = HashMap::from([(symbol.to_string(), p), (underlying.to_string(), f)]);
+            let one = MarginEngine::position_margin(dec!(-1), p, &option, &prices, &instruments, None);
+            assert_eq!(one, expected, "{symbol}");
+            let three =
+                MarginEngine::position_margin(dec!(-3), p, &option, &prices, &instruments, None);
+            assert_eq!(three, expected * dec!(3), "{symbol}");
+            let long = MarginEngine::position_margin(dec!(2), p, &option, &prices, &instruments, None);
+            assert_eq!(long, Decimal::ZERO, "{symbol}");
+        }
+    }
+
+    #[test]
+    fn china_commodity_inputs_report_exact_cause() {
+        let option = commodity_option("m2701-C-3000", "m2701", OptionType::Call, dec!(3000), dec!(10));
+        let priced = HashMap::from([("m2701".to_string(), dec!(3000))]);
+        let cause = |instruments: &HashMap<String, Instrument>, prices: &HashMap<String, Decimal>| {
+            commodity_option_inputs(&option, instruments, prices).unwrap_err()
+        };
+
+        assert_eq!(
+            cause(&HashMap::new(), &priced),
+            "标的期货 m2701 未登记为合约, 取不到标的期货保证金率"
+        );
+        let mut stock = futures("m2701", dec!(10), dec!(0.1));
+        stock.asset_type = AssetType::Stock;
+        assert_eq!(
+            cause(&HashMap::from([("m2701".to_string(), stock)]), &priced),
+            "标的 m2701 登记的资产类型是 Stock, 商品期权保证金模型要求标的为期货"
+        );
+        let zero_ratio = HashMap::from([("m2701".to_string(), futures("m2701", dec!(10), dec!(0)))]);
+        assert_eq!(cause(&zero_ratio, &priced), "标的期货 m2701 的保证金率 0 不为正");
+        let registered = HashMap::from([("m2701".to_string(), futures("m2701", dec!(10), dec!(0.1)))]);
+        assert_eq!(cause(&registered, &HashMap::new()), "标的期货 m2701 没有价格");
+        let zero_price = HashMap::from([("m2701".to_string(), dec!(0))]);
+        assert_eq!(cause(&registered, &zero_price), "标的期货 m2701 的价格 0 不为正");
     }
 }

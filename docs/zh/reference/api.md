@@ -580,7 +580,8 @@ class InstrumentConfig:
 常用枚举（均可在 `akquant` 顶层直接访问）：
 
 - `InstrumentAssetTypeEnum`: `STOCK` / `FUTURES` / `FUND` / `OPTION`
-- `InstrumentOptionMarginModelEnum`: `RATIO` / `CHINA_SINGLE_LEG` / `US_BROKER_SINGLE_LEG` / `US_BROKER_SINGLE_LEG_VOL_ADJUSTED`
+- `InstrumentOptionMarginModelEnum`: `RATIO` / `CHINA_SINGLE_LEG` / `US_BROKER_SINGLE_LEG` / `US_BROKER_SINGLE_LEG_VOL_ADJUSTED` / `CHINA_COMMODITY`
+    *   `CHINA_SINGLE_LEG`（期权缺省）是沪深 ETF 期权口径；商品期货期权（大商所、郑商所、上期所、上期能源、广期所）请用 `CHINA_COMMODITY`：卖方保证金 = 权利金 + max(标的期货保证金 − ½ × 虚值额, ½ × 标的期货保证金)，每单位标的计算后乘交易单位（期权乘数）。标的期货须登记为 `FUTURES`，其 `margin_ratio` 即标的期货保证金率；标的未登记、不是期货、保证金率不为正或没有价格时，卖开被拒并写明原因。回测按期权与标的的最新价计算，与交易所日终按当日结算价计收的口径一致；CTP 盘中按 max(期权最新价, 期权昨结算价) 计权利金、按标的昨结算价计标的部分（权利金取价由经纪商参数决定），盘中数值会与回测不同。公式已用 SimNow 五个交易所的 30 张期权核对（交易成本查询与实际卖开）。
 - `InstrumentOptionTypeEnum`: `CALL` / `PUT`
 - `InstrumentSettlementTypeEnum`: `CASH` / `SETTLEMENT_PRICE` / `FORCE_CLOSE`
 
@@ -607,7 +608,7 @@ class InstrumentSnapshot:
     margin_ratio: float
     tick_size: float
     lot_size: float
-    option_margin_model: Optional[Literal["RATIO", "CHINA_SINGLE_LEG", "US_BROKER_SINGLE_LEG", "US_BROKER_SINGLE_LEG_VOL_ADJUSTED"]] = None
+    option_margin_model: Optional[Literal["RATIO", "CHINA_SINGLE_LEG", "US_BROKER_SINGLE_LEG", "US_BROKER_SINGLE_LEG_VOL_ADJUSTED", "CHINA_COMMODITY"]] = None
     option_type: Optional[Literal["CALL", "PUT"]] = None
     strike_price: Optional[float] = None
     expiry_date: Optional[int] = None  # YYYYMMDD

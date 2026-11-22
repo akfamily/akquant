@@ -2718,6 +2718,8 @@ def _option_margin_model_to_upper_name(
         return "US_BROKER_SINGLE_LEG"
     if "CHINA" in text and "SINGLE" in text:
         return "CHINA_SINGLE_LEG"
+    if "CHINA" in text and "COMMODITY" in text:
+        return "CHINA_COMMODITY"
     if "RATIO" in text:
         return "RATIO"
     raise ValueError(f"Unsupported option_margin_model: {value}")
@@ -5440,6 +5442,8 @@ def run_backtest(
                 return OptionMarginModel.USBrokerSingleLeg
             if s == "US_BROKER_SINGLE_LEG_VOL_ADJUSTED":
                 return OptionMarginModel.USBrokerSingleLegVolAdjusted
+            if s == "CHINA_COMMODITY":
+                return OptionMarginModel.ChinaCommodity
         raise ValueError(f"Unsupported option_margin_model: {val}")
 
     def _parse_settlement_type(
@@ -7005,6 +7009,8 @@ def run_from_checkpoint(
                 return OptionMarginModel.USBrokerSingleLeg
             if normalized == "US_BROKER_SINGLE_LEG_VOL_ADJUSTED":
                 return OptionMarginModel.USBrokerSingleLegVolAdjusted
+            if normalized == "CHINA_COMMODITY":
+                return OptionMarginModel.ChinaCommodity
         raise ValueError(f"Unsupported option_margin_model: {val}")
 
     def _parse_settlement_type(

@@ -83,6 +83,7 @@ InstrumentOptionMarginModel = Literal[
     "CHINA_SINGLE_LEG",
     "US_BROKER_SINGLE_LEG",
     "US_BROKER_SINGLE_LEG_VOL_ADJUSTED",
+    "CHINA_COMMODITY",
 ]
 
 
@@ -129,6 +130,7 @@ class InstrumentOptionMarginModelEnum(str, Enum):
     CHINA_SINGLE_LEG = "CHINA_SINGLE_LEG"
     US_BROKER_SINGLE_LEG = "US_BROKER_SINGLE_LEG"
     US_BROKER_SINGLE_LEG_VOL_ADJUSTED = "US_BROKER_SINGLE_LEG_VOL_ADJUSTED"
+    CHINA_COMMODITY = "CHINA_COMMODITY"
 
 
 InstrumentAssetTypeInput = Union[
@@ -212,7 +214,8 @@ class InstrumentConfig:
     :param strike_price: Strike price.
     :param expiry_date: Expiry date. Supports int (YYYYMMDD), date/datetime.
     :param underlying_symbol: Underlying asset symbol.
-    :param option_margin_model: 期权保证金模型，默认 "CHINA_SINGLE_LEG"。
+    :param option_margin_model: 期权保证金模型，默认 "CHINA_SINGLE_LEG"；商品期货期权用
+        "CHINA_COMMODITY"(标的期货须登记为 FUTURES, 保证金率取标的期货合约)。
     :param implied_volatility: 当前隐含波动率，用于波动率调整模式。
     :param reference_volatility: 参考波动率，用于波动率调整模式。
     :param settlement_type: Settlement mode for expiry handling.
@@ -308,6 +311,7 @@ class InstrumentConfig:
                 "CHINA_SINGLE_LEG",
                 "US_BROKER_SINGLE_LEG",
                 "US_BROKER_SINGLE_LEG_VOL_ADJUSTED",
+                "CHINA_COMMODITY",
             }:
                 raise ValueError(
                     f"Unsupported option_margin_model: {self.option_margin_model}"
