@@ -313,6 +313,8 @@ class OptionMarginModel:
     ChinaSingleLeg: typing.ClassVar["OptionMarginModel"]
     USBrokerSingleLeg: typing.ClassVar["OptionMarginModel"]
     USBrokerSingleLegVolAdjusted: typing.ClassVar["OptionMarginModel"]
+    ChinaCommodity: typing.ClassVar["OptionMarginModel"]
+    ChinaIndex: typing.ClassVar["OptionMarginModel"]
 
 class SettlementType:
     Physical: typing.ClassVar["SettlementType"]
