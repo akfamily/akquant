@@ -509,6 +509,16 @@ class BrokerExecution:
         """返回当前执行后端支持的能力标记."""
         return dict(self._submitter._get_execution_capabilities())
 
+    def request_quote(self, symbol: str) -> str:
+        """经柜台发出询价请求, 返回询价引用."""
+        request_quote = getattr(self._gw, "request_quote", None)
+        if not callable(request_quote):
+            raise RuntimeError(
+                f"柜台网关 {type(self._gw).__name__} 没有实现 "
+                "request_quote(symbol), 不能询价"
+            )
+        return str(request_quote(symbol))
+
     @property
     def state_cache(self) -> BrokerStateCache:
         """暴露底层状态缓存，便于测试/上层复用."""

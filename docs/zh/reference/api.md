@@ -1036,6 +1036,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `cancel_order(order_id: str | OrderReceipt | Order)`: 撤销指定订单。可传订单号、下单返回的 `OrderReceipt`（取首腿）或订单对象（取其 `id`）；其他类型抛 `TypeError`。
 *   `cancel_group(group_id: str | OrderReceipt)`: 按 `group_id` 撤销一个逻辑委托拆出的全部腿。传订单对象会抛 `TypeError`，撤单笔订单请用 `cancel_order`。
 *   `cancel_all_orders(symbol)`: 取消指定标的的所有挂单。如果不指定 `symbol`，则取消所有挂单。
+*   `request_quote(symbol) -> str | None`: 询价（ForQuote），请求做市商对合约报出双边价格。冷门期权（远月、深度虚值）盘口常常没有报价，询价后做市商按交易所规定在一定时间内报出买卖价，策略在随后的行情里看到盘口再正常下单；询价不是委托，不带价格与方向，不占资金。合约未登记时抛 `KeyError`。实盘（`trading_mode="broker_live"`）经柜台发出询价请求（CTP `ReqForQuoteInsert`）后立即返回询价引用，不等待：询价成功时柜台不回报；柜台或交易所拒绝时（如合约不存在）记一条 ERROR 日志并写明原因（配置了消息提醒时推送）。回测与 paper 没有做市商，询价不产生报价，记一次警告并返回 `None`。SimNow 实测：五个交易所的期权询价都受理（查询为“已接受”），期货合约也受理，同一合约连续询价未被限制；行情端订阅询价通知后没有收到推送；合约不存在时柜台回“148 无效的ExchangeID字段”（询价不填交易所，由柜台按合约补齐，找不到合约就补不上）。生产环境交易所对询价的品种与频率另有规定，以交易所为准。
 *   `place_oco(first_order_id, second_order_id, group_id=None) -> str`: 创建 OCO 订单组。组内任一订单成交后，另一订单会被自动撤单。
 *   `place_bracket(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...) -> str`: 创建 Bracket 订单。先提交进场单，进场成交后自动提交止损/止盈；当止损与止盈同时存在时会自动绑定 OCO。
 

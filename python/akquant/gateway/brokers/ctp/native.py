@@ -95,6 +95,8 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
         self.trade_callback: Callable[[dict[str, Any]], None] | None = None
         self.error_callback: Callable[[dict[str, Any]], None] | None = None
         self.order_ref_to_client_order_id: dict[str, str] = {}
+        # 已记过拒绝日志的询价引用(柜台对同一笔会回报 Rsp 与 ErrRtn 两次)
+        self._for_quote_rejected: set[str] = set()
         self.order_ref_to_symbol: dict[str, str] = {}
         self._account_query_timeout_sec = 2.0
         self._account_query_event = threading.Event()
@@ -241,6 +243,70 @@ class CTPTraderGateway(tdapi.CThostFtdcTraderSpi):  # type: ignore
             "session_id": self.session_id,
             "timestamp_ns": time.time_ns(),
         }
+
+    def request_quote(self, symbol: str) -> str:
+        """向做市商发出询价请求(``ReqForQuoteInsert``), 返回询价引用, 不等待.
+
+        SimNow 实测: 询价成功时柜台不回报(只能查询到"已接受"); 拒绝时(如合约
+        不存在)经 ``OnRspForQuoteInsert`` / ``OnErrRtnForQuoteInsert`` 回报, 在
+        ``_on_for_quote_error`` 记 ERROR 日志。交易所留空, 由柜台按合约补齐。
+
+        :param symbol: 合约代码
+        :return: 询价引用 ``ForQuoteRef``
+        :raises RuntimeError: 柜台未就绪或请求发送失败(带返回码)
+        """
+        if not self.can_trade():
+            raise RuntimeError("CTP trader is not ready for quote requests")
+        if self.api is None:
+            raise RuntimeError("CTP trader API is not initialized")
+        ref = str(self.order_ref)
+        self.order_ref += 1
+        request = tdapi.CThostFtdcInputForQuoteField()
+        request.BrokerID = self.broker_id
+        request.InvestorID = self.user_id
+        request.UserID = self.user_id
+        request.InstrumentID = symbol
+        request.ForQuoteRef = ref
+        self.req_id += 1
+        ret = self.api.ReqForQuoteInsert(request, self.req_id)
+        if ret != 0:
+            raise RuntimeError(
+                f"{symbol} 询价请求发送失败: ReqForQuoteInsert 返回 {ret}"
+            )
+        logger.info(
+            "CTP quote request sent: symbol=%s ref=%s",
+            symbol,
+            ref,
+            extra=self._log_extra(symbol=symbol),
+        )
+        return ref
+
+    def OnRspForQuoteInsert(
+        self, pInputForQuote: Any, pRspInfo: Any, nRequestID: int, bIsLast: bool
+    ) -> None:
+        """柜台拒绝询价."""
+        self._on_for_quote_error(pInputForQuote, pRspInfo)
+
+    def OnErrRtnForQuoteInsert(self, pInputForQuote: Any, pRspInfo: Any) -> None:
+        """交易所拒绝询价."""
+        self._on_for_quote_error(pInputForQuote, pRspInfo)
+
+    def _on_for_quote_error(self, field: Any, info: Any) -> None:
+        if info is None or info.ErrorID == 0:
+            return
+        ref = self._to_text(getattr(field, "ForQuoteRef", ""))
+        if ref in self._for_quote_rejected:
+            return
+        self._for_quote_rejected.add(ref)
+        symbol = self._to_text(getattr(field, "InstrumentID", ""))
+        logger.error(
+            "CTP quote request rejected: symbol=%s ref=%s error_id=%s msg=%s",
+            symbol,
+            ref,
+            info.ErrorID,
+            info.ErrorMsg,
+            extra=self._log_extra(symbol=symbol),
+        )
 
     def cancel_order(self, broker_order_id: str) -> None:
         """Send CTP cancel order request."""

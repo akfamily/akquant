@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **询价 `Strategy.request_quote(symbol)`**：请求做市商对合约报出双边价格，用于盘口没有报价的冷门期权。实盘（`broker_live`）经 CTP `ReqForQuoteInsert` 发出后立即返回询价引用；询价成功时柜台不回报，拒绝时记 ERROR 日志写明原因。回测与 paper 没有做市商，询价不产生报价，记一次警告并返回 `None`。SimNow 五个交易所实测受理。
+
 ## [0.3.95] - 2026-11-21
 
 > 规则版本仍为 2.5.0，回测结果不变。

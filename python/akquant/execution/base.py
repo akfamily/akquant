@@ -109,5 +109,8 @@ class ExecutionBackend(Protocol):
     def cancel_all_orders(self, symbol: str | None = None) -> None:
         """取消当前所有未完成的订单."""
 
+    def request_quote(self, symbol: str) -> str | None:
+        """询价: 请求做市商报价(实盘经柜台, 回测/paper 不产生报价), 返回询价引用."""
+
     def capabilities(self) -> dict[str, Any]:
         """返回当前执行后端支持的能力标记."""
