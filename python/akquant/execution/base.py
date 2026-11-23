@@ -3,7 +3,38 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol, TypedDict, runtime_checkable
+
+
+class _AccountRequired(TypedDict):
+    cash: float
+    equity: float
+    market_value: float
+    notional_value: float
+    frozen_cash: float
+    margin: float
+    used_margin: float
+    free_margin: float
+    unrealized_pnl: float
+    borrowed_cash: float
+    short_market_value: float
+    maintenance_ratio: float
+    account_mode: str
+    accrued_interest: float
+    daily_interest: float
+
+
+class AccountSnapshot(_AccountRequired, total=False):
+    """``get_account()`` 返回的字典的键; 回测与实盘两个执行后端都按它构造.
+
+    两边各写一份字面量时, 加键、改名很容易只改到一边, 按回测写的策略到实盘就
+    ``KeyError``。这里集中定义, 由类型检查保证两边不漏键、不多键。
+
+    ``available_cash`` 只有经柜台交易时才有(柜台给出的可用资金), 回测没有这个键。
+    对外的 ``get_account()`` 仍标注为普通字典, 不要求调用方改类型。
+    """
+
+    available_cash: float
 
 
 @dataclass(frozen=True)

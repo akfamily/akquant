@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
+from ..execution.base import AccountSnapshot
 from ..log import get_logger
 
 logger = get_logger("gateway.stats")
@@ -28,7 +29,7 @@ def _account_to_dict(acct: Any) -> dict[str, Any]:
     if market_value is None:
         market_value = equity - cash
     margin = reported("margin") or 0.0
-    return {
+    snapshot: AccountSnapshot = {
         "cash": cash,
         "available_cash": available,
         "equity": equity,
@@ -46,6 +47,7 @@ def _account_to_dict(acct: Any) -> dict[str, Any]:
         "accrued_interest": 0.0,
         "daily_interest": 0.0,
     }
+    return cast("dict[str, Any]", snapshot)
 
 
 def _resolve_symbol(strategy: Any, symbol: str | None) -> str:

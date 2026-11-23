@@ -7,7 +7,7 @@ from .config import bare_slippage_error
 if TYPE_CHECKING:
     from .backtest.fill_mode import FillMode
 from .execution.asset_type import normalize_asset_type
-from .execution.base import PositionDetail, PositionLeg
+from .execution.base import AccountSnapshot, PositionDetail, PositionLeg
 from .execution.receipt import OrderLeg, OrderReceipt
 from .log import get_logger
 
@@ -2012,7 +2012,7 @@ def _sim_get_account(strategy: Any) -> Dict[str, Any]:
     # 期货保证金账户下, cash 仅为现金余额(开仓不扣保证金).
     # 真正可用于新开仓的是 free_margin.
     free_margin = equity - margin
-    return {
+    snapshot: AccountSnapshot = {
         "cash": cash,
         "equity": equity,
         "market_value": market_value,
@@ -2029,6 +2029,7 @@ def _sim_get_account(strategy: Any) -> Dict[str, Any]:
         "accrued_interest": accrued_interest,
         "daily_interest": daily_interest,
     }
+    return cast(Dict[str, Any], snapshot)
 
 
 def _sim_capabilities(strategy: Any) -> Dict[str, Any]:
