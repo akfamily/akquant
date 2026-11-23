@@ -341,6 +341,8 @@ class CTPTraderAdapter:
                 "close_today",
                 "close_yesterday",
             ),
+            # CTP 报单必须带开平标志, 网关把 auto 当开仓: auto 由核心按持仓定开平
+            features=frozenset({"explicit_offset"}),
         )
 
     def start(self) -> None:

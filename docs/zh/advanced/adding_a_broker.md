@@ -55,7 +55,9 @@ Builder 内部通常做三件事：校验必填 `kwargs`、构造 `TraderGateway
   未声明的 key 会在校验时被拒绝（`validate_broker_extra` 会抛
   `RuntimeError`，列出未声明字段与已声明集合）。
 - `features: frozenset[str]`：任意能力标志的开放集合，用于策略侧按需探测
-  "这个 broker 支不支持某个特性"，不做强类型约束。
+  "这个 broker 支不支持某个特性"，不做强类型约束。核心认识两个标志：
+    - `"explicit_offset"`：柜台的报单必须带明确的开平标志，网关不认 `auto`（如 CTP）。声明后核心把每笔 `auto` 委托按持仓定成 `close` / `close_today` / `close_yesterday` / `open` 腿再交给 `place_order`；持仓查不到时本地拒单。**不认 `auto` 却不声明，平仓会被报成反向开仓。**
+    - `"auto_reverse"`：柜台自己会把超过持仓的委托拆成平仓加开仓，核心不再拆。
 - 其余字段（`position_effect`、`reduce_only`、`supports_short_sell`、
   `supported_position_effects` 等）描述开平仓/做空等语义是否可用，按 broker
   实际能力如实填写即可，不确定的保持默认值（保守）。

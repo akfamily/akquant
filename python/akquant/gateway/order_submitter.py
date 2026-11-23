@@ -121,6 +121,76 @@ def find_live_close_position(
     return None
 
 
+class PositionEffectUnresolved(RuntimeError):
+    """``auto`` 委托定不出开平: 柜台要求明确的开平标志, 而持仓查不到.
+
+    下单器把它作为本地拒单回吐给策略(``on_reject``), 不向柜台报单。猜成开仓可能
+    在已有反向持仓时开出锁仓, 猜成平仓又可能被柜台拒绝, 所以不猜。
+    """
+
+
+def _closable_quantity(
+    position: Any, payload_field: Callable[[Any, str], Any]
+) -> float:
+    """持仓行的可平数量.
+
+    柜台报了可用量时优先用今昨可用量之和, 其次 ``available_quantity``(即便为 0 也
+    不回退: 全部被平仓挂单冻结就是不可平); 完全不提供可用量字段时才用持仓数量。
+    """
+    raw_today = payload_field(position, "available_today_quantity")
+    raw_yesterday = payload_field(position, "available_yesterday_quantity")
+    raw_available = payload_field(position, "available_quantity")
+    if all(value is None for value in (raw_today, raw_yesterday, raw_available)):
+        return abs(float(payload_field(position, "quantity") or 0.0))
+    available_split = max(0.0, float(raw_today or 0.0)) + max(
+        0.0, float(raw_yesterday or 0.0)
+    )
+    if available_split > 0:
+        return available_split
+    return max(0.0, float(raw_available or 0.0))
+
+
+def _resolve_explicit_auto_legs(
+    trader_gateway: Any,
+    capability: BrokerCapability,
+    symbol: str,
+    side: str,
+    quantity: float,
+    reduce_only: bool,
+    supported_effects: set[str],
+    payload_field: Callable[[Any, str], Any],
+) -> list[tuple[str, float]]:
+    """柜台不认 ``auto`` 时把它定成明确的腿: 先平到可平数量, 余量开仓.
+
+    与回测 ``auto`` 的口径相同(可平数量以内平仓, 超出部分开仓)。持仓只查一次。
+    查不到持仓时抛 :class:`PositionEffectUnresolved`。
+    """
+    query_positions = getattr(trader_gateway, "query_positions", None)
+    if not callable(query_positions):
+        raise PositionEffectUnresolved(
+            f"{symbol} 的 auto 委托无法确定开平: 交易网关不提供持仓查询"
+        )
+    try:
+        positions = query_positions()
+    except Exception as exc:  # noqa: BLE001 查询失败不猜开平, 转成本地拒单
+        raise PositionEffectUnresolved(
+            f"{symbol} 的 auto 委托无法确定开平: 持仓查询失败({exc})"
+        ) from exc
+    target = find_live_close_position(positions, symbol, side, payload_field)
+    closable = _closable_quantity(target, payload_field) if target is not None else 0.0
+    close_qty = min(quantity, closable)
+    legs: list[tuple[str, float]] = []
+    if close_qty > 0:
+        legs.extend(
+            _split_today_yesterday(target, close_qty, capability, supported_effects)
+        )
+    if quantity > close_qty and not reduce_only:
+        legs.append(("open", quantity - close_qty))
+    if not legs:
+        raise PositionEffectUnresolved(f"{symbol} 的只减仓委托没有可平持仓")
+    return legs
+
+
 def _split_close_legs(
     trader_gateway: Any,
     capability: BrokerCapability,
@@ -146,7 +216,24 @@ def _split_close_legs(
     except Exception:
         return [("close", quantity)]
     target_position = find_live_close_position(positions, symbol, side, payload_field)
-    if target_position is None:
+    return _split_today_yesterday(
+        target_position, quantity, capability, supported_effects
+    )
+
+
+def _split_today_yesterday(
+    target_position: Any,
+    quantity: float,
+    capability: BrokerCapability,
+    supported_effects: set[str],
+) -> list[tuple[str, float]]:
+    """按已查到的持仓行把平仓量拆成平今、平昨; 拆不了时整段 close."""
+    if (
+        target_position is None
+        or not capability.position_details
+        or "close_today" not in supported_effects
+        or "close_yesterday" not in supported_effects
+    ):
         return [("close", quantity)]
     available_today = max(
         0.0, float(getattr(target_position, "available_today_quantity", 0.0) or 0.0)
@@ -188,12 +275,28 @@ def resolve_live_order_legs(
     declares it handles reversal itself via `"auto_reverse" in capability.features`.
     """
     normalized_effect = str(position_effect).strip().lower()
-    if quantity <= 0 or reduce_only:
-        return [(normalized_effect, quantity)]
-
     supported_effects = {
         str(item).strip().lower() for item in capability.supported_position_effects
     }
+    # 柜台的报单必须带明确的开平标志(如 CTP 把 auto 当开仓): auto 由核心定开平。
+    # 不这样做的话, 委托量在可平数量以内时 auto 原样传下去, 平仓变成反向开仓。
+    if (
+        quantity > 0
+        and normalized_effect == "auto"
+        and "explicit_offset" in capability.features
+    ):
+        return _resolve_explicit_auto_legs(
+            trader_gateway,
+            capability,
+            symbol,
+            side,
+            quantity,
+            reduce_only,
+            supported_effects,
+            payload_field,
+        )
+    if quantity <= 0 or reduce_only:
+        return [(normalized_effect, quantity)]
 
     # 反手：auto 单卖出量超过反向持仓可用量时，核心拆成 平仓 + 开仓。
     # broker 若声明自身会反手(auto_reverse)，则不拆。
@@ -212,24 +315,8 @@ def resolve_live_order_legs(
         target = find_live_close_position(positions, symbol, side, payload_field)
         if target is None:
             return [(normalized_effect, quantity)]
-        raw_today = payload_field(target, "available_today_quantity")
-        raw_yesterday = payload_field(target, "available_yesterday_quantity")
-        raw_available = payload_field(target, "available_quantity")
-        has_availability = any(
-            value is not None for value in (raw_today, raw_yesterday, raw_available)
-        )
-        available_split = max(0.0, float(raw_today or 0.0)) + max(
-            0.0, float(raw_yesterday or 0.0)
-        )
-        available_quantity = max(0.0, float(raw_available or 0.0))
-        raw_quantity = abs(float(payload_field(target, "quantity") or 0.0))
-        # 可平口径与 _split_close_legs 一致: broker 报可用量时优先用今昨可用量,
-        # 其次 available_quantity(即便为 0 也不回退——全冻结应交由下方 closable<=0
-        # 门槛退回单腿 auto); 仅当 broker 完全不提供可用量字段时才退回原始持仓。
-        if has_availability:
-            closable = available_split if available_split > 0 else available_quantity
-        else:
-            closable = raw_quantity
+        # 全冻结(可平为 0)时退回单腿 auto, 交给柜台。
+        closable = _closable_quantity(target, payload_field)
         if closable <= 0 or quantity <= closable:
             return [(normalized_effect, quantity)]
         close_qty = closable
@@ -799,16 +886,36 @@ class BrokerOrderSubmitter:
                 reason=reject_reason,
             )
             return OrderReceipt(group_id="", order_ids=(), legs=(), failure="rejected")
-        order_legs = resolve_live_order_legs(
-            trader_gateway=self._trader_gateway,
-            capability=capability,
-            symbol=symbol,
-            side=side,
-            quantity=quantity,
-            position_effect=normalized_position_effect,
-            reduce_only=reduce_only,
-            payload_field=self._payload_field,
-        )
+        try:
+            order_legs = resolve_live_order_legs(
+                trader_gateway=self._trader_gateway,
+                capability=capability,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                position_effect=normalized_position_effect,
+                reduce_only=reduce_only,
+                payload_field=self._payload_field,
+            )
+        except PositionEffectUnresolved as exc:
+            # 定不出开平: 作为本地拒单回吐给策略, 不向柜台报单
+            record_reject(
+                strategy_id=owner_strategy_id,
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                client_order_id="",
+                reason=str(exc),
+            )
+            self._emit_risk_reject(
+                symbol=symbol,
+                side=side,
+                quantity=quantity,
+                price=price,
+                owner_strategy_id=owner_strategy_id,
+                reason=str(exc),
+            )
+            return OrderReceipt(group_id="", order_ids=(), legs=(), failure="rejected")
         request_client_order_id = client_order_id or self._next_client_order_id()
         client_order_ids = build_live_order_client_ids(
             request_client_order_id=request_client_order_id,

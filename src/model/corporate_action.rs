@@ -88,8 +88,7 @@ impl CorporateAction {
         action_type: CorporateActionType,
         value: &Bound<'_, PyAny>,
     ) -> PyResult<Self> {
-        use crate::model::market_data::extract_decimal;
-        let val = extract_decimal(value)?;
+        let val = extract_action_value(value)?;
         let symbol = symbol.trim().to_string();
         validate_corporate_action_value(&symbol, action_type.clone(), val)?;
         Ok(Self {
@@ -108,12 +107,36 @@ impl CorporateAction {
 
     #[setter]
     fn set_value(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        use crate::model::market_data::extract_decimal;
-        let val = extract_decimal(value)?;
+        let val = extract_action_value(value)?;
         validate_corporate_action_value(&self.symbol, self.action_type.clone(), val)?;
         self.value = val;
         Ok(())
     }
+}
+
+/// 把浮点数按它最短的十进制写法转成 Decimal: `1.44` 就是 1.44。
+///
+/// `Decimal::from_f64_retain` 会保留浮点数的二进制尾数(1.44 变成
+/// 1.43999999999999994...)。比例带着这个尾数去乘持仓, 拆股后的持仓就比应有的整数少
+/// 一点点, 全仓卖出时因"可用持仓不足"被拒(#460)。
+fn decimal_from_f64_shortest(value: f64) -> Option<Decimal> {
+    use std::str::FromStr;
+    if !value.is_finite() {
+        return None;
+    }
+    // f64 的 Display 给出能还原回同一个浮点数的最短十进制写法, 不用科学计数法。
+    Decimal::from_str(&value.to_string())
+        .ok()
+        .or_else(|| Decimal::from_f64_retain(value))
+}
+
+/// 公司行动的数值(拆股比例、每股分红): 浮点数按十进制写法取值, 其余同 `extract_decimal`。
+fn extract_action_value(value: &Bound<'_, PyAny>) -> PyResult<Decimal> {
+    if let Ok(float_value) = value.extract::<f64>() {
+        return decimal_from_f64_shortest(float_value)
+            .ok_or_else(|| PyValueError::new_err("Invalid float"));
+    }
+    crate::model::market_data::extract_decimal(value)
 }
 
 #[cfg(test)]
@@ -142,5 +165,23 @@ mod tests {
         let result =
             validate_corporate_action_value("AAPL", CorporateActionType::Split, Decimal::new(1, 5));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn float_ratio_is_taken_at_its_decimal_spelling() {
+        use std::str::FromStr;
+        for (value, expected) in [(1.44, "1.44"), (1.45, "1.45"), (0.35, "0.35"), (2.0, "2")] {
+            assert_eq!(
+                decimal_from_f64_shortest(value),
+                Some(Decimal::from_str(expected).unwrap())
+            );
+        }
+        // 14500 股按 1.44 拆股得到整 20880 股, 不带尾数
+        assert_eq!(
+            Decimal::from(14500) * decimal_from_f64_shortest(1.44).unwrap(),
+            Decimal::from(20880)
+        );
+        assert_eq!(decimal_from_f64_shortest(f64::NAN), None);
+        assert_eq!(decimal_from_f64_shortest(f64::INFINITY), None);
     }
 }

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from types import SimpleNamespace
 
 import pytest
 from akquant import BarAggregator, DataFeed
@@ -92,7 +93,7 @@ def test_ctp_bar_only_emits_end_stamped_bars(monkeypatch: pytest.MonkeyPatch) ->
     # 右闭分桶: 09:31:01 与 09:31:30 属于 (09:31, 09:32], 09:32:05 封闭它
     clock = iter([t0 + S, t0 + 30 * S, t0 + minute + 5 * S])
     monkeypatch.setattr(native, "HAS_OPENCTP", True)
-    monkeypatch.setattr(native.time, "time_ns", lambda: next(clock))
+    monkeypatch.setattr(native, "time", SimpleNamespace(time_ns=lambda: next(clock)))
     feed = DataFeed()
     gw = native.CTPMarketGateway(
         feed=feed, symbols=["rb2401"], front_url="tcp://test", emit_bars=True
