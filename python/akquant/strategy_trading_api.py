@@ -6,9 +6,9 @@ from .config import bare_slippage_error
 
 if TYPE_CHECKING:
     from .backtest.fill_mode import FillMode
+from .execution.asset_type import normalize_asset_type
 from .execution.base import PositionDetail, PositionLeg
-from .gateway.broker_models import normalize_asset_type
-from .gateway.order_receipt import OrderLeg, OrderReceipt
+from .execution.receipt import OrderLeg, OrderReceipt
 from .log import get_logger
 
 logger = get_logger("trading")

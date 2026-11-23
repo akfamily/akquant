@@ -38,7 +38,7 @@ from .akquant import (
 from .bar_batch import flush_at_replay_end as _flush_bars_at_replay_end
 from .chart import CANDLE_ROLES
 from .execution.base import PositionDetail
-from .gateway.order_receipt import OrderReceipt
+from .execution.receipt import OrderReceipt
 from .indicator_declaration import (
     DEFAULT_LOOKBACK,
     UNKNOWN_LABEL,

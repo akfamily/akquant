@@ -53,6 +53,7 @@ from .config import (
 )
 from .data import DataLoader
 from .execution.base import PositionDetail, PositionLeg
+from .execution.receipt import OrderLeg, OrderReceipt
 from .feed_adapter import (
     CSVFeedAdapter,
     DataFeedAdapter,
@@ -61,7 +62,6 @@ from .feed_adapter import (
     ReplayFeedAdapter,
     ResampledFeedAdapter,
 )
-from .gateway.order_receipt import OrderLeg, OrderReceipt
 from .indicator_declaration import IndicatorBinding, IndicatorDeclaration
 from .indicator_recording import IndicatorRecorder, IndicatorSink
 from .indicator_script import Indicator, IndicatorCannotTradeError

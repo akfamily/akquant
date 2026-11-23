@@ -2,6 +2,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+# 品种类型归一化已挪到 akquant.execution.asset_type; 这里转发, 旧导入路径照常可用。
+from ..execution.asset_type import normalize_asset_type as normalize_asset_type
+
 
 class UnifiedOrderStatus(str, Enum):
     """Canonical order status used by broker adapters."""
@@ -117,29 +120,6 @@ def normalize_position_effect(position_effect: str | None) -> str:
             "close_today, close_yesterday"
         )
     return normalized
-
-
-# 规范集(文档参考): stock/option/future/fund/bond/index/fx/crypto。
-# 别名映射到规范名；规范集外的值原样放行(保持对新品种可扩展)。
-_ASSET_TYPE_ALIASES = {
-    "opt": "option",
-    "stk": "stock",
-    "fut": "future",
-    "futures": "future",
-    "etf": "fund",
-}
-
-
-def normalize_asset_type(value: str | None) -> str:
-    """Normalize an asset type to its canonical name; pass unknowns through.
-
-    Canonical names: stock, option, future, fund, bond, index, fx, crypto.
-    Unknown values are returned lowercased so new products need no core change.
-    """
-    text = str(value or "stock").strip().lower()
-    if not text:
-        return "stock"
-    return _ASSET_TYPE_ALIASES.get(text, text)
 
 
 def validate_broker_extra(

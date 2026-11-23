@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from .. import strategy_trading_api as api
-from ..gateway.order_receipt import OrderReceipt
 from .base import PositionDetail
+from .receipt import OrderReceipt
 
 
 class SimExecution:
