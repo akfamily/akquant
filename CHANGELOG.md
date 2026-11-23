@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **`import akquant` 不再加载柜台适配器，也不再发现和导入 broker 插件**：内置网关（`ctp`、`replay`）与 `akquant.brokers` 入口点插件的注册，由导入时改为第一次用到网关注册表时（`run_live`、`create_gateway_bundle`、`register_broker`、`get_broker_builder`、`list_registered_brokers` 等），与策略加载器插件的做法一致。装有 broker 插件的环境里，只做回测的进程不再连带导入插件的 HTTP、WebSocket 依赖，`import akquant` 约快 110 毫秒（本机实测 680 → 565 毫秒）。用法不变：用户登记的同名网关仍覆盖内置的；`from akquant.gateway import CTPTraderGateway` 等写法照常可用。依赖“导入 akquant 时插件代码已执行”这一副作用的代码需要改为显式导入插件包。
+- **下单回执与品种类型归一化的定义挪出网关包**：`OrderReceipt`、`OrderLeg` 定义在 `akquant.execution.receipt`，`normalize_asset_type` 定义在 `akquant.execution.asset_type`。`akquant.OrderReceipt`、`akquant.gateway.order_receipt`、`akquant.gateway.broker_models` 等既有导入路径照常可用，取到的是同一个对象。
+
 ## [0.3.95] - 2026-11-21
 
 > 规则版本仍为 2.5.0，回测结果不变。
