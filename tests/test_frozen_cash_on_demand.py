@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """回测中 get_account()["frozen_cash"] 的取值.
 
-冻结资金 = 在途订单成交后多占用的保证金。引擎在回测运行期间不再每根 bar 预先算好,
-而是策略读到时才算; 这里锁定读到的数值, 以及"不读也不影响别的"。
+冻结资金 = 在途订单按各自委托价估算、成交后多占用的保证金。引擎在回测运行期间不再
+每根 bar 预先算好, 而是策略读到时才算; 这里锁定读到的数值, 以及"不读也不影响别的"。
 """
 
 from typing import Any, Dict, List
@@ -54,8 +54,8 @@ def _run(cls: Any) -> Any:
     return holder["seen"], result
 
 
-def test_resting_order_reserves_margin_at_current_price() -> None:
-    """挂着一笔不会成交的限价买单: 冻结资金 = 未成交数量 * 当前价, 撤单后归零."""
+def test_resting_order_reserves_margin_at_its_limit_price() -> None:
+    """挂着一笔不会成交的限价买单: 冻结资金 = 未成交数量 * 委托价, 撤单后归零."""
 
     class S(_Base):
         def on_bar(self, bar: Any) -> None:
@@ -81,10 +81,10 @@ def test_resting_order_reserves_margin_at_current_price() -> None:
     # 第 1 根: 还没有在途订单
     assert by_n[1]["open_orders"] == 0
     assert by_n[1]["frozen"] == 0.0
-    # 第 2、3 根: 限价 1.0 的买单挂着, 按当根收盘价计
+    # 第 2、3 根: 限价 1.0 的买单挂着, 按委托价计, 不随行情变
     for n in (2, 3):
         assert by_n[n]["open_orders"] == 1
-        assert by_n[n]["frozen"] == 200 * CLOSES[n - 1]
+        assert by_n[n]["frozen"] == 200 * 1.0
         assert by_n[n]["again"] == by_n[n]["frozen"]
     # 第 3 根撤单后: 第 4、5 根没有在途订单
     for n in (4, 5):
@@ -116,7 +116,7 @@ def test_existing_position_is_not_counted() -> None:
     assert by_n[2]["frozen"] == 0.0
     for n in (3, 4, 5):
         assert by_n[n]["position"] == 300
-        assert by_n[n]["frozen"] == 100 * CLOSES[n - 1]
+        assert by_n[n]["frozen"] == 100 * 1.0
 
 
 def test_reading_frozen_cash_does_not_change_results() -> None:

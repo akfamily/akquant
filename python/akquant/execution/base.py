@@ -6,15 +6,32 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, TypedDict, runtime_checkable
 
 
-class _AccountRequired(TypedDict):
+class AccountSnapshot(TypedDict):
+    """``get_account()`` 返回的字典; 回测与实盘两个执行后端都按它构造, 键完全一致.
+
+    三项资金满足 ``equity == margin + frozen_cash + available_cash``: 总权益 =
+    持仓占用 + 挂单冻结 + 可用资金。回测里严格成立; 经柜台交易时三项各取柜台给出
+    的值, 柜台的冻结还含手续费等, 不保证分毫不差。
+
+    两边各写一份字面量时, 加键、改名很容易只改到一边。这里集中定义, 由类型检查保证
+    两边不漏键、不多键。
+    """
+
+    #: 现金余额。期货保证金账户下开仓不扣现金, 它不是可用资金。
     cash: float
+    #: 总权益。
     equity: float
+    #: 持仓市值(带符号)。保证金账户里的期货不计入。
     market_value: float
+    #: 持仓名义价值。
     notional_value: float
-    frozen_cash: float
+    #: 持仓占用的保证金; 现金账户里的股票按全额市值计。
     margin: float
-    used_margin: float
-    free_margin: float
+    #: 未完成委托冻结的资金: 按委托价估算, 只计会增加占用的委托。
+    frozen_cash: float
+    #: 可用资金 = equity - margin - frozen_cash, 即还能用于新开仓的资金。
+    #: 权益不足以覆盖占用与冻结时为负数。
+    available_cash: float
     unrealized_pnl: float
     borrowed_cash: float
     short_market_value: float
@@ -22,19 +39,6 @@ class _AccountRequired(TypedDict):
     account_mode: str
     accrued_interest: float
     daily_interest: float
-
-
-class AccountSnapshot(_AccountRequired, total=False):
-    """``get_account()`` 返回的字典的键; 回测与实盘两个执行后端都按它构造.
-
-    两边各写一份字面量时, 加键、改名很容易只改到一边, 按回测写的策略到实盘就
-    ``KeyError``。这里集中定义, 由类型检查保证两边不漏键、不多键。
-
-    ``available_cash`` 只有经柜台交易时才有(柜台给出的可用资金), 回测没有这个键。
-    对外的 ``get_account()`` 仍标注为普通字典, 不要求调用方改类型。
-    """
-
-    available_cash: float
 
 
 @dataclass(frozen=True)
@@ -119,7 +123,7 @@ class ExecutionBackend(Protocol):
     def get_order(self, order_id: str) -> Any | None:
         """按订单号获取订单."""
 
-    def get_account(self) -> dict[str, Any]:
+    def get_account(self) -> AccountSnapshot:
         """获取账户信息."""
 
     def get_portfolio_value(self) -> float:

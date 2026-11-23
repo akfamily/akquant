@@ -519,50 +519,29 @@ impl Engine {
         )
     }
 
-    /// Cash/margin reserved by open (non-terminal) orders: the incremental used
-    /// margin they would consume beyond the current portfolio. Reported as the
+    /// Cash/margin reserved by open (non-terminal) orders. Reported as the
     /// account's `frozen_cash`, computed in Rust so it cannot drift from the
     /// engine's own margin accounting (the Python re-implementation was removed).
-    ///
-    /// `base_used_margin`: 当前组合的占用保证金, 即同一时刻账户指标里的
-    /// `used_margin`(调用方刚算过, 不再重算一遍)。
-    pub(crate) fn current_frozen_cash(
-        &self,
-        active_orders: &[Order],
-        base_used_margin: Decimal,
-    ) -> Decimal {
+    /// 口径见 `crate::account::frozen_cash`。
+    pub(crate) fn current_frozen_cash(&self, active_orders: &[Order]) -> Decimal {
         let stock_ratio_override =
             crate::account::stock_margin_ratio_override(&self.risk_manager.config);
         let prices = self.last_prices.read().expect("last_prices 读锁被污染");
-        debug_assert_eq!(
-            base_used_margin,
-            self.state.portfolio.calculate_used_margin_with_stock_ratio(
-                &prices,
-                &self.instruments,
-                stock_ratio_override,
-            ),
-            "传入的占用保证金与按当前组合现算的不一致"
-        );
         crate::account::frozen_cash(
             &self.state.portfolio.positions,
             active_orders,
             &prices,
             &self.instruments,
             stock_ratio_override,
-            base_used_margin,
         )
     }
 
     /// 交给策略上下文的冻结资金。
     ///
-    /// 多数策略回调并不读它, 而有在途订单时算一次要把全部持仓的保证金过一遍。`run()`
+    /// 多数策略回调并不读它, 而有在途订单时算一次要把每笔在途订单投影一遍。`run()`
     /// 驱动管线期间(合约表、风控配置不变, 见 `run_instruments`)只把输入交给上下文,
     /// 策略真读到时再算; 其余时候(以及没有占用资金的在途订单时)当场给出数值。
-    fn frozen_cash_for_context(
-        &self,
-        active_orders: &[Order],
-        base_used_margin: Decimal,
-    ) -> crate::context::FrozenCash {
+    fn frozen_cash_for_context(&self, active_orders: &[Order]) -> crate::context::FrozenCash {
         use crate::context::{FrozenCash, FrozenCashInputs};
         if !active_orders
             .iter()
@@ -572,20 +551,19 @@ impl Engine {
         }
         let Some(instruments) = self.run_instruments.as_ref() else {
             return FrozenCash::Known(
-                self.current_frozen_cash(active_orders, base_used_margin)
+                self.current_frozen_cash(active_orders)
                     .to_f64()
                     .unwrap_or_default(),
             );
         };
         FrozenCash::Deferred(FrozenCashInputs {
-            base_used_margin,
             instruments: Arc::clone(instruments),
             stock_margin_ratio_override: crate::account::stock_margin_ratio_override(
                 &self.risk_manager.config,
             ),
             #[cfg(debug_assertions)]
             expected: self
-                .current_frozen_cash(active_orders, base_used_margin)
+                .current_frozen_cash(active_orders)
                 .to_f64()
                 .unwrap_or_default(),
         })
@@ -1819,7 +1797,7 @@ impl Engine {
             initial_cash: self.initial_cash,
         };
         let position_entry_prices = self.build_position_entry_prices();
-        let frozen_cash = self.frozen_cash_for_context(&active_orders, account_metrics.used_margin);
+        let frozen_cash = self.frozen_cash_for_context(&active_orders);
         if let Some(existing_ctx) = self
             .strategy_contexts
             .get(slot_index)
@@ -2241,7 +2219,7 @@ impl Engine {
             initial_cash: self.initial_cash,
         };
         let position_entry_prices = self.build_position_entry_prices();
-        let frozen_cash = self.frozen_cash_for_context(&active_orders, account_metrics.used_margin);
+        let frozen_cash = self.frozen_cash_for_context(&active_orders);
         // Create a temporary context for the strategy to use
         StrategyContext::new(crate::context::ContextInit {
             cash: self.state.portfolio.cash,

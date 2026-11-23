@@ -256,7 +256,7 @@ class UnifiedAccount:
     - ``market_value`` 持仓市值: 退回 ``equity - cash``。有在途/冻结资金或负债时两者
       并不相等。
     - ``frozen_cash`` 挂单冻结的资金: 记 0。
-    - ``margin`` 持仓占用的保证金: 记 0; ``free_margin`` 按 ``equity - margin`` 算。
+    - ``margin`` 持仓占用的保证金: 记 0。
     - ``unrealized_pnl`` 持仓浮动盈亏: 记 0。
     """
 

@@ -10,7 +10,7 @@ def test_streaming_indicator_sink_is_public() -> None:
 
 
 def test_engine_rule_version_is_2_3_1() -> None:
-    """股票类日内 K 线改为从交易时段的连续竞价起点起算, 规则版本为 2.5.0."""
+    """账户资金口径统一(frozen_cash 按委托价、不互抵), 规则版本为 2.5.1."""
     import akquant
 
-    assert akquant.__engine_rule_version__ == "2.5.0"
+    assert akquant.__engine_rule_version__ == "2.5.1"

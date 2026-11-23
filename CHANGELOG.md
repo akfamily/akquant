@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **破坏性：`get_account()` 的资金口径统一为“总权益 = 持仓占用 + 挂单冻结 + 可用资金”，回测与实盘的键完全一致**（规则版本 2.5.0 → 2.5.1）。三项满足 `equity == margin + frozen_cash + available_cash`，回测里严格成立，经柜台交易时三项各取柜台的值。具体变化：
+    - **回测新增 `available_cash`**（可用资金 = `equity - margin - frozen_cash`），此前只有实盘有这个键，在实盘里用了它的策略拿去回测会 `KeyError`。权益不足以覆盖占用与冻结时为负数。
+    - **删除 `free_margin`**：它等于 `equity - margin`，不扣挂单冻结，有挂单时偏大。改用 `available_cash`；没有挂单时两者相等。
+    - **删除 `used_margin`**：与 `margin` 是同一个值。改用 `margin`。
+    - **`frozen_cash` 的算法改了，读数会变**：每笔未完成委托按自己的委托价估算（此前一律按最新价；没有委托价的仍用最新价）；只累计会增加占用的委托，挂着的卖出、平仓单不占资金，也不再抵掉买单的冻结（此前买卖挂单互抵，挂一笔卖单会让冻结变小）；“先平后开”的反手，开仓腿的占用现在算得出来（此前为 0）。例：持有 1000 股、最新价 10，挂限价 9 买 2000 股，冻结由 20000 变为 18000；再挂一笔卖单后仍是 18000（此前降到 15000）。不含手续费。
+    - `get_account()` 的返回类型标注由 `Dict[str, Any]` 改为 `AccountSnapshot`（`TypedDict`，定义在 `akquant.execution.base`），编辑器能补全键名，类型检查能查出写错的键。运行时仍是普通字典。把返回值赋给标注为 `Dict[str, Any]` 的变量时，类型检查会报错，改标注为 `AccountSnapshot` 或去掉标注即可。
+    - 撮合与下单风控不读这些值，成交结果不变；按 `frozen_cash`、`free_margin` 定量的策略结果会变，所以规则版本升了一位。`self.cash` 与 `get_account()["cash"]` 仍是现金余额（文档此前写成“可用资金”，已改正）；`self.buying_power` 不变。
 - **`import akquant` 不再加载柜台适配器，也不再发现和导入 broker 插件**：内置网关（`ctp`、`replay`）与 `akquant.brokers` 入口点插件的注册，由导入时改为第一次用到网关注册表时（`run_live`、`create_gateway_bundle`、`register_broker`、`get_broker_builder`、`list_registered_brokers` 等），与策略加载器插件的做法一致。装有 broker 插件的环境里，只做回测的进程不再连带导入插件的 HTTP、WebSocket 依赖，`import akquant` 约快 110 毫秒（本机实测 680 → 565 毫秒）。用法不变：用户登记的同名网关仍覆盖内置的；`from akquant.gateway import CTPTraderGateway` 等写法照常可用。依赖“导入 akquant 时插件代码已执行”这一副作用的代码需要改为显式导入插件包。
 - **下单回执与品种类型归一化的定义挪出网关包**：`OrderReceipt`、`OrderLeg` 定义在 `akquant.execution.receipt`，`normalize_asset_type` 定义在 `akquant.execution.asset_type`。`akquant.OrderReceipt`、`akquant.gateway.order_receipt`、`akquant.gateway.broker_models` 等既有导入路径照常可用，取到的是同一个对象。
 

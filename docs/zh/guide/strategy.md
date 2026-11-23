@@ -383,15 +383,16 @@ print(
 如果策略运行在期货保证金账户语义下，还应重点关注这些字段：
 
 - `snap["equity"]`: 当前账户权益。
-- `snap["used_margin"]` / `snap["margin"]`: 当前已占用保证金。
-- `snap["free_margin"]`: 可用保证金（`equity - used_margin`），即可用于新开仓的资金；下单因保证金不足被拒时日志里的 `Available` 就是此值，不要用 `cash` 去比较。
+- `snap["margin"]`: 持仓占用的保证金。
+- `snap["frozen_cash"]`: 未完成委托冻结的资金，按委托价估算；挂着的卖出、平仓单不占资金。
+- `snap["available_cash"]`: 可用资金（`equity - margin - frozen_cash`），即还能用于新开仓的资金。下单因资金不足被拒时，日志里的 `Available` 与它口径相近（另按 `safety_margin` 折减）——不要拿 `cash` 去比较。
 - `snap["notional_value"]`: 当前期货名义敞口。
 - `snap["unrealized_pnl"]`: 当前浮动盈亏。
 
 说明：
 
 - 期货保证金账户开仓不会像股票现货买入那样扣减全额名义本金。
-- 因此，期货场景下应优先用 `equity` 观察账户净值变化，用 `used_margin` 观察保证金占用，用 `notional_value` 观察杠杆敞口。
+- 因此，期货场景下应优先用 `equity` 观察账户净值变化，用 `margin` 观察保证金占用，用 `available_cash` 判断还能开多少仓，用 `notional_value` 观察杠杆敞口。
 - 如果只需要一个“当前总权益”数值，优先使用 `equity`，其口径与 `get_account()["equity"]` 对齐。
 
 ## 4. 常用工具 (Utilities)
@@ -1228,9 +1229,9 @@ def on_bar(self, bar: Bar):
 
 除了 `get_position`，你还可以查询更多账户信息：
 
-*   **`self.ctx.cash`**: 当前账户可用资金。
+*   **`self.ctx.cash`**: 当前账户现金余额。期货保证金账户下开仓不扣现金，可用资金请读 `get_account()["available_cash"]`。
 *   **`self.equity`**: 当前账户总权益。
-*   **`self.get_account()`**: 当前账户快照；在保证金账户中可进一步读取 `used_margin`、`notional_value`、`unrealized_pnl`、`maintenance_ratio` 等字段。
+*   **`self.get_account()`**: 当前账户快照；在保证金账户中可进一步读取 `margin`、`available_cash`、`notional_value`、`unrealized_pnl`、`maintenance_ratio` 等字段。
 *   **`self.get_trades()`**: 获取历史所有已平仓交易记录（Closed Trades）。
 *   **`self.get_open_orders()`**: 获取当前未成交订单。
 

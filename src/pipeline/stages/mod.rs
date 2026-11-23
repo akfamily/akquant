@@ -264,8 +264,7 @@ mod tests {
         assert_eq!(engine.current_account_metrics().unrealized_pnl, dec!(30000));
     }
 
-    /// 冻结资金 = 在途订单成交后多占的保证金。已有持仓的保证金不算在内: 这部分取自
-    /// 调用方传入的账户指标, 而不是在函数里重算。
+    /// 冻结资金 = 在途订单成交后多占的保证金, 已有持仓的保证金不算在内。
     #[test]
     fn frozen_cash_is_margin_added_by_open_orders() {
         pyo3::Python::initialize();
@@ -299,13 +298,13 @@ mod tests {
         assert_eq!(held_margin, dec!(240000)); // 2 手 * 4000 * 300 * 0.1
 
         // 没有在途订单: 0
-        assert_eq!(engine.current_frozen_cash(&[], held_margin), dec!(0));
+        assert_eq!(engine.current_frozen_cash(&[]), dec!(0));
 
         // 再买 3 手: 多占 3 * 4000 * 300 * 0.1
         let mut buy = Order::test_new("o1", "IF", OrderSide::Buy, OrderType::Market, dec!(3));
         buy.status = OrderStatus::New;
         assert_eq!(
-            engine.current_frozen_cash(std::slice::from_ref(&buy), held_margin),
+            engine.current_frozen_cash(std::slice::from_ref(&buy)),
             dec!(360000)
         );
 
@@ -313,14 +312,14 @@ mod tests {
         buy.status = OrderStatus::PartiallyFilled;
         buy.filled_quantity = dec!(1);
         assert_eq!(
-            engine.current_frozen_cash(std::slice::from_ref(&buy), held_margin),
+            engine.current_frozen_cash(std::slice::from_ref(&buy)),
             dec!(240000)
         );
 
         // 已终结的订单不占用
         buy.status = OrderStatus::Cancelled;
         assert_eq!(
-            engine.current_frozen_cash(std::slice::from_ref(&buy), held_margin),
+            engine.current_frozen_cash(std::slice::from_ref(&buy)),
             dec!(0)
         );
     }

@@ -15,6 +15,7 @@ from akquant import (
     run_backtest,
 )
 from akquant.config import RiskConfig
+from akquant.execution.base import AccountSnapshot
 
 
 class AlwaysBuyStrategy(Strategy):
@@ -167,7 +168,7 @@ def test_short_option_margin_is_checked_and_account_margin_updates() -> None:
     """Short option opening orders should trigger margin checks and account margin."""
 
     class ShortPutStrategy(Strategy):
-        account_snapshots: list[dict[str, float]] = []
+        account_snapshots: list[AccountSnapshot] = []
 
         def __init__(self) -> None:
             self.order_count = 0
@@ -252,7 +253,7 @@ def test_vol_adjusted_short_option_margin_is_checked() -> None:
     """
 
     class VolAdjustedShortPutStrategy(Strategy):
-        account_snapshots: list[dict[str, float]] = []
+        account_snapshots: list[AccountSnapshot] = []
 
         def __init__(self) -> None:
             self.order_count = 0
@@ -340,7 +341,7 @@ def test_check_cash_false_lets_short_option_overdraft_at_execution() -> None:
     """
 
     class OverdraftShortPutStrategy(Strategy):
-        account_snapshots: list[dict[str, float]] = []
+        account_snapshots: list[AccountSnapshot] = []
 
         def __init__(self) -> None:
             self.order_count = 0
@@ -458,7 +459,7 @@ def test_margin_account_stock_buy_uses_initial_margin_ratio() -> None:
     """Margin account stock buying should apply initial margin ratio for sizing."""
 
     class LeveragedBuyStrategy(Strategy):
-        account_snapshots: list[dict[str, Any]] = []
+        account_snapshots: list[AccountSnapshot] = []
 
         def __init__(self) -> None:
             self.ordered = False
@@ -592,7 +593,7 @@ def test_margin_account_daily_financing_interest_is_deducted() -> None:
     """Margin account financing interest should be deducted on day switch."""
 
     class FinancingInterestStrategy(Strategy):
-        account_snapshots: list[dict[str, Any]] = []
+        account_snapshots: list[AccountSnapshot] = []
 
         def __init__(self) -> None:
             self.ordered = False
@@ -699,7 +700,7 @@ def test_futures_margin_account_snapshot_uses_margin_accounting() -> None:
     """Futures margin account snapshots should not deduct full notional from cash."""
 
     class FuturesAccountProbeStrategy(Strategy):
-        account_snapshots: list[dict[str, Any]] = []
+        account_snapshots: list[AccountSnapshot] = []
 
         def __init__(self) -> None:
             self.step = 0
@@ -771,8 +772,8 @@ def test_futures_margin_account_snapshot_uses_margin_accounting() -> None:
     assert float(open_snapshot["cash"]) == pytest.approx(500000.0, rel=0.0, abs=1e-6)
     assert float(open_snapshot["equity"]) == pytest.approx(500000.0, rel=0.0, abs=1e-6)
     assert float(open_snapshot["margin"]) == pytest.approx(4410.0, rel=0.0, abs=1e-6)
-    assert float(open_snapshot["used_margin"]) == pytest.approx(
-        4410.0, rel=0.0, abs=1e-6
+    assert float(open_snapshot["available_cash"]) == pytest.approx(
+        500000.0 - 4410.0, rel=0.0, abs=1e-6
     )
     assert float(open_snapshot["notional_value"]) == pytest.approx(
         44100.0, rel=0.0, abs=1e-6
@@ -788,7 +789,9 @@ def test_futures_margin_account_snapshot_uses_margin_accounting() -> None:
     assert float(close_snapshot["cash"]) == pytest.approx(500840.0, rel=0.0, abs=1e-6)
     assert float(close_snapshot["equity"]) == pytest.approx(500840.0, rel=0.0, abs=1e-6)
     assert float(close_snapshot["margin"]) == pytest.approx(0.0, rel=0.0, abs=1e-6)
-    assert float(close_snapshot["used_margin"]) == pytest.approx(0.0, rel=0.0, abs=1e-6)
+    assert float(close_snapshot["available_cash"]) == pytest.approx(
+        500840.0, rel=0.0, abs=1e-6
+    )
     assert float(close_snapshot["notional_value"]) == pytest.approx(
         0.0, rel=0.0, abs=1e-6
     )
@@ -801,7 +804,7 @@ def test_futures_short_overnight_avoids_spurious_liquidation() -> None:
     """
 
     class FuturesShortOvernightProbeStrategy(Strategy):
-        account_snapshots: list[dict[str, Any]] = []
+        account_snapshots: list[AccountSnapshot] = []
 
         def __init__(self) -> None:
             self.ordered = False
@@ -1029,7 +1032,7 @@ def test_futures_margin_portfolio_update_can_read_account_metrics() -> None:
                     "snapshot_equity": float(snapshot["equity"]),
                     "portfolio_value": float(self.equity),
                     "account_equity": float(account["equity"]),
-                    "used_margin": float(account["used_margin"]),
+                    "used_margin": float(account["margin"]),
                     "notional_value": float(account["notional_value"]),
                 }
             )

@@ -18,7 +18,7 @@
 | :--- | :--- | :--- |
 | A 股当日买入当日卖出 | 检查 `available_position`（T+1 可用持仓） | 6 |
 | 涨跌停封板仍假设能成交 | 用数据携带 `can_buy` / `can_sell` 等标记辅助判定 | 6 |
-| 把期货保证金账户当现货账户，开仓即扣全额名义本金 | 看 `equity` / `used_margin` / `notional_value` 理解杠杆暴露 | 7 |
+| 把期货保证金账户当现货账户，开仓即扣全额名义本金 | 看 `equity` / `margin` / `notional_value` 理解杠杆暴露 | 7 |
 | 期权只押方向、忽略希腊字母 | 同时管理 Delta / Gamma / Theta / Vega 暴露 | 8 |
 
 ## 优化与验证

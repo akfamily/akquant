@@ -1029,9 +1029,9 @@ def _supports_short_targets(
     return bool(getattr(risk_config, "enable_short_sell", False))
 
 
-def get_account(strategy: Any) -> Dict[str, Any]:
+def get_account(strategy: Any) -> AccountSnapshot:
     """获取账户资金详情快照（经执行后端）."""
-    return cast(Dict[str, Any], strategy.execution.get_account())
+    return cast(AccountSnapshot, strategy.execution.get_account())
 
 
 def _lot_size_from_strategy(strategy: Any, symbol: str) -> int:
@@ -1917,7 +1917,7 @@ def _sim_get_portfolio_value(strategy: Any) -> float:
     return total_value
 
 
-def _sim_get_account(strategy: Any) -> Dict[str, Any]:
+def _sim_get_account(strategy: Any) -> AccountSnapshot:
     """获取账户资金详情快照（_sim_ 原语，复制自 get_account，逻辑一字不改）."""
     if strategy.ctx is None:
         raise RuntimeError("Context not ready")
@@ -2007,20 +2007,18 @@ def _sim_get_account(strategy: Any) -> Dict[str, Any]:
     else:
         accrued_interest = float(getattr(strategy.ctx, "margin_accrued_interest", 0.0))
         daily_interest = float(getattr(strategy.ctx, "margin_daily_interest", 0.0))
-    # 可用保证金 = 总权益 - 已占用保证金.
-    # 与开仓资金校验(拒单信息中的 Available)口径一致.
-    # 期货保证金账户下, cash 仅为现金余额(开仓不扣保证金).
-    # 真正可用于新开仓的是 free_margin.
-    free_margin = equity - margin
+    # 可用资金 = 总权益 - 持仓占用 - 挂单冻结, 即 equity == margin + frozen_cash +
+    # available_cash。期货保证金账户下 cash 只是现金余额(开仓不扣保证金), 真正可用于
+    # 新开仓的是它。
+    available_cash = equity - margin - frozen_cash
     snapshot: AccountSnapshot = {
         "cash": cash,
         "equity": equity,
         "market_value": market_value,
         "notional_value": float(notional_value),
-        "frozen_cash": frozen_cash,
         "margin": margin,
-        "used_margin": margin,
-        "free_margin": free_margin,
+        "frozen_cash": frozen_cash,
+        "available_cash": available_cash,
         "unrealized_pnl": float(unrealized_pnl),
         "borrowed_cash": borrowed_cash,
         "short_market_value": float(short_market_value),
@@ -2029,7 +2027,7 @@ def _sim_get_account(strategy: Any) -> Dict[str, Any]:
         "accrued_interest": accrued_interest,
         "daily_interest": daily_interest,
     }
-    return cast(Dict[str, Any], snapshot)
+    return snapshot
 
 
 def _sim_capabilities(strategy: Any) -> Dict[str, Any]:

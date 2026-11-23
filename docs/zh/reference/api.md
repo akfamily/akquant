@@ -1059,15 +1059,17 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `ctx.get_position_entry_prices() -> Dict[str, float]`: 获取所有标的当前持仓均价。
 *   `get_position_detail(symbol) -> PositionDetail`: 获取持仓明细。`quantity`、`available` 带符号，与 `get_position()`、`get_available_position()` 相同；另有持仓成本 `avg_price`、`market_value`、`unrealized_pnl`、`margin`，以及多头、空头两边各自的 `detail.long`、`detail.short`（数量、可用、成本、今仓、昨仓、冻结量、最新价等，数量为非负数）。拿不到的项为 `None`：回测没有今昨仓、冻结量和逐标的保证金；实盘取决于柜台是否提供。
 *   `get_holding_bars(symbol) -> int`: 获取当前持仓持有的 Bar 数量。经柜台交易时按柜台持仓逐 Bar 累计，只统计本次会话收到的 Bar。
-*   `cash -> float`: 获取当前可用资金（只读属性）。
+*   `cash -> float`: 获取当前现金余额（只读属性）。期货保证金账户下开仓不扣现金，可用资金请读 `get_account()["available_cash"]`。
 *   `freq -> Optional[str]`: 数据周期（只读属性），取值为回测侧口径 `"1min"` / `"5min"` / `"1d"` 等。
     *   回测侧由 `run_backtest(freq=)` 注入（tick 聚合周期，或 bar 数据声明的周期）；实盘侧由行情网关声明（klinedata 把自己的 `period="M1"` 转换成 `"1min"`，`broker="replay"` 支持 `gateway_options={"freq": "1min"}`）。两侧统一到回测口径，故同一个策略在回测与实盘读到同一个值，无需按 broker 写兼容分支。
     *   **拿不到周期时为 `None`**：纯 bar 回测未传 `freq`、CTP 等只有逐笔源的网关、trader-only broker（无行情通道）、klinedata 周线（回测侧 `freq` 只认分钟、小时与日，周线无对应写法）。框架**不从数据推断**周期——相邻 bar 的时间戳差会被停牌、跨日、午休误导，错误的周期比未知的周期更危险。请显式处理 `None`。
     *   只读，写入抛 `AttributeError`：数据粒度由数据源决定，改这个属性不会真的改变粒度。
-*   `get_account() -> Dict[str, float]`: 获取账户详情快照。常见字段包括 `cash`、`equity`、`market_value`、`notional_value`、`frozen_cash`、`margin`、`used_margin`、`free_margin`、`unrealized_pnl`、`borrowed_cash`、`short_market_value`、`maintenance_ratio`、`account_mode`、`accrued_interest`、`daily_interest`。
+*   `get_account() -> AccountSnapshot`: 获取账户详情快照（字典），回测与实盘的键完全一致：`cash`、`equity`、`market_value`、`notional_value`、`margin`、`frozen_cash`、`available_cash`、`unrealized_pnl`、`borrowed_cash`、`short_market_value`、`maintenance_ratio`、`account_mode`、`accrued_interest`、`daily_interest`。
+    *   三项资金满足 `equity == margin + frozen_cash + available_cash`：总权益 = 持仓占用 + 挂单冻结 + 可用资金。回测里严格成立；经柜台交易时三项各取柜台的值。
+    *   `margin` 是持仓占用的保证金，现金账户里的股票按全额市值计。`frozen_cash` 是未完成委托冻结的资金：每笔按自己的委托价估算（没有委托价的用最新价），只计会增加占用的委托，挂着的卖出、平仓单不占资金，也不会释放买单的冻结；不含手续费。
     *   现金账户 / 现货账户下，`market_value` 通常表示持仓市值。
-    *   期货保证金账户下，`equity` 表示账户权益，`used_margin` 表示已占用保证金，`notional_value` 表示期货名义敞口，`unrealized_pnl` 表示浮动盈亏；期货持仓不会像股票那样把全额名义本金直接计入 `cash` 扣减，也不会把名义敞口直接映射为 `market_value`。
-    *   `cash` 是现金余额，`free_margin`（= `equity - used_margin`）才是可用于新开仓的资金，与下单被拒时日志里的 `Available` 口径一致。期货保证金账户下开仓不从 `cash` 扣减保证金，因此 `cash` 通常大于 `free_margin`；股票现金账户下二者相等。
+    *   期货保证金账户下，`equity` 表示账户权益，`margin` 表示已占用保证金，`notional_value` 表示期货名义敞口，`unrealized_pnl` 表示浮动盈亏；期货持仓不会像股票那样把全额名义本金直接计入 `cash` 扣减，也不会把名义敞口直接映射为 `market_value`。
+    *   `cash` 是现金余额，`available_cash` 才是可用于新开仓的资金，与下单被拒时日志里的 `Available` 口径相近（后者另按 `safety_margin` 折减）。期货保证金账户下开仓不从 `cash` 扣减保证金，因此 `cash` 通常大于 `available_cash`；股票现金账户下没有挂单时二者相等。权益不足以覆盖占用与冻结时 `available_cash` 为负数。
     *   在策略回调内，如果你只想读取“当前账户总权益”，优先使用 `equity`；其口径与 `get_account()["equity"]` 对齐。
 *   `get_order(order_id) -> Order`: 获取指定订单详情。
 *   `get_open_orders(symbol) -> List[Order]`: 获取当前未完成订单列表。
