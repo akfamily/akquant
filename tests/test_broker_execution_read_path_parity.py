@@ -204,7 +204,7 @@ def test_account_market_value_defaults_to_none_and_keeps_positional_order() -> N
 
 
 def test_account_view_uses_broker_reported_frozen_margin_and_pnl() -> None:
-    """柜台给了冻结资金、保证金、浮动盈亏就用; 可用保证金 = 权益 − 保证金."""
+    """柜台给了可用资金、冻结资金、保证金、浮动盈亏就用柜台的值."""
     from akquant.gateway.broker_strategy_api import _account_to_dict
 
     account = UnifiedAccount(
@@ -218,13 +218,13 @@ def test_account_view_uses_broker_reported_frozen_margin_and_pnl() -> None:
     )
     view = _account_to_dict(account)
     assert view["frozen_cash"] == 300.0
-    assert view["margin"] == view["used_margin"] == 1200.0
-    assert view["free_margin"] == 8800.0
+    assert view["margin"] == 1200.0
+    assert view["available_cash"] == 7500.0
     assert view["unrealized_pnl"] == -45.5
 
 
 def test_account_view_keeps_placeholders_when_broker_reports_nothing() -> None:
-    """柜台没给这三项时照旧: 冻结与保证金为 0、可用保证金等于权益、浮动盈亏为 0."""
+    """柜台没给这三项时: 冻结与保证金为 0、浮动盈亏为 0; 可用资金仍取柜台的值."""
     from akquant.gateway.broker_strategy_api import _account_to_dict
 
     account = UnifiedAccount("a", equity=10000.0, cash=8200.0, available_cash=7500.0)
@@ -234,8 +234,8 @@ def test_account_view_keeps_placeholders_when_broker_reports_nothing() -> None:
         None,
     )
     view = _account_to_dict(account)
-    assert (view["frozen_cash"], view["margin"], view["used_margin"]) == (0.0, 0.0, 0.0)
-    assert view["free_margin"] == 10000.0
+    assert (view["frozen_cash"], view["margin"]) == (0.0, 0.0)
+    assert view["available_cash"] == 7500.0
     assert view["unrealized_pnl"] == 0.0
 
 

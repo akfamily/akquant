@@ -63,11 +63,14 @@ Under AKQuant's futures margin-account semantics, read `get_account()` and
 - `cash`: cash balance. Opening a futures position does not deduct full notional
   the way a spot buy does; cash mainly reflects fees and realized cash flows.
 - `equity`: account equity. This is the `equity` property.
-- `used_margin` / `margin`: margin currently in use.
-- `free_margin`: available margin (`equity - used_margin`), i.e. the amount
-  actually usable to open new positions. When an order is rejected for
-  insufficient margin, the `Available` value in the log refers to this field —
-  do not compare it against `cash`.
+- `margin`: margin held by open positions.
+- `frozen_cash`: margin reserved by working orders, estimated at each order's
+  own price.
+- `available_cash`: available funds (`equity - margin - frozen_cash`), i.e. the
+  amount still usable to open new positions. When an order is rejected for
+  insufficient funds, the `Available` value in the log is close to this figure
+  (it is additionally reduced by `safety_margin`) — do not compare it against
+  `cash`.
 - `notional_value`: current futures notional exposure.
 - `unrealized_pnl`: floating PnL marked with the latest price.
 - `market_value`: mainly a spot-style marked-value field and should not be read
@@ -76,5 +79,5 @@ Under AKQuant's futures margin-account semantics, read `get_account()` and
 For futures strategies, the safer mental model is:
 
 1. use `equity` for total account value,
-2. use `used_margin` for margin usage,
+2. use `margin` for margin usage,
 3. use `notional_value` for leverage exposure.

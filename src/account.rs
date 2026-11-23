@@ -14,53 +14,62 @@ pub fn order_reserves_cash(order: &Order) -> bool {
     ) && order.quantity - order.filled_quantity > Decimal::ZERO
 }
 
-/// 在途订单预占的资金: 把每笔在途订单的未成交部分投影进持仓后, 占用保证金比当前
-/// 多出来的部分(不为负)。
+/// 在途订单冻结的资金: 逐笔把未成交部分投影进持仓, 累计每笔**多占**的保证金。
 ///
-/// `base_used_margin` 是当前持仓的占用保证金(同一价格表、同一比例下算出), 由调用方
-/// 传入, 这里只算投影后的那一遍。
+/// - 每笔按它自己的委托价估算(限价单用限价, 没有委托价的用最新价), 与柜台按委托价
+///   冻结一致; 该标的投影前后的保证金用同一个价格算, 差值只反映这笔订单。
+/// - 只累计增加占用的部分: 减仓、平仓单不占资金, 也不会把别的订单冻结的资金放出来。
+/// - 按提交顺序投影: "先平后开"的反手, 平仓腿把持仓投影到 0 之后, 开仓腿才算得出占用。
+///
+/// 现金账户里股票的保证金就是全额市值, 所以买单冻结的是 委托价 × 数量。不含手续费。
 pub fn frozen_cash(
     positions: &Arc<HashMap<String, Decimal>>,
     active_orders: &[Order],
     prices: &HashMap<String, Decimal>,
     instruments: &HashMap<String, Instrument>,
     stock_margin_ratio_override: Option<Decimal>,
-    base_used_margin: Decimal,
 ) -> Decimal {
-    // 没有占用资金的在途订单时投影后的持仓与当前相同, 差值恒为 0。
-    if !active_orders.iter().any(order_reserves_cash) {
-        return Decimal::ZERO;
-    }
-    // 保证金只看持仓, 现金与可用持仓不参与。
-    let mut projected = Portfolio {
-        cash: Decimal::ZERO,
-        positions: Arc::clone(positions),
-        available_positions: Arc::default(),
-    };
+    let mut frozen = Decimal::ZERO;
+    // 只记被在途订单改动过的标的的投影持仓, 其余直接读当前持仓。
+    let mut projected: HashMap<&str, Decimal> = HashMap::new();
     for order in active_orders {
         if !order_reserves_cash(order) {
             continue;
         }
-        let remaining = order.quantity - order.filled_quantity;
+        let symbol = order.symbol.as_str();
         let current_pos = projected
-            .positions
-            .get(&order.symbol)
+            .get(symbol)
             .copied()
+            .or_else(|| positions.get(symbol).copied())
             .unwrap_or(Decimal::ZERO);
         let next_pos = crate::model::project_position_after(
             order.side,
             order.position_effect,
             current_pos,
-            remaining,
+            order.quantity - order.filled_quantity,
         );
-        projected.adjust_position(&order.symbol, next_pos - current_pos);
+        projected.insert(symbol, next_pos);
+        let (Some(instrument), Some(price)) = (
+            instruments.get(symbol),
+            order.price.or_else(|| prices.get(symbol).copied()),
+        ) else {
+            continue;
+        };
+        let margin_at = |quantity: Decimal| {
+            crate::margin::MarginEngine::position_margin(
+                quantity,
+                price,
+                instrument,
+                prices,
+                stock_margin_ratio_override,
+            )
+        };
+        let added = margin_at(next_pos) - margin_at(current_pos);
+        if added > Decimal::ZERO {
+            frozen += added;
+        }
     }
-    let projected_used = projected.calculate_used_margin_with_stock_ratio(
-        prices,
-        instruments,
-        stock_margin_ratio_override,
-    );
-    (projected_used - base_used_margin).max(Decimal::ZERO)
+    frozen
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -393,6 +402,80 @@ mod tests {
             futures_margin_equity_correction(&portfolio, &prices, &instruments, &tracker, &config),
             Decimal::ZERO
         );
+    }
+
+    fn pending(id: &str, symbol: &str, side: OrderSide, quantity: i64) -> Order {
+        use crate::model::OrderType;
+        let mut order =
+            Order::test_new(id, symbol, side, OrderType::Limit, Decimal::from(quantity));
+        order.status = OrderStatus::Submitted;
+        order
+    }
+
+    fn priced(mut order: Order, price: i64) -> Order {
+        order.price = Some(Decimal::from(price));
+        order
+    }
+
+    /// 持有 `quantity` 股 AAA(最新价 10)时, 这些在途订单冻结的资金。
+    fn stock_frozen(quantity: i64, orders: &[Order]) -> Decimal {
+        let positions = Arc::new(HashMap::from([(
+            "AAA".to_string(),
+            Decimal::from(quantity),
+        )]));
+        let prices = HashMap::from([("AAA".to_string(), Decimal::from(10))]);
+        let instruments = HashMap::from([("AAA".to_string(), stock("AAA"))]);
+        frozen_cash(&positions, orders, &prices, &instruments, None)
+    }
+
+    /// 持有 `quantity` 手 RB(最新价 4000、乘数 10、保证金率 0.1)时冻结的资金。
+    fn futures_frozen(quantity: i64, orders: &[Order]) -> Decimal {
+        let (portfolio, _) = futures_account(quantity, "margin");
+        let (prices, instruments) = futures_market();
+        frozen_cash(&portfolio.positions, orders, &prices, &instruments, None)
+    }
+
+    #[test]
+    fn frozen_cash_values_limit_order_at_its_own_price() {
+        // 最新价 10, 限价 9 买 2000 股: 冻结 18000, 不是按最新价的 20000
+        let buy = priced(pending("b", "AAA", OrderSide::Buy, 2000), 9);
+        assert_eq!(stock_frozen(1000, &[buy]), Decimal::from(18_000));
+        // 期货限价 3900 开 10 手: 10 * 3900 * 10 * 0.1
+        let open = priced(pending("o", "RB", OrderSide::Buy, 10), 3900);
+        assert_eq!(futures_frozen(5, &[open]), Decimal::from(39_000));
+    }
+
+    #[test]
+    fn frozen_cash_values_unpriced_order_at_last_price() {
+        let market = pending("m", "RB", OrderSide::Buy, 3);
+        assert_eq!(futures_frozen(5, &[market]), Decimal::from(12_000));
+    }
+
+    #[test]
+    fn frozen_cash_is_not_released_by_a_pending_sell() {
+        // 挂着的卖单不占资金, 也不会把买单冻结的资金放出来
+        let buy = priced(pending("b", "AAA", OrderSide::Buy, 2000), 9);
+        let sell = priced(pending("s", "AAA", OrderSide::Sell, 500), 12);
+        assert_eq!(
+            stock_frozen(1000, std::slice::from_ref(&sell)),
+            Decimal::ZERO
+        );
+        assert_eq!(
+            stock_frozen(1000, &[buy.clone(), sell.clone()]),
+            Decimal::from(18_000)
+        );
+        assert_eq!(stock_frozen(1000, &[sell, buy]), Decimal::from(18_000));
+    }
+
+    #[test]
+    fn frozen_cash_counts_the_opening_leg_of_a_reversal() {
+        // 多 10 手: 先平 10 手不占资金, 再开空 5 手占 5 * 4000 * 10 * 0.1
+        let mut close = pending("c", "RB", OrderSide::Sell, 10);
+        close.position_effect = crate::model::PositionEffect::Close;
+        let mut open = pending("o", "RB", OrderSide::Sell, 5);
+        open.position_effect = crate::model::PositionEffect::Open;
+        assert_eq!(futures_frozen(10, &[close.clone()]), Decimal::ZERO);
+        assert_eq!(futures_frozen(10, &[close, open]), Decimal::from(20_000));
     }
 
     #[test]

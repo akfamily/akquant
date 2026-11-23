@@ -167,10 +167,9 @@ def _broker_live_stats(strategy: Any) -> Optional[StrategyStats]:
     账户也不可用时为 None），其余为 None。
     浮动盈亏按策略已见到的最新收盘价（``_last_prices``）计算。
     """
-    from .gateway.broker_execution import BrokerExecution
-
     execution = getattr(strategy, "execution", None)
-    if not isinstance(execution, BrokerExecution):
+    # 持仓以柜台为准的执行后端才有会话级统计器(见 BrokerExecution)
+    if execution is None or not getattr(execution, "tracks_broker_positions", False):
         return None
     # 账户从未加载成功（柜台不可用）时权益未知：报 None，不能报 0.0
     account = execution.state_cache.account()

@@ -5,8 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from .. import strategy_trading_api as api
-from ..gateway.order_receipt import OrderReceipt
-from .base import PositionDetail
+from .base import AccountSnapshot, PositionDetail
+from .receipt import OrderReceipt
 
 
 class SimExecution:
@@ -52,7 +52,7 @@ class SimExecution:
         """按订单号获取订单."""
         return api.get_order(self._s, order_id)
 
-    def get_account(self) -> dict[str, Any]:
+    def get_account(self) -> AccountSnapshot:
         """获取账户信息."""
         return api._sim_get_account(self._s)
 

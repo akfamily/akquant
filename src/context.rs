@@ -119,8 +119,6 @@ pub enum FrozenCash {
 
 /// 延后计算冻结资金所需、上下文自己没有的输入。
 pub struct FrozenCashInputs {
-    /// 当前持仓的占用保证金(账户指标里的 `used_margin`)。
-    pub base_used_margin: Decimal,
     /// 引擎本次 `run()` 的合约表快照。
     pub instruments: Arc<HashMap<String, Instrument>>,
     pub stock_margin_ratio_override: Option<Decimal>,
@@ -1224,7 +1222,6 @@ impl StrategyContext {
                 &prices,
                 &inputs.instruments,
                 inputs.stock_margin_ratio_override,
-                inputs.base_used_margin,
             )
             .to_f64()
             .unwrap_or_default();

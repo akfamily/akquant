@@ -60,7 +60,9 @@ def _run(
 
         def on_bar(self, bar: Bar) -> None:
             account = self.get_account()
-            snapshots.append((float(account["free_margin"]), float(self.buying_power)))
+            snapshots.append(
+                (float(account["available_cash"]), float(self.buying_power))
+            )
             if self.step < len(script):
                 action, quantity = script[self.step]
                 if action == "buy":

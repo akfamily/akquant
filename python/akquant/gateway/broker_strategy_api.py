@@ -4,16 +4,17 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from ..execution.base import AccountSnapshot
 from ..log import get_logger
 
 logger = get_logger("gateway.stats")
 
 
-def _account_to_dict(acct: Any) -> dict[str, Any]:
+def _account_to_dict(acct: Any) -> AccountSnapshot:
     """Map a broker UnifiedAccount to the backtest get_account dict shape.
 
-    柜台给了的字段(持仓市值、冻结资金、占用保证金、浮动盈亏)如实采用; 给不了的
-    (融资负债、利息等)记 0.0, 让按回测写的策略在 broker_live 下不 KeyError。
+    柜台给了的字段(可用资金、持仓市值、冻结资金、占用保证金、浮动盈亏)如实采用;
+    给不了的(融资负债、利息等)记 0.0, 让按回测写的策略在 broker_live 下不 KeyError。
     """
     cash = float(getattr(acct, "cash", 0.0) or 0.0)
     equity = float(getattr(acct, "equity", 0.0) or 0.0)
@@ -28,7 +29,7 @@ def _account_to_dict(acct: Any) -> dict[str, Any]:
     if market_value is None:
         market_value = equity - cash
     margin = reported("margin") or 0.0
-    return {
+    snapshot: AccountSnapshot = {
         "cash": cash,
         "available_cash": available,
         "equity": equity,
@@ -36,8 +37,6 @@ def _account_to_dict(acct: Any) -> dict[str, Any]:
         "notional_value": 0.0,
         "frozen_cash": reported("frozen_cash") or 0.0,
         "margin": margin,
-        "used_margin": margin,
-        "free_margin": equity - margin,
         "unrealized_pnl": reported("unrealized_pnl") or 0.0,
         "borrowed_cash": 0.0,
         "short_market_value": 0.0,
@@ -46,6 +45,7 @@ def _account_to_dict(acct: Any) -> dict[str, Any]:
         "accrued_interest": 0.0,
         "daily_interest": 0.0,
     }
+    return snapshot
 
 
 def _resolve_symbol(strategy: Any, symbol: str | None) -> str:

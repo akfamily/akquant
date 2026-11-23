@@ -977,15 +977,16 @@ print(
 If the strategy is running with futures margin semantics, these fields become especially important:
 
 - `snap["equity"]`: current account equity.
-- `snap["used_margin"]` / `snap["margin"]`: current margin in use.
-- `snap["free_margin"]`: available margin (`equity - used_margin`), i.e. the amount usable to open new positions; the `Available` value in the rejection log refers to this field, so do not compare it against `cash`.
+- `snap["margin"]`: margin held by open positions.
+- `snap["frozen_cash"]`: funds reserved by working orders, estimated at each order's own price; resting sell and close orders reserve nothing.
+- `snap["available_cash"]`: available funds (`equity - margin - frozen_cash`), i.e. the amount still usable to open new positions. When an order is rejected for insufficient funds, the `Available` value in the log is close to this figure (it is additionally reduced by `safety_margin`), so do not compare it against `cash`.
 - `snap["notional_value"]`: current futures notional exposure.
 - `snap["unrealized_pnl"]`: current floating PnL.
 
 Notes:
 
 - Opening a futures position does not deduct full notional from cash the way a spot buy does.
-- For futures, use `equity` for net account value, `used_margin` for margin usage, and `notional_value` for leverage exposure.
+- For futures, use `equity` for net account value, `margin` for margin usage, `available_cash` for how much more can be opened, and `notional_value` for leverage exposure.
 - If you only need one "current total equity" number, prefer `equity`, which is aligned with `get_account()["equity"]`.
 
 ## 6. Using High-Performance Indicators {: #indicatorset }

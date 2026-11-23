@@ -37,8 +37,8 @@ from .akquant import (
 )
 from .bar_batch import flush_at_replay_end as _flush_bars_at_replay_end
 from .chart import CANDLE_ROLES
-from .execution.base import PositionDetail
-from .gateway.order_receipt import OrderReceipt
+from .execution.base import AccountSnapshot, PositionDetail
+from .execution.receipt import OrderReceipt
 from .indicator_declaration import (
     DEFAULT_LOOKBACK,
     UNKNOWN_LABEL,
@@ -3287,24 +3287,31 @@ class Strategy:
         # 上下文的订单账本, broker_live BrokerExecution→柜台挂单扫描(否则恒 None)。
         return self.execution.get_order(order_id)
 
-    def get_account(self) -> Dict[str, Any]:
+    def get_account(self) -> AccountSnapshot:
         """
         获取账户资金详情快照.
 
+        回测与实盘的键完全一致。三项资金满足
+        ``equity == margin + frozen_cash + available_cash``。
+
         Returns:
-            Dict: 包含以下字段:
+            AccountSnapshot: 字典, 包含以下字段:
                 - cash: 现金余额 (期货保证金账户下, 开仓不从此扣减保证金,
-                  故并非可用于新开仓的资金; 请改用 free_margin)
+                  故并非可用于新开仓的资金; 请改用 available_cash)
                 - equity: 总权益 (现金 + 持仓市值 + 浮动盈亏)
                 - market_value: 持仓总市值 (equity - cash; 实盘柜台直接给出
-                  持仓市值时取柜台的值)。实盘经柜台交易时, frozen_cash、margin、
-                  free_margin、unrealized_pnl 也取柜台的值; 柜台不提供的记 0
-                  (free_margin 为 equity)
-                - frozen_cash: 当前未完成订单预占资金
-                - margin: 当前仓位占用保证金
-                - used_margin: 同 margin
-                - free_margin: 可用保证金 (equity - margin), 即可用于新开仓的资金;
-                  与拒单信息中的 Available 口径一致
+                  持仓市值时取柜台的值)
+                - margin: 持仓占用的保证金 (现金账户里的股票按全额市值计)
+                - frozen_cash: 未完成订单冻结的资金 (按委托价估算, 只计会增加
+                  占用的订单; 挂着的卖出、平仓单不占资金)
+                - available_cash: 可用资金 (equity - margin - frozen_cash), 即还能
+                  用于新开仓的资金; 权益不足时为负数
+                - unrealized_pnl: 浮动盈亏
+                - notional_value: 持仓名义价值
+
+                实盘经柜台交易时, available_cash、market_value、margin、
+                frozen_cash、unrealized_pnl 取柜台的值; 柜台不提供的后四项分别
+                记 equity - cash、0、0、0。
                 - borrowed_cash: 融资负债 (现金为负时)
                 - short_market_value: 空头市值
                 - maintenance_ratio: 维持担保比例

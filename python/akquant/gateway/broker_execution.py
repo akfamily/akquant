@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Optional, cast
 
-from ..execution.base import PositionDetail, PositionLeg
+from ..execution.base import AccountSnapshot, PositionDetail, PositionLeg
 from ..log import build_log_extra, get_logger
 from .broker_event_adapter import map_local_stop, map_order_snapshot
 from .broker_state_cache import BrokerStateCache, is_short_row
@@ -213,7 +213,7 @@ class BrokerExecution:
                 return map_order_snapshot(snap, owner_strategy_id=owner)
         return None
 
-    def get_account(self) -> dict[str, Any]:
+    def get_account(self) -> AccountSnapshot:
         """获取账户信息."""
         return _account_to_dict(self._cache.account())
 

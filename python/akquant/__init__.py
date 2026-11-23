@@ -8,7 +8,7 @@ try:
 except metadata.PackageNotFoundError:
     __version__ = "0.0.0+unknown"
 
-__engine_rule_version__ = "2.5.0"  # Increment on behavior-changing updates
+__engine_rule_version__ = "2.5.1"  # Increment on behavior-changing updates
 
 from . import akquant as _akquant
 from . import log as _log
@@ -53,6 +53,7 @@ from .config import (
 )
 from .data import DataLoader
 from .execution.base import PositionDetail, PositionLeg
+from .execution.receipt import OrderLeg, OrderReceipt
 from .feed_adapter import (
     CSVFeedAdapter,
     DataFeedAdapter,
@@ -61,7 +62,6 @@ from .feed_adapter import (
     ReplayFeedAdapter,
     ResampledFeedAdapter,
 )
-from .gateway.order_receipt import OrderLeg, OrderReceipt
 from .indicator_declaration import IndicatorBinding, IndicatorDeclaration
 from .indicator_recording import IndicatorRecorder, IndicatorSink
 from .indicator_script import Indicator, IndicatorCannotTradeError
