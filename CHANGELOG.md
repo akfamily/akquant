@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.96] - 2026-11-23
+
+> 规则版本 2.5.0 → 2.5.1：`get_account()` 的资金口径统一，`frozen_cash` 的算法改了，删除 `free_margin`、`used_margin`（破坏性，见下文）。撮合与下单风控不读这些值，成交结果不变；读取被删的键的策略会 `KeyError`，按 `frozen_cash` 定量的策略结果会变。
+
 ### Changed
 - **破坏性：`get_account()` 的资金口径统一为“总权益 = 持仓占用 + 挂单冻结 + 可用资金”，回测与实盘的键完全一致**（规则版本 2.5.0 → 2.5.1）。三项满足 `equity == margin + frozen_cash + available_cash`，回测里严格成立，经柜台交易时三项各取柜台的值。具体变化：
     - **回测新增 `available_cash`**（可用资金 = `equity - margin - frozen_cash`），此前只有实盘有这个键，在实盘里用了它的策略拿去回测会 `KeyError`。权益不足以覆盖占用与冻结时为负数。
