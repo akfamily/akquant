@@ -56,6 +56,16 @@ def test_order_target_value_no_autocancel() -> None:
     assert s.execution.orders[0]["quantity"] == 100.0
 
 
+def test_order_target_zero_liquidates_odd_lot_position() -> None:
+    """A zero target sells the entire holding, including the final odd lot."""
+    s = _S(pos=1450, lot=100)
+    api.order_target(s, symbol="000001.SZ", target=0, price=7.0)
+
+    assert len(s.execution.orders) == 1
+    assert s.execution.orders[0]["quantity"] == 1450.0
+    assert s.execution.orders[0]["side"].lower() == "sell"
+
+
 def test_rebalance_positions_rounds_delta_to_lot() -> None:
     """rebalance_positions 对每个 leg 的 delta 也应按 lot_size 向下取整."""
     s = _S(pos=0, lot=100)

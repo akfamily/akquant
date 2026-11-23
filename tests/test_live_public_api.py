@@ -10,7 +10,7 @@ def test_streaming_indicator_sink_is_public() -> None:
 
 
 def test_engine_rule_version_is_2_3_1() -> None:
-    """账户资金口径统一(frozen_cash 按委托价、不互抵), 规则版本为 2.5.1."""
+    """公司行动的浮点比例按十进制取值、目标为 0 时卖出零股, 规则版本为 2.5.2."""
     import akquant
 
-    assert akquant.__engine_rule_version__ == "2.5.1"
+    assert akquant.__engine_rule_version__ == "2.5.2"
