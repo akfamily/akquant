@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.99] - 2026-11-24
+
+> 规则版本 2.5.2 → 2.5.3：`on_start` 里读得到账户资金与持仓了（见下文）。撮合不变；在 `on_start` 里读 `self.cash`、`self.equity` 等来定量的策略，此前读到 0，现在读到真实值，这类策略的结果会变。
+
 ### Fixed
 - **`on_start` 里读不到账户：`get_account()` 报 “Context not ready”，`self.cash`、`self.equity`、`self.buying_power` 静默返回 0**（规则版本 2.5.2 → 2.5.3）：`on_start` 早于第一个行情事件，引擎上下文还没绑定到策略上。“开局读初始资金”的写法要么报错，要么拿 0 去算仓位且没有任何提示；从检查点恢复时，`on_resume`、`on_start` 里连已恢复的持仓也读成 0。现在这两个回调里读到的是开跑前的账户：全新回测与 paper 实盘是初始资金，从检查点恢复是恢复出来的资金与持仓，`get_account()` 的各项与第一个行情回调里下单前读到的完全一致。涉及 `get_account()`、`self.cash`、`self.equity`、`self.buying_power`、`get_position()`、`get_available_position()`、`get_position_detail()`、`self.positions`。经柜台交易的会话读数一直来自柜台，不受影响。
     - 下单仍要等行情回调：`on_start` 里调用 `buy()`、`sell()`、`order_target*()` 照旧报 “Context not ready”。
