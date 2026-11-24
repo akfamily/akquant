@@ -517,14 +517,18 @@ def test_triggered_stop_limit_not_marketable_rests_as_limit() -> None:
 
 
 class _TradeReactor(Strategy):
-    """没有 on_tick; 第 2 根 on_bar 买入, 对买入成交在 on_trade 里卖出 100 股."""
+    """on_tick 只计数; 第 2 根 on_bar 买入, 对买入成交在 on_trade 里卖出 100 股."""
 
     def __init__(self) -> None:
         super().__init__()
         self.bars_seen = 0
+        self.ticks = 0
         self.sold = False
         self.trade_times: List[int] = []
         self.order_log: List[Tuple[str, str, int]] = []
+
+    def on_tick(self, tick: Tick) -> None:
+        self.ticks += 1
 
     def on_bar(self, bar: Bar) -> None:
         self.bars_seen += 1
@@ -562,6 +566,7 @@ def test_order_callbacks_without_tick_orders_match_switch_off(
     result_on = _run(on, frame, fill_policy=fill_policy(), simulate_ticks=True)
 
     assert off.sold, "基线应在 on_trade 里卖出"
+    assert on.ticks > 0
     assert _fingerprint(result_on) == _fingerprint(result_off)
     assert on.trade_times == off.trade_times
     assert on.order_log == off.order_log
@@ -655,11 +660,15 @@ def _indicator_points(events: List[Any]) -> List[Tuple[int, float, bool]]:
 class _Indicators(Strategy):
     intrabar = False
 
+    def __init__(self) -> None:
+        super().__init__()
+        self.ticks = 0
+
     def on_start(self) -> None:
         self.sma = self.I(aq.SMA(2), name="sma", intrabar=self.intrabar, plot=True)
 
     def on_tick(self, tick: Tick) -> None:
-        pass
+        self.ticks += 1
 
     def on_bar(self, bar: Bar) -> None:
         pass
@@ -671,8 +680,10 @@ def test_base_indicator_is_advanced_by_bars_only() -> None:
     off: List[Any] = []
     _run(_Indicators(), frame, on_event=off.append)
     on: List[Any] = []
-    _run(_Indicators(), frame, on_event=on.append, simulate_ticks=True)
+    strategy_on = _Indicators()
+    _run(strategy_on, frame, on_event=on.append, simulate_ticks=True)
 
+    assert strategy_on.ticks > 0
     assert _indicator_points(off), "基线应有指标点"
     assert _indicator_points(on) == _indicator_points(off)
 
@@ -859,21 +870,21 @@ def test_simulated_flag_is_reset_when_instance_goes_live() -> None:
     assert getattr(instance, "_framework_simulated_ticks") is False
 
 
-def test_simulated_flag_is_not_pickled() -> None:
-    """存档不带模拟 tick 标记, 恢复后回到类属性缺省值 False.
+def test_simulated_flag_is_pickled() -> None:
+    """存档带上模拟 tick 标记: 续跑据此识别并拒绝 simulate_ticks 回测的存档.
 
     回测跑完的实例仍持有引擎句柄, 整体不可 pickle(与本功能无关), 所以直接断言
-    ``__getstate__`` 的结果, 再用它重建一个实例验证缺省值。
+    ``__getstate__`` 的结果, 再用它重建一个实例验证标记。
     """
     instance = _Recorder()
     _run(instance, _frame(3), simulate_ticks=True)
     assert getattr(instance, "_framework_simulated_ticks") is True
 
     state = instance.__getstate__()
-    assert "_framework_simulated_ticks" not in state
+    assert state.get("_framework_simulated_ticks") is True
     restored = _Recorder.__new__(_Recorder)
     restored.__setstate__(state)
-    assert getattr(restored, "_framework_simulated_ticks") is False
+    assert getattr(restored, "_framework_simulated_ticks") is True
 
 
 class _TimerEquityProbe(Strategy):
@@ -883,6 +894,7 @@ class _TimerEquityProbe(Strategy):
         super().__init__()
         self.events: List[Tuple[str, int]] = []
         self.timer_equity: Optional[float] = None
+        self.timer_bar_is_none: Optional[bool] = None
         self.bought = False
 
     def on_start(self) -> None:
@@ -900,6 +912,7 @@ class _TimerEquityProbe(Strategy):
     def on_timer(self, payload: str) -> None:
         self.events.append(("timer", 0))
         self.timer_equity = round(float(self.equity), 6)
+        self.timer_bar_is_none = self.current_bar is None
 
 
 def test_timer_on_bar_timestamp_reads_prices_updated_by_simulated_ticks() -> None:
@@ -922,6 +935,8 @@ def test_timer_on_bar_timestamp_reads_prices_updated_by_simulated_ticks() -> Non
     assert on.timer_equity is not None and off.timer_equity is not None
     assert on.timer_equity == pytest.approx(1_000_000.0 + 100 * (11.4 - 10.4))
     assert off.timer_equity == pytest.approx(1_000_000.0 + 100 * (10.4 - 10.4))
+    # 落在模拟 tick 之后、K 线之前: 打开时 current_bar 为空(文档写明)。
+    assert on.timer_bar_is_none is True
 
 
 def test_symbols_outside_whitelist_get_no_simulated_ticks() -> None:
@@ -1003,7 +1018,7 @@ def test_tick_count_is_reset_when_instance_is_reused(caplog: Any) -> None:
     """同一实例先开开关收到 tick, 再关开关跑一次: 第二次照样告警 on_tick 从未触发."""
     instance = _OverridesOnTick()
     _run(instance, _frame(3), simulate_ticks=True)
-    assert instance.__dict__.get("_tick_event_count", 0) > 0
+    assert getattr(instance, "_framework_tick_seen") is True
 
     with caplog.at_level("WARNING"):
         _run(instance, _frame(3))
@@ -1127,8 +1142,12 @@ class _TwoSymbolRebalancer(Strategy):
 
 
 class _TwoSymbolRebalancerWithTick(_TwoSymbolRebalancer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ticks = 0
+
     def on_tick(self, tick: Tick) -> None:
-        pass
+        self.ticks += 1
 
 
 def _two_symbols_with_suspension() -> pd.DataFrame:
@@ -1165,6 +1184,7 @@ def test_two_symbols_with_suspension_match_switch_off() -> None:
     result_on = _run(on, frame, symbols=symbols, simulate_ticks=True)
 
     rows_off = _order_rows(result_off)
+    assert on.ticks > 0
     assert len(rows_off) == 3
     assert "rejected" in rows_off[1][1].lower(), "停牌那根应拒单"
     assert _order_rows(result_on) == rows_off
@@ -1355,8 +1375,12 @@ class _PortfolioProbe(Strategy):
 
 
 class _PortfolioProbeWithTick(_PortfolioProbe):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ticks = 0
+
     def on_tick(self, tick: Tick) -> None:
-        pass
+        self.ticks += 1
 
 
 def test_portfolio_updates_on_bar_steps_match_switch_off() -> None:
@@ -1373,6 +1397,441 @@ def test_portfolio_updates_on_bar_steps_match_switch_off() -> None:
     on = _PortfolioProbeWithTick()
     _run(on, frame, symbols=symbols, simulate_ticks=True)
 
+    assert on.ticks > 0
     assert off.updates, "基线应有组合更新回调"
     assert all(entry[0] for entry in off.updates)
     assert [entry for entry in on.updates if entry[0]] == off.updates
+
+
+# ---------------------------------------------------------------------------
+# 函数式策略的 on_tick 未触发告警(S19)
+# ---------------------------------------------------------------------------
+
+
+def test_functional_strategy_without_on_tick_does_not_warn(caplog: Any) -> None:
+    """函数式写法只给 on_bar 函数、开关关闭: 不告警 on_tick 从未触发."""
+
+    def on_bar(ctx: Any, bar: Bar) -> None:
+        pass
+
+    with caplog.at_level("WARNING"):
+        _run(on_bar, _frame(4))
+
+    assert _never_fired_warnings(caplog) == []
+
+
+def test_functional_strategy_with_on_tick_warns_once(caplog: Any) -> None:
+    """函数式写法给了 on_tick 函数、数据只有 K 线、开关关闭: 告警一次."""
+    ticks: List[int] = []
+
+    def on_bar(ctx: Any, bar: Bar) -> None:
+        pass
+
+    def on_tick(ctx: Any, tick: Tick) -> None:
+        ticks.append(int(tick.timestamp))
+
+    with caplog.at_level("WARNING"):
+        _run(on_bar, _frame(4), on_tick=on_tick)
+
+    assert ticks == []
+    assert len(_never_fired_warnings(caplog)) == 1
+
+
+# ---------------------------------------------------------------------------
+# K 线步的订单回调与定时器里, current_bar / current_tick 与关闭开关时相同(S15)
+# ---------------------------------------------------------------------------
+
+_FILL_POLICIES = [aq.NextOpen, aq.CurrentClose, aq.NextClose, aq.NextAverage]
+
+
+def _bars(rows: List[Tuple[float, float, float, float]]) -> pd.DataFrame:
+    """按 (开, 高, 低, 收) 逐根生成 1 分钟线, 首根 09:31."""
+    stamps = pd.date_range(
+        "2024-01-02 09:31:00", periods=len(rows), freq="1min", tz=_TZ
+    )
+    return pd.DataFrame(
+        {
+            "timestamp": stamps,
+            "symbol": _SYMBOL,
+            "open": [r[0] for r in rows],
+            "high": [r[1] for r in rows],
+            "low": [r[2] for r in rows],
+            "close": [r[3] for r in rows],
+            "volume": 1000.0,
+        }
+    )
+
+
+def _stop_from_trade_frame() -> pd.DataFrame:
+    """第 3 根收盘大涨到 12.0, 第 4 根最低 11.2, 第 6 根跌到 9.0."""
+    return _bars(
+        [
+            (10.0, 10.2, 9.9, 10.0),
+            (10.0, 10.2, 9.9, 10.0),
+            (10.0, 12.1, 9.9, 12.0),
+            (12.0, 12.1, 11.2, 11.5),
+            (11.5, 11.6, 11.4, 11.5),
+            (11.5, 11.6, 9.0, 9.2),
+            (9.2, 9.3, 9.1, 9.2),
+            (9.2, 9.3, 9.1, 9.2),
+        ]
+    )
+
+
+class _StopFromTrade(Strategy):
+    """第 2 根 on_bar 买入; on_trade 里按 ``self.close * 0.95`` 挂止损."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bars_seen = 0
+        self.ticks = 0
+        self.stop_set = False
+
+    def on_tick(self, tick: Tick) -> None:
+        self.ticks += 1
+
+    def on_bar(self, bar: Bar) -> None:
+        self.bars_seen += 1
+        if self.bars_seen == 2:
+            self.buy(bar.symbol, 1000)
+
+    def on_trade(self, trade: Any) -> None:
+        if not self.stop_set and str(trade.side).endswith("Buy"):
+            self.stop_set = True
+            self.sell(trade.symbol, 1000, trigger_price=round(self.close * 0.95, 4))
+
+
+@pytest.mark.parametrize("fill_policy", _FILL_POLICIES)
+def test_stop_priced_from_self_close_in_on_trade_matches_switch_off(
+    fill_policy: Any,
+) -> None:
+    """on_trade 里按 self.close 定止损价: 开与关的成交、止损价逐项相同."""
+    frame = _stop_from_trade_frame()
+    off = _StopFromTrade()
+    result_off = _run(off, frame, fill_policy=fill_policy())
+    on = _StopFromTrade()
+    result_on = _run(on, frame, fill_policy=fill_policy(), simulate_ticks=True)
+
+    assert on.ticks > 0
+    assert off.stop_set and on.stop_set
+    assert len(result_off.trades_df) == 1, "基线的止损应成交"
+    assert _fingerprint(result_on) == _fingerprint(result_off)
+
+    def stops(result: Any) -> List[float]:
+        orders = result.orders_df.sort_values("created_at")
+        return [float(v) for v in orders["stop_price"].dropna()]
+
+    # 关闭开关时 on_trade 里的 self.close 是第 2 根的收盘价 10.0。
+    assert stops(result_off) == [pytest.approx(9.5)]
+    assert stops(result_on) == stops(result_off)
+
+
+class _CallbackStateProbe(Strategy):
+    """第 2 根买入、第 4 根卖出; 两根 K 线中间登记一个定时器.
+
+    在 on_order、on_trade、on_timer 里记下当时可见的行情状态。
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bars_seen = 0
+        self.ticks = 0
+        self.records: List[Tuple[Any, ...]] = []
+
+    def on_start(self) -> None:
+        self.schedule(pd.Timestamp("2024-01-02 09:33:30", tz=_TZ), "mid")
+
+    def _record(self, name: str) -> None:
+        assert self.ctx is not None
+        bar = self.current_bar
+        self.records.append(
+            (
+                name,
+                int(self.ctx.current_time),
+                bar is None,
+                None if bar is None else int(bar.timestamp),
+                round(float(self.close), 6),
+                self.current_tick is None,
+            )
+        )
+
+    def on_tick(self, tick: Tick) -> None:
+        self.ticks += 1
+
+    def on_bar(self, bar: Bar) -> None:
+        self.bars_seen += 1
+        if self.bars_seen == 2:
+            self.buy(bar.symbol, 1000)
+        if self.bars_seen == 4:
+            self.sell(bar.symbol, 1000)
+
+    def on_order(self, order: Any) -> None:
+        self._record("on_order")
+
+    def on_trade(self, trade: Any) -> None:
+        self._record("on_trade")
+
+    def on_timer(self, payload: str) -> None:
+        self._record("on_timer")
+
+
+@pytest.mark.parametrize("fill_policy", _FILL_POLICIES)
+def test_bar_and_tick_seen_in_callbacks_match_switch_off(fill_policy: Any) -> None:
+    """on_order、on_trade 与两根 K 线中间的 on_timer: 可见的行情状态与关闭时相同."""
+    frame = _frame(8)
+    off = _CallbackStateProbe()
+    _run(off, frame, fill_policy=fill_policy())
+    on = _CallbackStateProbe()
+    _run(on, frame, fill_policy=fill_policy(), simulate_ticks=True)
+
+    assert on.ticks > 0
+    names = [entry[0] for entry in off.records]
+    assert {"on_order", "on_trade", "on_timer"} <= set(names)
+    assert on.records == off.records
+
+
+# ---------------------------------------------------------------------------
+# on_tick 里的 place_bracket: 进场在该 tick 成交后, 止损止盈子单照常挂出
+# ---------------------------------------------------------------------------
+
+
+class _BracketOnTick(Strategy):
+    """首个模拟 tick(第 1 根开盘 10.0)上 place_bracket: 止损 9.9, 止盈 10.85."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.placed = False
+        self.ticks = 0
+
+    def on_tick(self, tick: Tick) -> None:
+        self.ticks += 1
+        if not self.placed:
+            self.placed = True
+            self.place_bracket(
+                tick.symbol, 1000, stop_trigger_price=9.9, take_profit_price=10.85
+            )
+
+    def on_bar(self, bar: Bar) -> None:
+        pass
+
+
+def _order_table(result: Any) -> List[Tuple[Any, ...]]:
+    """(方向, 类型, 状态, 成交量, 均价), 按前三项排序(子单与进场单同一创建时刻)."""
+    rows = [
+        (
+            str(row["side"]),
+            str(row["order_type"]),
+            str(row["status"]),
+            float(row["filled_quantity"]),
+            round(float(row["avg_price"]), 6) if row["filled_quantity"] else None,
+        )
+        for row in result.orders_df.to_dict("records")
+    ]
+    return sorted(rows, key=lambda row: row[:3])
+
+
+def test_bracket_from_on_tick_places_its_exit_orders() -> None:
+    """进场在该 tick 成交后两张子单都被接受; 最低价 tick 9.8 触发止损, 止盈被撤."""
+    strategy = _BracketOnTick()
+
+    result = _run(strategy, _frame(4), simulate_ticks=True)
+
+    assert strategy.ticks > 0
+    rows = _order_table(result)
+    assert ("buy", "market", "filled", 1000.0, 10.0) in rows
+    assert ("sell", "stopmarket", "filled", 1000.0, 9.8) in rows
+    assert ("sell", "limit", "cancelled", 0.0, None) in rows
+    assert len(rows) == 3
+    assert not [r for r in rows if r[2] == "rejected"]
+    assert strategy.get_position(_SYMBOL) == 0
+
+
+class _BracketOnBar(Strategy):
+    """关闭开关: 第 1 根 on_bar 里 place_bracket(止损 10.3, 止盈 11.5)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.placed = False
+        self.rejects: List[str] = []
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.placed:
+            self.placed = True
+            self.place_bracket(
+                bar.symbol, 1000, stop_trigger_price=10.3, take_profit_price=11.5
+            )
+
+    def on_order(self, order: Any) -> None:
+        if str(order.status).endswith("Rejected"):
+            self.rejects.append(str(order.reject_reason))
+
+
+def test_bracket_on_bar_under_current_close_is_unchanged_with_switch_off() -> None:
+    """锁住关闭开关时的现状: CurrentClose 下进场当根成交, 两张子单因可用持仓为 0 被拒.
+
+    关闭开关时同周期成交路径的这一行为不在本功能范围内。
+    """
+    strategy = _BracketOnBar()
+
+    result = _run(strategy, _frame(4), fill_policy=CurrentClose())
+
+    assert _order_table(result) == [
+        ("buy", "market", "filled", 1000.0, 10.4),
+        ("sell", "limit", "rejected", 0.0, None),
+        ("sell", "stopmarket", "rejected", 0.0, None),
+    ]
+    assert len(strategy.rejects) == 2
+    assert all(
+        "Insufficient available position" in reason and "Available: 0" in reason
+        for reason in strategy.rejects
+    )
+    assert strategy.get_position(_SYMBOL) == 1000
+
+
+# ---------------------------------------------------------------------------
+# 存档续跑不支持模拟 tick: 显式报错, 不静默停掉 on_tick
+# ---------------------------------------------------------------------------
+
+
+def _checkpoint(tmp_path: Any, strategy: Any, *, simulate: bool) -> str:
+    from akquant import save_checkpoint
+
+    result = _run(strategy, _frame(3), simulate_ticks=simulate)
+    assert result.engine is not None
+    path = str(tmp_path / "part1.ckpt")
+    save_checkpoint(result.engine, result.strategy, path)
+    return path
+
+
+def _resume(path: str, **kwargs: Any) -> Any:
+    from akquant import run_from_checkpoint
+
+    later = _frame(3, start="2024-01-02 09:41:00")
+    return run_from_checkpoint(
+        path, data=later, symbols=[_SYMBOL], show_progress=False, **kwargs
+    )
+
+
+@pytest.mark.parametrize("value", [True, False])
+def test_resume_rejects_simulate_ticks_argument(tmp_path: Any, value: bool) -> None:
+    """续跑时传 simulate_ticks(无论真假): ValueError."""
+    path = _checkpoint(tmp_path, _Recorder(), simulate=False)
+
+    with pytest.raises(ValueError, match="simulate_ticks"):
+        _resume(path, simulate_ticks=value)
+
+
+def test_resume_rejects_checkpoint_of_a_simulated_tick_backtest(tmp_path: Any) -> None:
+    """第一段 simulate_ticks=True 的存档拿去续跑: ValueError."""
+    strategy = _Recorder()
+    path = _checkpoint(tmp_path, strategy, simulate=True)
+    assert [e for e in strategy.events if e[0] == "tick"], "第一段应收到模拟 tick"
+
+    with pytest.raises(ValueError, match="simulate_ticks"):
+        _resume(path)
+
+
+def test_resume_of_plain_checkpoint_still_runs(tmp_path: Any) -> None:
+    """关闭开关的存档照常续跑, 续跑段不产生 tick."""
+    strategy = _Recorder()
+    path = _checkpoint(tmp_path, strategy, simulate=False)
+
+    result = _resume(path)
+
+    resumed = result.strategy
+    assert resumed is not None
+    assert getattr(resumed, "_framework_simulated_ticks") is False
+    kinds = [e[0] for e in resumed.events]
+    assert kinds == ["bar"] * 6
+
+
+def test_resume_warns_when_on_tick_never_fires(tmp_path: Any, caplog: Any) -> None:
+    """续跑段覆写了 on_tick 却一个 tick 都没收到: 与 run_backtest 一样告警一次."""
+    path = _checkpoint(tmp_path, _OverridesOnTick(), simulate=False)
+    caplog.clear()
+
+    with caplog.at_level("WARNING"):
+        _resume(path)
+
+    assert len(_never_fired_warnings(caplog)) == 1
+
+
+# ---------------------------------------------------------------------------
+# 文档里的 tick 通道口径: 不受成交量上限约束、跳空时限价单按限价成交
+# ---------------------------------------------------------------------------
+
+
+class _BuyOnce(Strategy):
+    """在首个模拟 tick 上市价买入 1000 股.
+
+    ``on_tick_side=False`` 时改在第 1 根 on_bar 里买。
+    """
+
+    on_tick_side = True
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ticks = 0
+        self.placed = False
+        self.fills: List[Tuple[int, float]] = []
+
+    def on_tick(self, tick: Tick) -> None:
+        self.ticks += 1
+        if self.on_tick_side and not self.placed:
+            self.placed = True
+            self.buy(tick.symbol, 1000)
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.on_tick_side and not self.placed:
+            self.placed = True
+            self.buy(bar.symbol, 1000)
+
+    def on_trade(self, trade: Any) -> None:
+        self.fills.append((int(trade.timestamp), float(trade.quantity)))
+
+
+class _BuyOnceOnBar(_BuyOnce):
+    on_tick_side = False
+
+
+def test_tick_lane_is_not_capped_by_volume_limit() -> None:
+    """量限 10%: on_tick 的市价单当场全部成交; 同样的单放在 on_bar 里被截断."""
+    frame = _frame(4)
+    on_tick = _BuyOnce()
+    _run(on_tick, frame, simulate_ticks=True, volume_limit_pct=0.1)
+    on_bar = _BuyOnceOnBar()
+    _run(on_bar, frame, simulate_ticks=True, volume_limit_pct=0.1)
+
+    assert on_tick.ticks > 0
+    first_tick = int(pd.Timestamp("2024-01-02 09:31:00", tz=_TZ).value) - 4 * _SEC
+    assert on_tick.fills == [(first_tick, 1000.0)]
+    # K 线通道每根最多成交 1000 * 10% = 100 股。
+    assert on_bar.fills, "on_bar 的单应部分成交"
+    assert all(quantity <= 100.0 for _, quantity in on_bar.fills)
+    assert sum(quantity for _, quantity in on_bar.fills) < 1000.0
+
+
+class _LimitAcrossGap(_TickLane):
+    """在第 3 根的收盘 tick(12.4)上挂买入限价 11.0; 第 4 根开盘跳空到 10.5."""
+
+    at = (3, 3)
+
+    def act(self, tick: Tick) -> None:
+        self.buy(tick.symbol, 100, price=11.0)
+
+
+def test_resting_limit_fills_at_limit_price_across_a_gap() -> None:
+    """K 线之间跳空越过限价: 挂着的限价单在下一根的开盘 tick 上按限价成交."""
+    frame = _frame(6)
+    frame.loc[3, ["open", "high", "low", "close"]] = [10.5, 11.2, 10.3, 10.9]
+    strategy = _LimitAcrossGap()
+
+    _run(strategy, frame, simulate_ticks=True)
+
+    assert strategy.trigger is not None
+    assert strategy.trigger[1] == pytest.approx(12.4)
+    buys = [f for f in strategy.fills if f[0] == "buy"]
+    fourth_open = int(pd.Timestamp("2024-01-02 09:34:00", tz=_TZ).value) - 4 * _SEC
+    # 第一笔是 on_bar 里的买入; 第二笔按限价 11.0 成交, 不按开盘 tick 价 10.5。
+    assert len(buys) == 2
+    assert buys[1] == ("buy", fourth_open, pytest.approx(11.0))

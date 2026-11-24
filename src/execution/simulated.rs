@@ -575,7 +575,10 @@ impl SimulatedExecutionClient {
         for id in finished_ids {
             self.orders.remove(&id);
             self.created_off_bar_ids.remove(&id);
-            self.sim_tick_order_ids.remove(&id);
+            // 只有打开 simulate_ticks 时才登记过(关闭时不多做一次集合删除)
+            if self.simulated_ticks {
+                self.sim_tick_order_ids.remove(&id);
+            }
         }
         self.order_queue.retain(|id| self.orders.contains_key(id));
     }

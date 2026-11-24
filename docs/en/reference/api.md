@@ -91,8 +91,8 @@ def run_backtest(
     indicator_recorder: Optional[IndicatorSink] = None,
     broker_profile: Optional[str] = None,
     fill_policy: Optional[FillMode] = None,
-    simulate_ticks: bool = False,
     strict_strategy_params: bool = True,
+    simulate_ticks: bool = False,
     **kwargs: Any,
 ) -> BacktestResult
 ```
@@ -125,7 +125,7 @@ def run_backtest(
     *   The old dict form (`{"price_basis": ..., "bar_offset": ..., "temporal": ...}`) and `make_fill_policy(...)` are removed and now raise `TypeError`.
 *   `legacy_execution_policy_compat` (via `**kwargs`): Removed.
 *   Migration hint: legacy execution parameters and the `fill_policy` dict are no longer accepted; pass a `FillMode` object.
-*   `simulate_ticks`: When the backtest data has bars only, split every bar into four simulated ticks (open, the two extremes, close) to drive `on_tick`. Default `False`. Orders placed in `on_tick` are matched by simulated ticks: market orders fill on that tick at its price; a resting limit order fills at its limit price when crossed, a stop order at the price of the tick that triggers it. Orders placed in `on_bar` / `on_timer` are still matched by bars, with the same results as when the switch is off. Cannot be combined with real tick data, and is for backtests only. See "Backtesting `on_tick` with Bars Only" in the [Strategy Guide](../guide/strategy.md#simulate-ticks).
+*   `simulate_ticks`: When the backtest data has bars only, split every bar into four simulated ticks (open, the two extremes, close) to drive `on_tick`. Default `False`. Orders placed in `on_tick` are matched by simulated ticks: market orders fill on that tick at its price; a resting limit order fills at its limit price when crossed, a stop order at the price of the tick that triggers it. Orders placed in `on_bar` / `on_timer` are still matched by bars, with the same results as when the switch is off. Cannot be combined with real tick data, and is for backtests only; `run_from_checkpoint` does not accept it. See "Backtesting `on_tick` with Bars Only" in the [Strategy Guide](../guide/strategy.md#simulate-ticks).
 *   `strict_strategy_params`: Whether to strictly validate strategy constructor parameters (default `True`).
     *   Raises immediately if unsupported constructor parameters are provided.
     *   Recommended to keep enabled to avoid silent parameter mismatch and distorted backtest results.
@@ -321,6 +321,8 @@ For these fields, priority is:
 3. restored/default values
 
 `sessions` / `trading_calendar` mean the same as in `run_backtest`. The checkpoint stores both, so a resumed run that omits them keeps the stored configuration; values that are passed and differ from the checkpoint win, with a warning.
+
+`run_from_checkpoint` does not accept `simulate_ticks`: simulated ticks do not support checkpoint resume. Passing the parameter (whether true or false), or resuming a checkpoint taken from a `simulate_ticks=True` backtest, raises `ValueError`.
 
 **DataFeedAdapter Usage (Multi-Timeframe):**
 

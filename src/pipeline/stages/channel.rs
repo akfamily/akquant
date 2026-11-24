@@ -283,6 +283,12 @@ impl Processor for ChannelProcessor {
             }
 
             if !pending_order_requests.is_empty() {
+                // 模拟 tick 步: 订单在该 tick 上当场成交, 成交触发的子单(如
+                // place_bracket 的止损止盈)随即提交; 先把已累积的成交入账, 子单
+                // 的风控才看得到刚成交的持仓。
+                if engine.on_simulated_tick() {
+                    flush_accumulated_trades(engine, &mut trades_to_process);
+                }
                 if settle_reductions_before_increases {
                     flush_accumulated_trades(engine, &mut trades_to_process);
                     settle_reductions_before_increases = false;

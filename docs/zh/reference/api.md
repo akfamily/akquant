@@ -91,11 +91,15 @@ def run_backtest(
     indicator_recorder: Optional[IndicatorSink] = None,
     broker_profile: Optional[str] = None,
     fill_policy: Optional[FillMode] = None,
-    simulate_ticks: bool = False,
     strict_strategy_params: bool = True,
+    simulate_ticks: bool = False,
     **kwargs: Any,
 ) -> BacktestResult
 ```
+
+**关键参数补充:**
+
+*   `simulate_ticks`: 回测数据只有 K 线时，把每根 K 线拆成四个模拟 tick（开盘价、两个极值、收盘价）驱动 `on_tick`，缺省 `False`。`on_tick` 里下的单按模拟 tick 撮合：市价单在该 tick 上按 tick 价成交；挂着的限价单被越过时按限价成交，止损单按触发时的 tick 价成交。`on_bar`、`on_timer` 里下的单仍按 K 线撮合，结果与关闭时相同。数据里已有真实 tick 时不能使用，也只用于回测；`run_from_checkpoint` 不接受这个参数。见[策略指南](../guide/strategy.md#simulate-ticks)“只有 K 线时回测 `on_tick`”。
 
 ### `akquant.run_grid_search`
 
@@ -205,6 +209,8 @@ def run_from_checkpoint(
 
 `sessions` / `trading_calendar` 与 `run_backtest` 同义。存档保存这两项，续跑不传就沿用存档里的配置；传入且与存档不一致时以传入为准并告警。
 
+`run_from_checkpoint` 不接受 `simulate_ticks`：模拟 tick 不支持存档续跑。传入这个参数（无论真假），或存档来自 `simulate_ticks=True` 的回测时，报 `ValueError`。
+
 **通用行为说明（主要对应 `run_backtest`，`run_from_checkpoint` 共享其中的成交/风控/策略映射规则）:**
 
 *   `data`: 回测数据。支持单个 DataFrame，`{symbol: DataFrame}` 字典，`List[Bar]`，`DataFeed`，或实现 `DataFeedAdapter.load(request)` 的对象。只有日期（本地 0 点）的数据改写到交易日收盘时刻只针对 DataFrame 与 Bar 列表输入；`DataFeed` 输入按原样使用，只有日期的数据请改用 DataFrame/Bar 列表，或把时间戳打在交易日收盘并传 `freq="1d"`。
@@ -233,7 +239,6 @@ def run_from_checkpoint(
 *   旧的 `fill_policy=dict`（`price_basis`/`bar_offset`/`temporal`）与 `make_fill_policy(...)` 已移除，传入 dict 会抛出 `TypeError`。请改用上述 `FillMode` 构造器。
 *   `legacy_execution_policy_compat`（通过 `**kwargs`）: 已移除。
 *   迁移建议：legacy 执行参数已不再接受，统一使用 `FillMode` 对象。
-*   `simulate_ticks`: 回测数据只有 K 线时，把每根 K 线拆成四个模拟 tick（开盘价、两个极值、收盘价）驱动 `on_tick`，缺省 `False`。`on_tick` 里下的单按模拟 tick 撮合：市价单在该 tick 上按 tick 价成交；挂着的限价单被越过时按限价成交，止损单按触发时的 tick 价成交。`on_bar`、`on_timer` 里下的单仍按 K 线撮合，结果与关闭时相同。数据里已有真实 tick 时不能使用，也只用于回测。见[策略指南](../guide/strategy.md#simulate-ticks)“只有 K 线时回测 `on_tick`”。
 *   `strict_strategy_params`: 是否严格校验策略构造参数（默认 `True`）。
     *   当传入策略不接受的参数时会立即抛错；
     *   推荐保持默认值，避免参数错配被静默忽略导致回测结果偏差。
