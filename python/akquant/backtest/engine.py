@@ -3280,6 +3280,27 @@ def _normalize_slippage_policy(
     )
 
 
+def _warn_on_tick_never_fired(
+    strategies: Sequence[Any], logger: logging.Logger
+) -> None:
+    """回测结束时: 覆写了 on_tick 却一个 tick 都没收到的策略, 各告警一次.
+
+    只有 K 线的回测里 on_tick 不会触发, 且此前没有任何提示(写在 on_tick 里的
+    逻辑整段不执行)。放在回测结束时判断, 对所有输入形态都成立。
+    """
+    for strategy in strategies:
+        if type(strategy).on_tick is Strategy.on_tick:
+            continue
+        if strategy.__dict__.get("_tick_event_count", 0) > 0:
+            continue
+        logger.warning(
+            "策略 %s 覆写了 on_tick, 但整场回测没有收到任何 tick, on_tick 一次都没有"
+            "执行。数据只有 K 线时可传 run_backtest(simulate_ticks=True), 用每根 K 线"
+            "模拟四个 tick 驱动 on_tick",
+            type(strategy).__name__,
+        )
+
+
 def run_backtest(
     data: Optional[BacktestDataInput] = None,
     freq: Optional[str] = None,
@@ -5115,7 +5136,11 @@ def run_backtest(
         for current_strategy in all_strategy_instances:
             # 所有标的按 tick/bar 双流处理: 基础周期指标只由 K 线推进(spec S16)。
             setattr(current_strategy, "_framework_dual_stream", True)
-            setattr(current_strategy, "_framework_simulated_ticks", True)
+    # 每次回测都写: 策略实例复用时, 关闭开关的后一次要把上一次的 True 复位。
+    for current_strategy in all_strategy_instances:
+        setattr(current_strategy, "_framework_simulated_ticks", simulate_ticks)
+        # tick 事件计数每次回测清零(实例复用时不带上一次的计数)。
+        current_strategy.__dict__["_tick_event_count"] = 0
     if stream_on_event is not None:
         cast(Any, engine).set_stream_callback(stream_on_event)
         cast(Any, engine).set_stream_options(
@@ -5986,6 +6011,18 @@ def run_backtest(
                             strategy=slot_strategy,
                         ),
                     )
+
+    if not simulate_ticks:
+        _warn_on_tick_never_fired(all_strategy_instances, logger)
+    elif not any(
+        s.__dict__.get("_tick_event_count", 0) for s in all_strategy_instances
+    ):
+        logger.warning(
+            "simulate_ticks=True, 但整场回测没有生成任何模拟 tick, on_tick 没有执行。"
+            "只有连续竞价时段、成交量大于 0 的 K 线才生成; K 线没有区间起点时按时间戳"
+            "判断时段, 收盘时刻打戳的日线会落在收盘集合竞价。请传 freq=(如 freq='1d')"
+            "声明 K 线周期"
+        )
 
     result = BacktestResult(
         engine.get_results(),

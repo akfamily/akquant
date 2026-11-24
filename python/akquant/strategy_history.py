@@ -58,6 +58,9 @@ def _infer_freq(strategy: Any, freq: Optional[str]) -> Optional[str]:
     与 ``freq`` 已显式传入时不做任何干预(显式优先), 单流场景也完全不受影响
     (单流下 ``freq=None`` 本就直接命中唯一存在的那条序列, 推断出的值与它一致)。
 
+    ``simulate_ticks`` 打开时 ``on_tick`` 里不按回调定档为 tick 序列, 因为模拟 tick
+    不写历史。
+
     窗口回调(``on_window_bar`` 或 ``subscribe_bars(callback=)``)内省略 ``freq``
     时取该窗口的周期(``_framework_current_callback`` 形如 ``"window:5min"``)。
 

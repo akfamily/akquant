@@ -6,6 +6,7 @@ import akquant as aq
 import pandas as pd
 import pytest
 from akquant import Bar, Strategy, Tick, run_backtest
+from akquant.backtest.fill_mode import CurrentClose
 
 _SYMBOL = "600000"
 _TZ = "Asia/Shanghai"
@@ -633,3 +634,285 @@ def test_tick_order_is_risk_checked_with_its_own_fill_policy(fill_policy: Any) -
     assert len(strategy.rejects) == 1
     assert "Insufficient available position" in strategy.rejects[0]
     assert "at execution" not in strategy.rejects[0]
+
+
+# ---------------------------------------------------------------------------
+# 策略侧: 指标(S16)与未触发告警(S19)
+# ---------------------------------------------------------------------------
+
+
+def _indicator_points(events: List[Any]) -> List[Tuple[int, float, bool]]:
+    out = []
+    for event in events:
+        if aq.is_indicator_stream_event(event):
+            message = aq.to_indicator_message(event)
+            if message is not None and message["type"] == "point":
+                point = message["indicator"]
+                out.append((point["timestamp"], point["value"], point["confirmed"]))
+    return out
+
+
+class _Indicators(Strategy):
+    intrabar = False
+
+    def on_start(self) -> None:
+        self.sma = self.I(aq.SMA(2), name="sma", intrabar=self.intrabar, plot=True)
+
+    def on_tick(self, tick: Tick) -> None:
+        pass
+
+    def on_bar(self, bar: Bar) -> None:
+        pass
+
+
+def test_base_indicator_is_advanced_by_bars_only() -> None:
+    """基础周期指标只由 K 线推进: 确认点与关闭开关时逐点相同, 没有临时点."""
+    frame = _frame(6)
+    off: List[Any] = []
+    _run(_Indicators(), frame, on_event=off.append)
+    on: List[Any] = []
+    _run(_Indicators(), frame, on_event=on.append, simulate_ticks=True)
+
+    assert _indicator_points(off), "基线应有指标点"
+    assert _indicator_points(on) == _indicator_points(off)
+
+
+def test_intrabar_indicator_previews_on_simulated_ticks() -> None:
+    """Intrabar 指标在模拟 tick 上出临时点; 第四个 tick 上的临时值等于确认值."""
+
+    class _Intrabar(_Indicators):
+        intrabar = True
+
+    frame = _frame(6)
+    events: List[Any] = []
+    _run(_Intrabar(), frame, on_event=events.append, simulate_ticks=True)
+
+    points = _indicator_points(events)
+    confirmed = {ts: value for ts, value, ok in points if ok}
+    provisional = [(ts, value) for ts, value, ok in points if not ok]
+    assert provisional, "应有临时点"
+    assert all(ts in confirmed for ts, _ in provisional)
+    last_preview = {ts: value for ts, value in provisional}
+    for ts, value in last_preview.items():
+        assert value == pytest.approx(confirmed[ts])
+
+
+class _OverridesOnTick(Strategy):
+    def on_tick(self, tick: Tick) -> None:
+        pass
+
+    def on_bar(self, bar: Bar) -> None:
+        pass
+
+
+class _BarOnly(Strategy):
+    def on_bar(self, bar: Bar) -> None:
+        pass
+
+
+def _never_fired_warnings(caplog: Any) -> List[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if "on_tick" in r.getMessage()
+        and "simulate_ticks" in r.getMessage()
+        and r.levelname == "WARNING"
+    ]
+
+
+def test_warns_when_on_tick_is_overridden_but_never_fires(caplog: Any) -> None:
+    """覆写了 on_tick、整场回测一个 tick 都没收到: 告警一次并提示开关."""
+    with caplog.at_level("WARNING"):
+        _run(_OverridesOnTick(), _frame(4))
+
+    assert len(_never_fired_warnings(caplog)) == 1
+
+
+@pytest.mark.parametrize(
+    ("strategy_cls", "simulate"),
+    [(_OverridesOnTick, True), (_BarOnly, False)],
+)
+def test_no_warning_when_ticks_arrive_or_on_tick_is_not_overridden(
+    caplog: Any, strategy_cls: Any, simulate: bool
+) -> None:
+    """开关打开时有 tick、未覆写 on_tick 时: 都不告警."""
+    with caplog.at_level("WARNING"):
+        _run(strategy_cls(), _frame(4), simulate_ticks=simulate)
+
+    assert _never_fired_warnings(caplog) == []
+
+
+def test_no_warning_when_real_ticks_are_fed(caplog: Any) -> None:
+    """喂了真实 tick(聚合成 K 线)时 on_tick 会触发, 不告警."""
+    stamps = pd.date_range("2024-01-02 09:31:00", periods=30, freq="10s", tz=_TZ)
+    ticks = [
+        Tick(timestamp=int(ts.value), price=10.0 + i * 0.01, volume=1.0, symbol=_SYMBOL)
+        for i, ts in enumerate(stamps)
+    ]
+    with caplog.at_level("WARNING"):
+        _run(_OverridesOnTick(), ticks)
+
+    assert _never_fired_warnings(caplog) == []
+
+
+# ---------------------------------------------------------------------------
+# 开关打开却没有生成任何模拟 tick(S19 第二条)、标记复位、定时器、S6 与 S2
+# ---------------------------------------------------------------------------
+
+_NO_TICK_TEXT = "没有生成任何模拟 tick"
+
+
+def _no_tick_warnings(caplog: Any) -> List[str]:
+    return [
+        r.getMessage()
+        for r in caplog.records
+        if _NO_TICK_TEXT in r.getMessage() and r.levelname == "WARNING"
+    ]
+
+
+def _closing_stamped_daily(count: int = 3) -> pd.DataFrame:
+    """收盘时刻(15:00)打戳的日线."""
+    stamps = pd.date_range("2024-01-02 15:00:00", periods=count, freq="1D", tz=_TZ)
+    return pd.DataFrame(
+        {
+            "timestamp": stamps,
+            "symbol": _SYMBOL,
+            "open": [10.0 + i for i in range(count)],
+            "high": [10.6 + i for i in range(count)],
+            "low": [9.8 + i for i in range(count)],
+            "close": [10.4 + i for i in range(count)],
+            "volume": 1000.0,
+        }
+    )
+
+
+def test_warns_when_switch_on_but_no_tick_is_generated(caplog: Any) -> None:
+    """15:00 打戳的日线不传 freq: 整根落在收盘集合竞价, 没有模拟 tick, 告警一次."""
+    recorder = _Recorder()
+    with caplog.at_level("WARNING"):
+        _run(recorder, _closing_stamped_daily(), freq=None, simulate_ticks=True)
+
+    assert [e for e in recorder.events if e[0] == "tick"] == []
+    assert len(_no_tick_warnings(caplog)) == 1
+
+
+def test_daily_bars_with_freq_get_ticks_and_no_warning(caplog: Any) -> None:
+    """同样的日线传 freq='1d': 每根 K 线之前四个模拟 tick, 没有该告警."""
+    recorder = _Recorder()
+    with caplog.at_level("WARNING"):
+        _run(recorder, _closing_stamped_daily(), freq="1d", simulate_ticks=True)
+
+    kinds = [e[0] for e in recorder.events]
+    assert kinds == ["tick", "tick", "tick", "tick", "bar"] * 3
+    assert _no_tick_warnings(caplog) == []
+
+
+def test_simulated_flag_is_reset_when_instance_is_reused() -> None:
+    """同一策略实例先开后关: 第二次回测后标记复位为 False."""
+    instance = _Recorder()
+    _run(instance, _frame(3), simulate_ticks=True)
+    assert getattr(instance, "_framework_simulated_ticks") is True
+
+    _run(instance, _frame(3))
+    assert getattr(instance, "_framework_simulated_ticks") is False
+
+
+class _TimerEquityProbe(Strategy):
+    """第 1 根 K 线买入; 定时器登记在第 2 根 K 线的时间戳上, 记下权益."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.events: List[Tuple[str, int]] = []
+        self.timer_equity: Optional[float] = None
+        self.bought = False
+
+    def on_start(self) -> None:
+        self.schedule(pd.Timestamp("2024-01-02 09:32:00", tz=_TZ), "probe")
+
+    def on_tick(self, tick: Tick) -> None:
+        self.events.append(("tick", int(tick.timestamp)))
+
+    def on_bar(self, bar: Bar) -> None:
+        self.events.append(("bar", int(bar.timestamp)))
+        if not self.bought:
+            self.bought = True
+            self.buy(bar.symbol, 100)
+
+    def on_timer(self, payload: str) -> None:
+        self.events.append(("timer", 0))
+        self.timer_equity = round(float(self.equity), 6)
+
+
+def test_timer_on_bar_timestamp_reads_prices_updated_by_simulated_ticks() -> None:
+    """定时器恰在第 2 根 K 线时间戳上: 开关打开时读到本根收盘价, 关闭时读到上一根的."""
+    frame = _frame(3)
+    second_end = int(pd.Timestamp("2024-01-02 09:32:00", tz=_TZ).value)
+
+    on = _TimerEquityProbe()
+    _run(on, frame, simulate_ticks=True, fill_policy=CurrentClose())
+    off = _TimerEquityProbe()
+    _run(off, frame, fill_policy=CurrentClose())
+
+    kinds = [e[0] for e in on.events]
+    timer_pos = kinds.index("timer")
+    assert kinds[timer_pos - 4 : timer_pos + 2] == ["tick"] * 4 + ["timer", "bar"]
+    assert [e for e in on.events if e[0] == "bar"][1][1] == second_end
+    # 买入在第 1 根 on_bar 下单, 按当根收盘价 10.4 成交;
+    # 权益 = 现金 + 100 * (最新价 - 10.4)。
+    # 第 1 根收盘 10.4、第 2 根收盘 11.4。
+    assert on.timer_equity is not None and off.timer_equity is not None
+    assert on.timer_equity == pytest.approx(1_000_000.0 + 100 * (11.4 - 10.4))
+    assert off.timer_equity == pytest.approx(1_000_000.0 + 100 * (10.4 - 10.4))
+
+
+def test_symbols_outside_whitelist_get_no_simulated_ticks() -> None:
+    """白名单之外的标的不生成模拟 tick."""
+    other = "600001"
+    frame = pd.concat(
+        [_frame(2), _frame(2, symbol=other, base=20.0)], ignore_index=True
+    )
+    recorder = _Recorder()
+
+    _run(recorder, frame, simulate_ticks=True, symbols=[_SYMBOL])
+
+    ticks = [e for e in recorder.events if e[0] == "tick"]
+    assert len(ticks) == 8
+    assert {e[1] for e in ticks} == {_SYMBOL}
+
+
+def test_bar_outside_continuous_auction_gets_no_simulated_ticks() -> None:
+    """09:30 打戳的 1 分钟线区间在开盘前: 没有 tick; 之后连续竞价的 K 线有四个."""
+    frame = _frame(3, start="2024-01-02 09:30:00")
+    recorder = _Recorder()
+
+    _run(recorder, frame, simulate_ticks=True)
+
+    first_end = int(pd.Timestamp("2024-01-02 09:30:00", tz=_TZ).value)
+    before_first = [e for e in recorder.events if e[0] == "tick" and e[2] <= first_end]
+    assert before_first == []
+    assert [e[0] for e in recorder.events] == ["bar"] + (["tick"] * 4 + ["bar"]) * 2
+
+
+def test_datafeed_with_real_tick_raises_in_engine() -> None:
+    """DataFeed 输入里混有真实 tick: 引擎取到 tick 事件时报错."""
+    feed = aq.DataFeed()
+    first = int(pd.Timestamp("2024-01-02 09:31:00", tz=_TZ).value)
+    for i in range(3):
+        feed.add_bar(
+            Bar(
+                timestamp=first + i * 60 * _SEC,
+                open=10.0,
+                high=10.5,
+                low=9.8,
+                close=10.2,
+                volume=1000.0,
+                symbol=_SYMBOL,
+            )
+        )
+    feed.add_tick(
+        Tick(timestamp=first + 150 * _SEC, price=10.0, volume=1.0, symbol=_SYMBOL)
+    )
+    feed.sort()
+
+    with pytest.raises(ValueError, match="simulate_ticks"):
+        _run(_Recorder(), feed, simulate_ticks=True, symbols=[_SYMBOL])

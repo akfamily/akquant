@@ -252,6 +252,10 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
     flush_pending_schedules(strategy)
     register_cross_section_timers(strategy)
     strategy._last_event_type = "tick"
+    # 收到过 tick 的次数(真实与模拟都计), 供回测结束时判断 on_tick 是否从未触发。
+    strategy.__dict__["_tick_event_count"] = (
+        strategy.__dict__.get("_tick_event_count", 0) + 1
+    )
     strategy._check_order_events()
     check_expiry_events(strategy)
     previous_price = strategy._last_prices.get(tick.symbol)
