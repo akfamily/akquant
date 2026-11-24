@@ -248,6 +248,17 @@ def test_hint_history_depth(tmp_path: Path) -> None:
     assert "set_history_depth" in out["hint"]
 
 
+def test_hint_order_in_on_start(tmp_path: Path) -> None:
+    """在 on_start 里下单: hint 指明下单要等行情回调, 读账户可以留在 on_start."""
+    src = MULTI + (
+        "class S(Strategy):\n    def on_start(self):\n        self.buy('AAA', 100)\n"
+    )
+    out = _describe(tmp_path, src)
+    assert "Context not ready" in out["message"]
+    assert "on_bar" in out["hint"]
+    assert "get_account" in out["hint"]
+
+
 def test_hint_attribute_error_suggests_close_name(tmp_path: Path) -> None:
     """AttributeError: hint 给相近的属性名; 没有相近名字时列出可用属性."""
     template = MULTI + (

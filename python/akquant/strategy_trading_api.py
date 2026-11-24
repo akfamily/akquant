@@ -1000,10 +1000,27 @@ def _resolve_mark_price(strategy: Any, symbol: str) -> float:
     return 0.0
 
 
+def _account_view(strategy: Any) -> Any:
+    """读账户与持仓用的上下文.
+
+    行情回调里是引擎绑定的 ``strategy.ctx``。``on_start``(以及恢复时的
+    ``on_resume``)早于第一个行情事件, 那时 ``ctx`` 还没绑定, 退到运行入口挂上
+    的开跑前账户视图: 初始资金, 或恢复出来的资金与持仓。两者都没有时返回
+    ``None``, 即策略实例还没进入任何一次运行。
+
+    只给读数用: 下单仍只认 ``strategy.ctx``。
+    """
+    ctx = strategy.ctx
+    if ctx is not None:
+        return ctx
+    return getattr(strategy, "_framework_prestart_ctx", None)
+
+
 def _is_margin_account(strategy: Any) -> bool:
-    if strategy.ctx is None:
+    ctx = _account_view(strategy)
+    if ctx is None:
         return False
-    risk_config = getattr(strategy.ctx, "risk_config", None)
+    risk_config = getattr(ctx, "risk_config", None)
     account_mode = str(getattr(risk_config, "account_mode", "cash")).strip().lower()
     return account_mode == "margin"
 
@@ -1738,35 +1755,40 @@ def get_buying_power(strategy: Any) -> float:
 
 # --- SimExecution 后端原语（Task 1 引入；Task 3/4 让公共函数 delegate 到 execution）---
 def _sim_get_position(strategy: Any, symbol: Optional[str] = None) -> float:
-    if strategy.ctx is None:
+    ctx = _account_view(strategy)
+    if ctx is None:
         return 0.0
-    return float(strategy.ctx.get_position(resolve_symbol(strategy, symbol)))
+    return float(ctx.get_position(resolve_symbol(strategy, symbol)))
 
 
 def _sim_get_available_position(strategy: Any, symbol: Optional[str] = None) -> float:
-    if strategy.ctx is None:
+    ctx = _account_view(strategy)
+    if ctx is None:
         return 0.0
-    return float(strategy.ctx.get_available_position(resolve_symbol(strategy, symbol)))
+    return float(ctx.get_available_position(resolve_symbol(strategy, symbol)))
 
 
 def _sim_get_closable_position(strategy: Any, symbol: Optional[str] = None) -> float:
     """可平持仓：结算仓 − 在途平仓/减仓单占用（auto 拆腿用，见 #361）."""
-    if strategy.ctx is None:
+    ctx = _account_view(strategy)
+    if ctx is None:
         return 0.0
-    return float(strategy.ctx.get_closable_position(resolve_symbol(strategy, symbol)))
+    return float(ctx.get_closable_position(resolve_symbol(strategy, symbol)))
 
 
 def _sim_get_projected_position(strategy: Any, symbol: Optional[str] = None) -> float:
     """投影持仓：结算仓 + 全部在途单效果（目标仓位算 delta 用）."""
-    if strategy.ctx is None:
+    ctx = _account_view(strategy)
+    if ctx is None:
         return 0.0
-    return float(strategy.ctx.get_projected_position(resolve_symbol(strategy, symbol)))
+    return float(ctx.get_projected_position(resolve_symbol(strategy, symbol)))
 
 
 def _sim_get_positions(strategy: Any) -> Dict[str, float]:
-    if strategy.ctx is None:
+    ctx = _account_view(strategy)
+    if ctx is None:
         raise RuntimeError("Context not ready")
-    return cast(Dict[str, float], strategy.ctx.positions)
+    return cast(Dict[str, float], ctx.positions)
 
 
 def _sim_get_position_detail(
@@ -1777,14 +1799,15 @@ def _sim_get_position_detail(
     今昨仓、冻结量、逐标的保证金回测没有, 留 ``None``。
     """
     resolved = resolve_symbol(strategy, symbol)
-    if strategy.ctx is None:
+    ctx = _account_view(strategy)
+    if ctx is None:
         return PositionDetail(symbol=resolved)
-    quantity = float(strategy.ctx.get_position(resolved))
-    available = float(strategy.ctx.get_available_position(resolved))
+    quantity = float(ctx.get_position(resolved))
+    available = float(ctx.get_available_position(resolved))
     if quantity == 0:
         return PositionDetail(symbol=resolved, available=available)
 
-    entry = float(strategy.ctx.get_position_entry_price(resolved))
+    entry = float(ctx.get_position_entry_price(resolved))
     avg_price = entry if entry else None
     last = (getattr(strategy, "_last_prices", None) or {}).get(resolved)
     snapshot = (getattr(strategy, "_instrument_snapshots", None) or {}).get(resolved)
@@ -1844,15 +1867,17 @@ def _sim_get_holding_bars(strategy: Any, symbol: Optional[str] = None) -> int:
 
 
 def _sim_get_cash(strategy: Any) -> float:
-    if strategy.ctx is None:
+    ctx = _account_view(strategy)
+    if ctx is None:
         return 0.0
-    return float(strategy.ctx.cash)
+    return float(ctx.cash)
 
 
 def _sim_get_buying_power(strategy: Any) -> float:
-    if strategy.ctx is None:
+    ctx = _account_view(strategy)
+    if ctx is None:
         return 0.0
-    return float(strategy.ctx.buying_power)
+    return float(ctx.buying_power)
 
 
 def _sim_get_open_orders(strategy: Any, symbol: Optional[str] = None) -> List[Any]:
@@ -1889,15 +1914,16 @@ def _sim_get_open_orders(strategy: Any, symbol: Optional[str] = None) -> List[An
 
 def _sim_get_portfolio_value(strategy: Any) -> float:
     """计算组合总价值（_sim_ 原语，复制自 get_portfolio_value，逻辑一字不改）."""
-    if strategy.ctx is None:
+    ctx = _account_view(strategy)
+    if ctx is None:
         return 0.0
     use_previous_snapshot = bool(
         getattr(strategy, "_framework_use_previous_account_snapshot", False)
     )
     ctx_equity = (
-        getattr(strategy.ctx, "previous_account_equity", None)
+        getattr(ctx, "previous_account_equity", None)
         if use_previous_snapshot
-        else getattr(strategy.ctx, "account_equity", None)
+        else getattr(ctx, "account_equity", None)
     )
     if isinstance(ctx_equity, (int, float)):
         return float(ctx_equity)
@@ -1907,8 +1933,8 @@ def _sim_get_portfolio_value(strategy: Any) -> float:
         equity, _, _, _, _, _ = get_metrics()
         return float(equity)
 
-    total_value = float(strategy.ctx.cash)
-    for sym, qty in strategy.ctx.positions.items():
+    total_value = float(ctx.cash)
+    for sym, qty in ctx.positions.items():
         if qty == 0:
             continue
 
@@ -1925,25 +1951,24 @@ def _sim_get_portfolio_value(strategy: Any) -> float:
 
 def _sim_get_account(strategy: Any) -> AccountSnapshot:
     """获取账户资金详情快照（_sim_ 原语，复制自 get_account，逻辑一字不改）."""
-    if strategy.ctx is None:
+    ctx = _account_view(strategy)
+    if ctx is None:
         raise RuntimeError("Context not ready")
 
     use_previous_snapshot = bool(
         getattr(strategy, "_framework_use_previous_account_snapshot", False)
     )
     cash_source = (
-        getattr(strategy.ctx, "previous_cash", strategy.ctx.cash)
-        if use_previous_snapshot
-        else strategy.ctx.cash
+        getattr(ctx, "previous_cash", ctx.cash) if use_previous_snapshot else ctx.cash
     )
     cash = float(cash_source)
     prefix = "previous_account_" if use_previous_snapshot else "account_"
-    ctx_market_value = getattr(strategy.ctx, f"{prefix}market_value", None)
-    ctx_notional_value = getattr(strategy.ctx, f"{prefix}notional_value", None)
-    ctx_used_margin = getattr(strategy.ctx, f"{prefix}used_margin", None)
-    ctx_unrealized_pnl = getattr(strategy.ctx, f"{prefix}unrealized_pnl", None)
-    ctx_maintenance_ratio = getattr(strategy.ctx, f"{prefix}maintenance_ratio", None)
-    ctx_equity = getattr(strategy.ctx, f"{prefix}equity", None)
+    ctx_market_value = getattr(ctx, f"{prefix}market_value", None)
+    ctx_notional_value = getattr(ctx, f"{prefix}notional_value", None)
+    ctx_used_margin = getattr(ctx, f"{prefix}used_margin", None)
+    ctx_unrealized_pnl = getattr(ctx, f"{prefix}unrealized_pnl", None)
+    ctx_maintenance_ratio = getattr(ctx, f"{prefix}maintenance_ratio", None)
+    ctx_equity = getattr(ctx, f"{prefix}equity", None)
     engine = getattr(strategy, "_engine", None)
     get_metrics = getattr(engine, "get_account_metrics", None)
     notional_value = (
@@ -1983,7 +2008,7 @@ def _sim_get_account(strategy: Any) -> AccountSnapshot:
     else:
         equity = float(strategy.equity)
         market_value = float(equity - cash)
-        margin = float(getattr(strategy.ctx, "account_used_margin", 0.0) or 0.0)
+        margin = float(getattr(ctx, "account_used_margin", 0.0) or 0.0)
         maintenance_ratio = 0.0
     previous_details = (
         getattr(strategy, "_framework_previous_account_details", None)
@@ -1998,10 +2023,8 @@ def _sim_get_account(strategy: Any) -> AccountSnapshot:
         frozen_cash = float(previous_details.get("frozen_cash", 0.0))
         short_market_value = float(previous_details.get("short_market_value", 0.0))
     else:
-        frozen_cash = float(getattr(strategy.ctx, "account_frozen_cash", 0.0))
-        short_market_value = float(
-            getattr(strategy.ctx, "account_short_market_value", 0.0)
-        )
+        frozen_cash = float(getattr(ctx, "account_frozen_cash", 0.0))
+        short_market_value = float(getattr(ctx, "account_short_market_value", 0.0))
     borrowed_cash = float(max(-cash, 0.0))
     if ctx_equity is None and not callable(get_metrics):
         denominator = market_value + short_market_value
@@ -2011,8 +2034,8 @@ def _sim_get_account(strategy: Any) -> AccountSnapshot:
         accrued_interest = float(previous_details.get("margin_accrued_interest", 0.0))
         daily_interest = float(previous_details.get("margin_daily_interest", 0.0))
     else:
-        accrued_interest = float(getattr(strategy.ctx, "margin_accrued_interest", 0.0))
-        daily_interest = float(getattr(strategy.ctx, "margin_daily_interest", 0.0))
+        accrued_interest = float(getattr(ctx, "margin_accrued_interest", 0.0))
+        daily_interest = float(getattr(ctx, "margin_daily_interest", 0.0))
     # 可用资金 = 总权益 - 持仓占用 - 挂单冻结, 即 equity == margin + frozen_cash +
     # available_cash。期货保证金账户下 cash 只是现金余额(开仓不扣保证金), 真正可用于
     # 新开仓的是它。

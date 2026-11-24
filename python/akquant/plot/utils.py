@@ -1,19 +1,40 @@
 """Utility functions for plotting."""
 
-try:
-    import plotly.graph_objects as go  # type: ignore
-    from plotly.subplots import make_subplots  # type: ignore
+import importlib
+import importlib.util
+from typing import Any
 
-    _HAS_PLOTLY = True
-except ImportError:
-    _HAS_PLOTLY = False
-    go = None
-    make_subplots = None
+
+class _LazyModule:
+    """第一次取属性时才导入的模块代理.
+
+    plotly 只在画图时用到, 导入要几十毫秒; ``import akquant`` 会连带导入本包,
+    所以不在模块顶层导入它。绘图代码照常写 ``go.Figure(...)``。
+    """
+
+    def __init__(self, name: str) -> None:
+        self._name = name
+        self._module: Any = None
+
+    def __getattr__(self, attr: str) -> Any:
+        if self._module is None:
+            self._module = importlib.import_module(self._name)
+        return getattr(self._module, attr)
+
+
+go: Any = _LazyModule("plotly.graph_objects")
+
+
+def make_subplots(*args: Any, **kwargs: Any) -> Any:
+    """Forward to ``plotly.subplots.make_subplots``; plotly 在调用时才导入."""
+    from plotly.subplots import make_subplots as _make_subplots  # type: ignore
+
+    return _make_subplots(*args, **kwargs)
 
 
 def check_plotly() -> bool:
     """Check if plotly is installed."""
-    if not _HAS_PLOTLY:
+    if importlib.util.find_spec("plotly") is None:
         print(
             "Plotly is not installed. Please install it using `pip install plotly` "
             "or `pip install akquant[plot]`."

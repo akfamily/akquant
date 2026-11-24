@@ -423,6 +423,9 @@ class Strategy:
     _framework_dual_stream: Union[bool, frozenset[str]]
     _framework_use_previous_account_snapshot: bool
     _framework_previous_account_details: Optional[Dict[str, float]]
+    # 开跑前的账户视图: on_start / on_resume 早于第一个行情事件, ctx 还没绑定,
+    # 账户与持仓的读数由它提供(见 strategy_trading_api._account_view)。
+    _framework_prestart_ctx: Any
     _framework_emit_previous_portfolio_snapshot: bool
     _framework_current_callback: Optional[str]
     _framework_current_order: Optional[Any]
@@ -681,6 +684,7 @@ class Strategy:
         # tick/bar 双流的标的(True 为全部): 这些标的的 tick 不推进基础周期指标
         instance._framework_dual_stream = False
         instance._framework_use_previous_account_snapshot = False
+        instance._framework_prestart_ctx = None
         instance._framework_previous_account_details = None
         instance._framework_emit_previous_portfolio_snapshot = False
         instance._framework_current_callback = None
@@ -735,6 +739,8 @@ class Strategy:
         state = self.__dict__.copy()
         if "ctx" in state:
             del state["ctx"]
+        # 开跑前的账户视图同样是引擎对象, 不可 pickle; 恢复时由运行入口重新挂上。
+        state.pop("_framework_prestart_ctx", None)
         if "current_bar" in state:
             del state["current_bar"]
         if "current_tick" in state:

@@ -878,6 +878,9 @@ class LiveRunner:
         # slot 的 on_start/subscribe/指标注册全部不触发。放在 duration 处理
         # 之前: on_start 里可能注册 timer, 早于 deadline 设置更符合"启动完成
         # 再计时"。
+        self._attach_prestart_account_view(
+            [strategy_instance, *slot_strategy_instances.values()]
+        )
         self._dispatch_slot_strategy_start(slot_strategy_instances)
 
         # replay: 等推送线程把行情全部推入 feed 再开跑(见 _await_replay_pushed)。
@@ -1262,6 +1265,21 @@ class LiveRunner:
             len(events),
             extra=self._runner_log_extra(phase="live"),
         )
+
+    def _attach_prestart_account_view(self, strategies: List[Strategy]) -> None:
+        """把开跑前的账户视图挂到各策略上, 供 on_start 读账户.
+
+        主策略的 on_start 由 Rust 在 ``engine.run()`` 内触发, 槽位的由
+        ``_dispatch_slot_strategy_start`` 触发, 都早于第一个行情事件, 策略上还
+        没有引擎上下文。这里按引擎此刻的资金生成只读视图; 经柜台交易的会话读数
+        走柜台, 不用它。单测里的替身引擎没有该方法时跳过。
+        """
+        build = getattr(self.engine, "prestart_context", None)
+        if not callable(build):
+            return
+        view = build()
+        for strategy in strategies:
+            strategy._framework_prestart_ctx = view
 
     def _dispatch_slot_strategy_start(
         self, slot_strategies: Dict[str, Strategy]
