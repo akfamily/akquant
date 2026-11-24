@@ -37,7 +37,7 @@ def _instrument(symbol: str = _SYMBOL) -> Instrument:
 
 
 def _bars(count: int = 8, symbol: str = _SYMBOL, base: float = 10.0) -> List[Bar]:
-    """Count 根 1 分钟 bar: 第 i 根收盘价 base+i, 最高 +0.5, 最低 -0.5."""
+    """生成 count 根 1 分钟 bar: 第 i 根收盘价 base+i, 最高 +0.5, 最低 -0.5."""
     stamps = pd.date_range(
         "2024-01-02 09:31:00", periods=count, freq="1min", tz="Asia/Shanghai"
     )
@@ -403,16 +403,50 @@ def test_indicator_without_intrabar_ignores_forming_bars(script: _Script) -> Non
     assert not _provisional(points)
 
 
-def test_stale_forming_bar_is_dropped(script: _Script) -> None:
+def test_stale_forming_bar_is_dropped(script: _Script, caplog: Any) -> None:
     """时间戳不晚于最近确认 bar 的未收盘 bar 直接丢弃."""
     bars = _bars()
     script.after[_key(bars[3])] = [_forming(bars[3], 99.0)]
     points, on_event = _collector()
 
-    _run(_Sma(), bars, on_event=on_event)
+    with caplog.at_level("INFO"):
+        _run(_Sma(), bars, on_event=on_event)
 
     assert _confirmed(points)
     assert not _provisional(points)
+    stale_logs = [r for r in caplog.records if "已丢弃" in r.getMessage()]
+    assert len(stale_logs) == 1
+    assert _SYMBOL in stale_logs[0].getMessage()
+
+
+def test_preloaded_history_counts_for_the_stale_rule(script: _Script) -> None:
+    """预热回放的历史 bar 也算已确认, 与预热末根同戳的未收盘 bar 被丢弃."""
+    bars = _bars()
+    history = [
+        Bar(
+            timestamp=int(pd.Timestamp(stamp, tz="Asia/Shanghai").value),
+            open=close,
+            high=close,
+            low=close,
+            close=close,
+            volume=100.0,
+            symbol=_SYMBOL,
+        )
+        for stamp, close in (
+            ("2024-01-02 09:28:00", 1.0),
+            ("2024-01-02 09:29:00", 2.0),
+            ("2024-01-02 09:30:00", 3.0),
+        )
+    ]
+    script.before[_key(bars[0])] = [_forming(history[-1], 99.0), _forming(bars[0])]
+    points, on_event = _collector()
+
+    _run(_Sma(), bars, on_event=on_event, preload_history=history)
+
+    # SMA(2): 预热末根收盘 3.0, 首个实盘桶收盘 10.0 → 试算值 6.5。
+    _assert_same_points(
+        _provisional(points), [(_SYMBOL, "sma", int(bars[0].timestamp), 6.5)]
+    )
 
 
 class _ReadProbe(_Sma):

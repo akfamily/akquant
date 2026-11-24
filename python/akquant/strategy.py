@@ -1733,7 +1733,9 @@ class Strategy:
             告知当前 ``[0]`` 是否已确认; 流事件带 ``confirmed=false``。窗口周期
             指标(``freq=``)在每根基础 bar 上用未闭合窗口快照试算; 基础周期指标在
             每笔 tick 上用形成中的 bar 试算——此时 **tick 不再 update() 它**,
-            只有 bar 闭合才推进状态。默认 False 时: tick/bar 双流的标的上基础
+            只有 bar 闭合才推进状态。行情源经 ``DataFeed.add_forming_bar`` 推来
+            未收盘 K 线时(bar 驱动的实盘会话), 基础周期指标同样在它上面试算。
+            默认 False 时: tick/bar 双流的标的上基础
             周期指标只由 bar 推进(tick 不 update); 纯 tick 会话(无 bar)里 tick
             照旧 update, 纯 tick 策略依赖此行为。
         :return: 可下标回溯的绑定代理
@@ -2113,9 +2115,9 @@ class Strategy:
                     interval_start=getattr(bar, "interval_start", None),
                 )
         if isinstance(bar, Bar) and bar.freq is None:
-            if bar_symbol is not None:
+            if bar_symbol is not None and getattr(self, "_has_base_intrabar", False):
                 # 未收盘 bar 的过期判据(见 _peek_forming_bar): 实时与预热回放
-                # 的基础 bar 都经过这里。
+                # 的基础 bar 都经过这里。只有声明了基础周期 intrabar 指标才用得到。
                 self.__dict__.setdefault("_last_confirmed_base_ts", {})[
                     str(bar_symbol)
                 ] = int(bar.timestamp)
@@ -2237,13 +2239,24 @@ class Strategy:
         前端按 time 覆盖。时间戳不晚于该标的最近一根已确认基础 bar 的, 是迟到的
         旧帧, 丢弃。试算用指标**副本**(见 :func:`peek_indicator`), 原状态不变。
 
-        单个指标试算失败只告警一次并跳过: 试算点是锦上添花, 不能因为它中断会话
-        (同一个错误若出在确认 bar 上, 仍按原路径报错)。
+        单个指标试算失败时跳过本次并只告警一次(之后每帧仍会重试): 试算点是锦上添花,
+        不能因为它中断会话(同一个错误若出在确认 bar 上, 仍按原路径报错)。
         """
         symbol = str(bar.symbol)
         label = int(bar.timestamp)
         last_confirmed = self.__dict__.get("_last_confirmed_base_ts", {}).get(symbol)
         if last_confirmed is not None and label <= int(last_confirmed):
+            logged: set[str] = self.__dict__.setdefault("_forming_stale_logged", set())
+            if symbol not in logged:
+                logged.add(symbol)
+                _live_subscribe_logger.info(
+                    "标的 %s 的未收盘 K 线时间戳 %d 不晚于最近一根已收盘 bar(%d), "
+                    "已丢弃; 该标的之后不再提示。偶发属正常(迟到的旧帧); 若一直没有"
+                    "临时点, 多半是行情源没有按这一桶的收盘时间打戳",
+                    symbol,
+                    label,
+                    int(last_confirmed),
+                )
             return
         for name in list(self._incremental_indicators.keys()):
             item = self._get_incremental_registration(name)
@@ -2265,8 +2278,8 @@ class Strategy:
                 if name not in failed:
                     failed.add(name)
                     _live_subscribe_logger.warning(
-                        "指标 %r 在未收盘 K 线上试算失败(标的 %s), 之后不再重复告警; "
-                        "该指标的临时点不上报, 确认值不受影响",
+                        "指标 %r 在未收盘 K 线上试算失败(标的 %s): 本次临时点不上报, "
+                        "确认值不受影响; 该指标之后再失败不再重复告警",
                         name,
                         symbol,
                         exc_info=True,

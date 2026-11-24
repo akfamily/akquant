@@ -461,15 +461,19 @@ Four notes:
   carry). The framework only peeks base-period indicators declared with `intrabar=True` and
   emits `confirmed=false` points; it **does not call `on_bar`, match orders, write history or
   advance the clock**. The same bucket may be pushed repeatedly (the latest wins) and the
-  closed bar later overwrites it with the confirmed value. A forming bar whose timestamp is
-  not later than the last closed bar is dropped. A failing peek is logged once and never
-  stops the session. Whether forming bars are pushed is up to the gateway; do not combine
-  ticks and forming bars for the same symbol. Backtests and the `replay` broker have no
-  forming bars.
-- **Provisional points stream only when the base period is known** (backtest:
-  `run_backtest(data=[Tick,...], freq=)`; live: the gateway declares `metadata["freq"]`).
-  With an unknown base period the window label drifts every base bar and a frontend could
-  not overwrite; `[0]` is still computed, nothing is streamed, one warning is logged.
+  closed bar later overwrites it with the confirmed value. All earlier closed bars of the
+  symbol must already have been pushed with `add_bar`; a forming bar whose timestamp is not
+  later than that symbol's last closed bar is dropped. A failing peek is logged once and
+  never stops the session. Whether forming bars are pushed is up to the gateway; do not
+  combine ticks and forming bars for the same symbol. Backtests and the `replay` broker
+  have no forming bars. The provisional value occupies `[0]` until that symbol's closed bar
+  arrives: read from another symbol's `on_bar`, from `on_timer` and the like, `[0]` may be
+  provisional — for trading decisions read `[1]` or check `.confirmed` first.
+- **Provisional points from the window and tick sources stream only when the base period
+  is known** (backtest: `run_backtest(data=[Tick,...], freq=)`; live: the gateway declares
+  `metadata["freq"]`). With an unknown base period the window label drifts every base bar
+  and a frontend could not overwrite; `[0]` is still computed, nothing is streamed, one
+  warning is logged. A forming bar carries its own timestamp and is not subject to this.
 - Peeking relies on copying indicator state: built-in Rust indicators go through
   `akquant.clone_indicator()` (pyo3 does not expose `__copy__` for `#[derive(Clone)]`, so
   `copy` / `deepcopy` / `pickle` all raise `TypeError` on them); user-written Python
