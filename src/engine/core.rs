@@ -358,6 +358,10 @@ pub struct Engine {
     /// - `Some(空)` 不应出现: Python 侧在参数解析阶段即拒绝空 `symbols`,
     ///   FFI setter 亦把空列表折叠成 `None`, 避免静默跑出零事件回测。
     pub(crate) symbol_whitelist: Option<std::collections::HashSet<String>>,
+    /// 回测用 K 线模拟 tick: 数据阶段在每根 K 线之前排出四个模拟 tick。打开时
+    /// 行情源里不允许有真实 tick, 于是"当前事件是 tick"即"当前事件是模拟 tick"
+    /// (见 [`Engine::on_simulated_tick`])。不进存档。
+    pub(crate) simulate_ticks: bool,
     /// 因不在 `symbol_whitelist` 内而被 `pipeline/stages/data.rs` 丢弃的事件数.
     ///
     /// 只计数、不逐事件打日志(那会淹没输出) —— 由 `Engine::run` 在会话结束时
@@ -849,6 +853,12 @@ impl Engine {
     pub(crate) fn is_active_timestamp(&self, timestamp: i64) -> bool {
         self.active_start_time_ns
             .is_none_or(|start_ns| timestamp >= start_ns)
+    }
+
+    /// 当前事件是否为模拟 tick。
+    #[inline]
+    pub(crate) fn on_simulated_tick(&self) -> bool {
+        self.simulate_ticks && matches!(self.current_event, Some(Event::Tick(_)))
     }
 
     pub(crate) fn current_event_timestamp(&self) -> Option<i64> {

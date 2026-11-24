@@ -3359,6 +3359,7 @@ def run_backtest(
     broker_profile: Optional[str] = None,
     fill_policy: Optional[Union[FillMode, FillPolicy]] = None,
     strict_strategy_params: bool = True,
+    simulate_ticks: bool = False,
     **kwargs: Any,
 ) -> BacktestResult:
     """
@@ -3417,6 +3418,10 @@ def run_backtest(
     :param strict_strategy_params: 是否严格校验策略构造参数。True 时若参数不匹配将抛错；
                                    False 时保持兼容行为（忽略未知参数并在失败时
                                    回退无参构造）。
+    :param simulate_ticks: 回测数据只有 K 线时, 把每根 K 线拆成四个模拟 tick
+        (开盘价、两个极值、收盘价)驱动 ``on_tick``。``on_tick`` 里下的单按模拟
+        tick 撮合; ``on_bar`` 等处下的单仍按 K 线撮合, 结果与关闭时相同。数据里
+        已有真实 tick 时不能使用。精度上限见文档。
     :param timezone: 时区名称 (默认 "Asia/Shanghai")
     :param sessions: 代码前缀 → 时段模板名或自定义时段表（"default" 为全局默认）；
                      不传时中国时区按资产类型取默认（股票 CN_STOCK、
@@ -4295,6 +4300,15 @@ def run_backtest(
     # freq 对含 Tick 的列表是聚合周期(合成 bar 的区间由聚合器填);
     # 对 bar 数据(含 data=None 时从 catalog 加载的)是声明的 bar 周期: 区间起点
     # = 时间戳 - 周期。DataFeed 输入已由调用方建好, 只注入 self.freq。
+    if (
+        simulate_ticks
+        and isinstance(data, list)
+        and any(isinstance(item, Tick) for item in data)
+    ):
+        raise ValueError(
+            "simulate_ticks=True 时数据里不能有真实 tick: 模拟 tick 由引擎按 K 线生成。"
+            "已有 tick 数据时去掉 simulate_ticks"
+        )
     bar_period_ns: Optional[int] = None
     if freq is not None and not (
         isinstance(data, list) and any(isinstance(item, Tick) for item in data)
@@ -5092,6 +5106,16 @@ def run_backtest(
         cast(Any, engine).set_strategy_risk_cooldown_bars(normalized_cooldown_bars)
     if history_depth > 0:
         engine.set_history_depth(history_depth)
+    if simulate_ticks:
+        engine.set_simulate_ticks(True)
+        logger.info(
+            "simulate_ticks=True: 每根 K 线模拟四个 tick(开、两个极值、收)"
+            "驱动 on_tick; 同一根 K 线内的先后顺序是假设的, 不含盘口信息"
+        )
+        for current_strategy in all_strategy_instances:
+            # 所有标的按 tick/bar 双流处理: 基础周期指标只由 K 线推进(spec S16)。
+            setattr(current_strategy, "_framework_dual_stream", True)
+            setattr(current_strategy, "_framework_simulated_ticks", True)
     if stream_on_event is not None:
         cast(Any, engine).set_stream_callback(stream_on_event)
         cast(Any, engine).set_stream_options(

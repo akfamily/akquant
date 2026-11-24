@@ -960,6 +960,17 @@ class Engine:
         """
         ...
 
+    def set_simulate_ticks(self, enabled: bool) -> None:
+        r"""
+        回测用 K 线模拟 tick 的开关.
+
+        打开后, 数据阶段在每根 K 线之前排出四个模拟 tick(开、两个极值、收)驱动
+        ``on_tick``。只用于回测, 行情源里不得有真实 tick。
+
+        :param enabled: 是否打开
+        """
+        ...
+
     def set_timezone(self, offset: int) -> None:
         r"""
         设置时区偏移 (秒).

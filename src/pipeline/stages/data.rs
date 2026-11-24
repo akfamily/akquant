@@ -6,14 +6,14 @@ use crate::context::{EngineContext, SessionView};
 use crate::data::FeedAction;
 use crate::engine::Engine;
 use crate::event::Event;
-use crate::model::{Bar, Order, OrderStatus, TradingSession};
+use crate::model::{Bar, Order, OrderStatus, Tick, TradingSession};
 use crate::pipeline::processor::{Processor, ProcessorResult};
 use chrono::NaiveDate;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use rust_decimal::Decimal;
 use rust_decimal::prelude::*;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 pub struct DataProcessor {
     last_timestamp: i64,
@@ -33,6 +33,12 @@ pub struct DataProcessor {
     // 不走停牌拒单; 本片有它的零量 bar 时仍按 #334 拒单。
     tick_symbols: HashSet<String>,
     current_symbol_events: HashMap<String, Event>,
+    // simulate_ticks: 已从行情源取出、尚未处理的事件。每次预取一组同时间戳的 K 线,
+    // 它们的模拟 tick 排在前面; 模拟 tick 带着所属 K 线的时段。
+    pending_sim: VecDeque<(Event, Option<TradingSession>)>,
+    // simulate_ticks: 是否已处理过 K 线。关闭开关时首个行情事件(last_timestamp
+    // 为 0)不计 bar_count; 打开时首根 K 线前面有模拟 tick, 用它补上同一口径。
+    sim_bar_seen: bool,
 }
 
 impl Default for DataProcessor {
@@ -52,7 +58,85 @@ impl DataProcessor {
             slice_has_bar: false,
             tick_symbols: HashSet::new(),
             current_symbol_events: HashMap::new(),
+            pending_sim: VecDeque::new(),
+            sim_bar_seen: false,
         }
+    }
+
+    /// simulate_ticks: 队列空时从行情源预取一组同时间戳的事件。
+    ///
+    /// 这一组里每根有资格的 K 线(spec S6)各生成四个模拟 tick; 全部模拟 tick 按
+    /// (时间戳, 标的)排在前面, K 线按原顺序排在后面。行情源里出现真实 tick 即报错。
+    fn refill_pending_sim(&mut self, engine: &mut Engine) -> PyResult<()> {
+        if !self.pending_sim.is_empty() {
+            return Ok(());
+        }
+        let Some(first) = engine.state.feed.next() else {
+            return Ok(());
+        };
+        let group_ts = match &first {
+            Event::Bar(b) => b.timestamp,
+            Event::Tick(_) => return Err(real_tick_error()),
+            _ => {
+                self.pending_sim.push_back((first, None));
+                return Ok(());
+            }
+        };
+        let mut group = vec![first];
+        while engine.state.feed.peek_timestamp() == Some(group_ts) {
+            match engine.state.feed.next() {
+                Some(Event::Tick(_)) => return Err(real_tick_error()),
+                Some(event) => group.push(event),
+                None => break,
+            }
+        }
+        let mut ticks: Vec<(Tick, TradingSession)> = Vec::new();
+        for event in &group {
+            let Event::Bar(bar) = event else { continue };
+            if bar.volume <= Decimal::ZERO
+                || bar.timestamp <= engine.snapshot_time
+                || !engine.is_active_timestamp(bar.timestamp)
+                || engine
+                    .symbol_whitelist
+                    .as_ref()
+                    .is_some_and(|whitelist| !whitelist.contains(bar.symbol.as_str()))
+            {
+                continue;
+            }
+            let session = engine.event_session(&bar.symbol, bar.interval_start, bar.timestamp)?;
+            if session != TradingSession::Continuous {
+                continue;
+            }
+            for tick in super::sim_ticks::simulated_ticks(bar, self.last_timestamp) {
+                ticks.push((tick, session));
+            }
+        }
+        ticks.sort_by(|a, b| {
+            a.0.timestamp
+                .cmp(&b.0.timestamp)
+                .then_with(|| a.0.symbol.cmp(&b.0.symbol))
+        });
+        for (tick, session) in ticks {
+            self.pending_sim
+                .push_back((Event::Tick(tick), Some(session)));
+        }
+        for event in group {
+            self.pending_sim.push_back((event, None));
+        }
+        Ok(())
+    }
+
+    /// 下一个真实行情事件(K 线)的时间戳: simulate_ticks 下看队列里的第一根 K 线,
+    /// 队列里没有 K 线时看行情源。生命周期排程与"数据是否耗尽"的判断用它, 使其
+    /// 与关闭开关时一致(不受模拟 tick 的时间戳影响)。
+    fn peek_market_timestamp(&self, engine: &Engine) -> Option<i64> {
+        self.pending_sim
+            .iter()
+            .find_map(|(event, _)| match event {
+                Event::Bar(b) => Some(b.timestamp),
+                _ => None,
+            })
+            .or_else(|| engine.state.feed.peek_timestamp())
     }
 
     fn fill_missing_bars(&self, engine: &mut Engine) {
@@ -235,7 +319,10 @@ impl DataProcessor {
             }
             flush_accumulated_trades(engine, &mut trades_to_process);
         }
-        self.fill_missing_bars(engine);
+        // 模拟 tick 的时间片里没有 K 线: 不据此给其余品种补合成 bar。
+        if !(engine.simulate_ticks && !self.slice_has_bar) {
+            self.fill_missing_bars(engine);
+        }
         self.reject_missing_symbol_orders(engine);
         self.finalized_timestamp = self.last_timestamp;
         self.current_symbol_events.clear();
@@ -307,8 +394,30 @@ impl Processor for DataProcessor {
         // 把内部事件通道的接收端交给 feed 一起等: 外部线程注入的 OrderRequest
         // 可立刻打断行情等待(否则最坏要等满 1 秒 timeout)。ChannelProcessor 是
         // pipeline 首位, Wait→Loop 后即被它排空。
-        let wakeup = engine.event_manager.receiver();
-        let action = engine.state.feed.next_action(next_timer_time, py, wakeup);
+        let mut sim_session: Option<TradingSession> = None;
+        let action = if engine.simulate_ticks {
+            // 预取一组并自行在定时器与队首之间取舍, 规则同 next_action 的回测分支
+            // (定时器不晚于行情事件就先触发定时器)。
+            self.refill_pending_sim(engine)?;
+            let front_ts = self.pending_sim.front().map(|(event, _)| match event {
+                Event::Bar(b) => b.timestamp,
+                Event::Tick(t) => t.timestamp,
+                _ => 0,
+            });
+            match (front_ts, next_timer_time) {
+                (Some(et), Some(tt)) if tt <= et => FeedAction::Timer(tt),
+                (Some(_), _) => {
+                    let (event, session) = self.pending_sim.pop_front().expect("队首存在");
+                    sim_session = session;
+                    FeedAction::Event(Box::new(event))
+                }
+                (None, Some(tt)) => FeedAction::Timer(tt),
+                (None, None) => FeedAction::End,
+            }
+        } else {
+            let wakeup = engine.event_manager.receiver();
+            engine.state.feed.next_action(next_timer_time, py, wakeup)
+        };
 
         match action {
             FeedAction::Wait => Ok(ProcessorResult::Loop),
@@ -361,7 +470,7 @@ impl Processor for DataProcessor {
                             // 回测数据在盘中耗尽(没有收盘时刻的行情)时当日并未收盘:
                             // 不结算, 留给收尾路径记期末快照; 同日续跑时由续跑段收盘结算。
                             let feed_exhausted = !engine.state.feed.is_live()
-                                && engine.state.feed.peek_timestamp().is_none();
+                                && self.peek_market_timestamp(engine).is_none();
                             if day_close_reached(
                                 feed_exhausted,
                                 engine.current_trading_day,
@@ -391,7 +500,7 @@ impl Processor for DataProcessor {
                                 // 回测: 按下一个行情事件所属交易日串联生命周期(数据耗尽
                                 // 则不排); 实盘在 before_trading 触发时排下一交易日。
                                 if !engine.state.feed.is_live()
-                                    && let Some(next_ts) = engine.state.feed.peek_timestamp()
+                                    && let Some(next_ts) = self.peek_market_timestamp(engine)
                                 {
                                     engine
                                         .schedule_lifecycle_for_event(next_ts, timer.timestamp)?;
@@ -408,7 +517,7 @@ impl Processor for DataProcessor {
                     // 回测数据耗尽后不再触发盘前/开始交易(只为有数据的交易日、且在数据
                     // 结束前触发; 收盘后事件只在当日真的结算时发出)。
                     if !engine.state.feed.is_live()
-                        && engine.state.feed.peek_timestamp().is_none()
+                        && self.peek_market_timestamp(engine).is_none()
                         && timer.lifecycle().is_some_and(|(kind, _)| {
                             kind != crate::model::timer::LIFECYCLE_AFTER_TRADING
                         })
@@ -458,6 +567,7 @@ impl Processor for DataProcessor {
             }
             FeedAction::Event(event) => {
                 let event = *event;
+                let is_sim_tick = engine.simulate_ticks && matches!(event, Event::Tick(_));
 
                 // 未收盘 K 线: 不是行情, 就地交给策略做指标试算后丢弃。必须在下面
                 // 任何时间片/时钟/计数逻辑之前返回——它的时间戳是这一桶将来的收盘
@@ -531,7 +641,12 @@ impl Processor for DataProcessor {
                     self.slice_has_bar = false;
                     self.current_symbol_events.clear();
 
-                    if engine.is_active_timestamp(timestamp) {
+                    // 模拟 tick 不计 bar_count、不发进度(spec S13); 首根 K 线与关闭开关时
+                    // 一样不计(见 sim_bar_seen)。
+                    if engine.is_active_timestamp(timestamp)
+                        && !is_sim_tick
+                        && !(engine.simulate_ticks && !self.sim_bar_seen)
+                    {
                         engine.bar_count += 1;
                         if let Some(pb) = &engine.progress_bar {
                             pb.inc(1);
@@ -554,7 +669,11 @@ impl Processor for DataProcessor {
                     Event::Tick(t) => (t.symbol.as_str(), None),
                     _ => ("", None),
                 };
-                let session = engine.event_session(event_symbol, interval_start, timestamp)?;
+                // 模拟 tick 的时段取所属 K 线的(spec S7), 不按时刻另算。
+                let session = match sim_session {
+                    Some(session) => session,
+                    None => engine.event_session(event_symbol, interval_start, timestamp)?,
+                };
                 // 每个品种最多告警一次, 全局最多 CLOSED_SESSION_WARN_LIMIT 条; 其余品种
                 // 只记入集合, 由 Engine::run 结束时汇总一条(多品种回测不刷屏)。
                 // 实盘收盘宽限期内的行情本就在收盘后、归当日, 不是时间戳问题, 不告警。
@@ -698,6 +817,9 @@ impl Processor for DataProcessor {
 
                 if let Event::Bar(ref b) = event {
                     self.slice_has_bar = true;
+                    if engine.simulate_ticks {
+                        self.sim_bar_seen = true;
+                    }
                     self.seen_symbols.insert(b.symbol.clone());
                     // 集合竞价时段的零量 bar(竞价期快照、09:25～09:30 静默期)不是停牌:
                     // 本就不连续撮合, 不能据此把排队的单当作停牌拒掉。
@@ -749,7 +871,8 @@ impl Processor for DataProcessor {
                     if !self.tradable_symbols.contains(&t.symbol) {
                         self.tradable_symbols.insert(t.symbol.clone());
                     }
-                    if !self.tick_symbols.contains(&t.symbol) {
+                    // 模拟 tick 不登记为 tick 驱动标的(停牌拒单照 bar 语义)。
+                    if !is_sim_tick && !self.tick_symbols.contains(&t.symbol) {
                         self.tick_symbols.insert(t.symbol.clone());
                     }
                     // tick 是本时间戳该 symbol 的真实行情, 必须登记为"已见"——否则
@@ -758,7 +881,9 @@ impl Processor for DataProcessor {
                     self.seen_symbols.insert(t.symbol.clone());
                     // tick 也写入历史缓冲区: 否则纯 tick 回测下 get_history 恒为空,
                     // 且是静默的(不报错也不工作)。tick 以退化 bar 写入。
-                    if let Ok(mut buffer) = engine.history_buffer.write()
+                    // 模拟 tick 不写: 历史只有 K 线序列(spec S13)。
+                    if !is_sim_tick
+                        && let Ok(mut buffer) = engine.history_buffer.write()
                         && let Some((ts, high, low)) = buffer.update_tick(t)
                     {
                         engine
@@ -793,7 +918,8 @@ impl Processor for DataProcessor {
                                 payload,
                             );
                         }
-                        Event::Tick(t) => {
+                        // 模拟 tick 不发 tick 流事件。
+                        Event::Tick(t) if !is_sim_tick => {
                             let mut payload = HashMap::new();
                             payload.insert("timestamp", t.timestamp.to_string());
                             payload.insert("price", t.price.to_string());
@@ -813,6 +939,13 @@ impl Processor for DataProcessor {
             }
         }
     }
+}
+
+/// simulate_ticks 打开时行情源里出现真实 tick 的报错。
+fn real_tick_error() -> PyErr {
+    PyValueError::new_err(
+        "simulate_ticks=True 时数据里不能有真实 tick: 模拟 tick 由引擎按 K 线生成",
+    )
 }
 
 /// 定时器事件的会话时段: 本时间片有品种时段时取其中优先级最高者(与撮合先查本片

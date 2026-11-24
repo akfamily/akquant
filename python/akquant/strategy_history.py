@@ -76,6 +76,12 @@ def _infer_freq(strategy: Any, freq: Optional[str]) -> Optional[str]:
                 resolved = callback[len("window:") :]
             else:
                 resolved = _CALLBACK_FREQ.get(callback, None)
+            # 模拟 tick(run_backtest(simulate_ticks=True))不写历史: on_tick 里不按
+            # 回调定档为 tick, 交给引擎取唯一存在的 K 线序列。
+            if resolved == "tick" and getattr(
+                strategy, "_framework_simulated_ticks", False
+            ):
+                resolved = None
     if resolved is not None and resolved not in ("bar", "tick"):
         from .strategy_window import window_freqs
 

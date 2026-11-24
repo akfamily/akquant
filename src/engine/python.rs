@@ -692,6 +692,7 @@ impl Engine {
             current_event: None,
             bar_count: 0,
             symbol_whitelist: None,
+            simulate_ticks: false,
             whitelist_filtered_event_count: 0,
             progress_total_steps: 0,
             progress_bar: None,
@@ -1106,6 +1107,16 @@ impl Engine {
         } else {
             Some(symbols.into_iter().collect())
         };
+    }
+
+    /// 回测用 K 线模拟 tick 的开关.
+    ///
+    /// 打开后, 数据阶段在每根 K 线之前排出四个模拟 tick(开、两个极值、收)驱动
+    /// ``on_tick``。只用于回测, 行情源里不得有真实 tick。
+    ///
+    /// :param enabled: 是否打开
+    fn set_simulate_ticks(&mut self, enabled: bool) {
+        self.simulate_ticks = enabled;
     }
 
     /// 设置时区偏移 (秒)
