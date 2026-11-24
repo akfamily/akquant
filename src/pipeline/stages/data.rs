@@ -39,6 +39,10 @@ pub struct DataProcessor {
     // simulate_ticks: 是否已处理过 K 线。关闭开关时首个行情事件(last_timestamp
     // 为 0)不计 bar_count; 打开时首根 K 线前面有模拟 tick, 用它补上同一口径。
     sim_bar_seen: bool,
+    // simulate_ticks: 本组模拟 tick 改写最新价之前各标的的最新价(None 为当时没有)。
+    // 同刻全部标的的模拟 tick 都排在 K 线之前, 本组第一根 K 线到来时还原: K 线路径
+    // (撮合、账户口径、on_bar 里其余标的的价格)与关闭开关时相同(spec S14、S15)。
+    sim_saved_prices: HashMap<String, Option<Decimal>>,
 }
 
 impl Default for DataProcessor {
@@ -60,6 +64,7 @@ impl DataProcessor {
             current_symbol_events: HashMap::new(),
             pending_sim: VecDeque::new(),
             sim_bar_seen: false,
+            sim_saved_prices: HashMap::new(),
         }
     }
 
@@ -819,6 +824,7 @@ impl Processor for DataProcessor {
                     self.slice_has_bar = true;
                     if engine.simulate_ticks {
                         self.sim_bar_seen = true;
+                        restore_prices_before_sim_ticks(engine, &mut self.sim_saved_prices);
                     }
                     self.seen_symbols.insert(b.symbol.clone());
                     // 集合竞价时段的零量 bar(竞价期快照、09:25～09:30 静默期)不是停牌:
@@ -863,6 +869,16 @@ impl Processor for DataProcessor {
                     }
                     // println!("DataProcessor: Bar Symbol={}, TS={}", b.symbol, b.timestamp);
                 } else if let Event::Tick(ref t) = event {
+                    // 模拟 tick 的价格由策略阶段写进最新价; 先记下写之前的值。
+                    if is_sim_tick && !self.sim_saved_prices.contains_key(&t.symbol) {
+                        let before = engine
+                            .last_prices
+                            .read()
+                            .expect("last_prices 读锁被污染")
+                            .get(&t.symbol)
+                            .copied();
+                        self.sim_saved_prices.insert(t.symbol.clone(), before);
+                    }
                     self.current_symbol_events
                         .insert(t.symbol.clone(), Event::Tick(t.clone()));
                     // tick 撮合不看成交量(execution/common.rs), 有 tick 即本片可成交:
@@ -939,6 +955,30 @@ impl Processor for DataProcessor {
             }
         }
     }
+}
+
+/// simulate_ticks: 本组第一根 K 线到来时, 把模拟 tick 写过的最新价还原成它们之前
+/// 的值(之前没有的删去)。随后各 K 线照常在策略阶段写入收盘价。
+fn restore_prices_before_sim_ticks(
+    engine: &mut Engine,
+    saved: &mut HashMap<String, Option<Decimal>>,
+) {
+    if saved.is_empty() {
+        return;
+    }
+    let mut prices = engine.last_prices.write().expect("last_prices 写锁被污染");
+    for (symbol, before) in saved.drain() {
+        match before {
+            Some(price) => {
+                prices.insert(symbol, price);
+            }
+            None => {
+                prices.remove(&symbol);
+            }
+        }
+    }
+    drop(prices);
+    engine.prices_revision.bump();
 }
 
 /// simulate_ticks 打开时行情源里出现真实 tick 的报错。

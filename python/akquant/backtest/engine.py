@@ -5133,14 +5133,16 @@ def run_backtest(
             "simulate_ticks=True: 每根 K 线模拟四个 tick(开、两个极值、收)"
             "驱动 on_tick; 同一根 K 线内的先后顺序是假设的, 不含盘口信息"
         )
-        for current_strategy in all_strategy_instances:
+    for current_strategy in all_strategy_instances:
+        if simulate_ticks:
             # 所有标的按 tick/bar 双流处理: 基础周期指标只由 K 线推进(spec S16)。
             setattr(current_strategy, "_framework_dual_stream", True)
-    # 每次回测都写: 策略实例复用时, 关闭开关的后一次要把上一次的 True 复位。
-    for current_strategy in all_strategy_instances:
+        # 每次回测都写: 策略实例复用时, 关闭开关的后一次要把上一次的 True 复位。
         setattr(current_strategy, "_framework_simulated_ticks", simulate_ticks)
-        # tick 事件计数每次回测清零(实例复用时不带上一次的计数)。
+        # tick 事件计数每次回测清零(实例复用时不带上一次的计数); 上一次中途失败
+        # 留下的待还原最新价一并丢掉。
         current_strategy.__dict__["_tick_event_count"] = 0
+        current_strategy.__dict__.pop("_sim_tick_saved_prices", None)
     if stream_on_event is not None:
         cast(Any, engine).set_stream_callback(stream_on_event)
         cast(Any, engine).set_stream_options(

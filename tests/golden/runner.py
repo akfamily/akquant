@@ -9,7 +9,7 @@ import hashlib
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import akquant as aq
 import numpy as np
@@ -75,6 +75,105 @@ def futures_night_weekend_config() -> Dict[str, Any]:
         "commission_rate": 0.0001,
         "run_kwargs": {"freq": "1min", "sessions": {"rb": "CN_FUTURES_NIGHT_23"}},
     }
+
+
+# 六个 golden 场景: (test_name, strategy_cls, data_file, config)。基线比对、流式一致性、
+# simulate_ticks 不变量三个套件共用这一份, 不各自抄配置。
+_SCENARIOS: List[Tuple[str, Any, str, Dict[str, Any]]] = [
+    # Stock T+1: Buy Day 1, Sell Day 2 (OK), Buy Day 3, Sell Day 3 (Fail),
+    # Sell Day 4 (OK)
+    (
+        "stock_t1",
+        StockT1Strategy,
+        "stock_t1.parquet",
+        {
+            "t_plus_one": True,
+            "lot_size": 100,
+            "commission_rate": 0.0003,
+            "min_commission": 5.0,
+            "stamp_tax_rate": 0.001,
+            "transfer_fee_rate": 0.00002,
+        },
+    ),
+    # Futures Margin: Buy 1 lot (margin OK), Buy 2nd lot (margin fail)
+    # Multiplier 300, Margin 0.1, Price ~3500. Margin ~105,000.
+    # Initial Cash 200,000.
+    (
+        "futures_margin",
+        FutureMarginStrategy,
+        "future_margin.parquet",
+        {
+            "initial_cash": 200000.0,
+            "instruments_config": [
+                InstrumentConfig(
+                    symbol="FUTURE_A",
+                    asset_type="FUTURES",
+                    multiplier=300.0,
+                    margin_ratio=0.1,
+                    tick_size=0.2,
+                )
+            ],
+            "commission_rate": 0.0001,  # Futures commission
+        },
+    ),
+    # Option Basic: Buy 1 Call, Price 50 -> 60. Multiplier 100.
+    # run_backtest has no per-contract commission kwarg; use 0 commission to
+    # verify PnL cleanly.
+    (
+        "option_basic",
+        OptionBasicStrategy,
+        "option_basic.parquet",
+        {
+            "initial_cash": 10000.0,
+            "instruments_config": [
+                InstrumentConfig(
+                    symbol="OPTION_A",
+                    asset_type="OPTION",
+                    multiplier=100.0,
+                    margin_ratio=1.0,  # Options usually full premium paid if buying
+                    tick_size=0.0001,
+                    option_type="CALL",
+                    strike_price=100.0,
+                    expiry_date=None,
+                    underlying_symbol="STOCK_A",
+                )
+            ],
+            "commission_rate": 0.0,
+        },
+    ),
+    # Order Cancel Lifecycle: Rest 3 limit orders + 1 market buy; cancel one,
+    # query it across bars, then cancel_all_orders. Pins the撤单 bookkeeping no
+    # other scenario covers.
+    (
+        "order_cancel",
+        OrderCancelStrategy,
+        "order_cancel.parquet",
+        {
+            "initial_cash": 100000.0,
+            "commission_rate": 0.0,
+        },
+    ),
+    # A-share 1-minute auction (rule 2.0.0): 600000.SH two days: day-1
+    # continuous buy + Day limit order expiring at the close; day-2 09:20 timer
+    # buy filled at the 09:25 opening-auction price and 14:58 sell filled at the
+    # 15:00 closing-auction price.
+    (
+        "stock_minute_auction",
+        StockMinuteAuctionStrategy,
+        "stock_minute_auction.parquet",
+        STOCK_MINUTE_AUCTION_CONFIG,
+    ),
+    # Futures night session across the weekend (rule 2.0.0): rb with
+    # CN_FUTURES_NIGHT_23: Friday night belongs to Monday; open on the Friday
+    # night session, close on the Monday day session; settlements at Friday
+    # 15:00 and Monday 15:00.
+    (
+        "futures_night_weekend",
+        FuturesNightWeekendStrategy,
+        "futures_night_weekend.parquet",
+        futures_night_weekend_config(),
+    ),
+]
 
 
 def get_file_hash(path: Path) -> str:
@@ -547,92 +646,75 @@ def run_stream_consistency_test(
 def run_stream_consistency_suite() -> List[str]:
     """Run stream consistency checks for all golden scenarios."""
     failures: List[str] = []
-
-    stock_errors = run_stream_consistency_test(
-        "stock_t1",
-        StockT1Strategy,
-        "stock_t1.parquet",
-        {
-            "t_plus_one": True,
-            "lot_size": 100,
-            "commission_rate": 0.0003,
-            "min_commission": 5.0,
-            "stamp_tax_rate": 0.001,
-            "transfer_fee_rate": 0.00002,
-        },
-    )
-    failures.extend(stock_errors)
-
-    future_config = InstrumentConfig(
-        symbol="FUTURE_A",
-        asset_type="FUTURES",
-        multiplier=300.0,
-        margin_ratio=0.1,
-        tick_size=0.2,
-    )
-    future_errors = run_stream_consistency_test(
-        "futures_margin",
-        FutureMarginStrategy,
-        "future_margin.parquet",
-        {
-            "initial_cash": 200000.0,
-            "instruments_config": [future_config],
-            "commission_rate": 0.0001,
-        },
-    )
-    failures.extend(future_errors)
-
-    option_config = InstrumentConfig(
-        symbol="OPTION_A",
-        asset_type="OPTION",
-        multiplier=100.0,
-        margin_ratio=1.0,
-        tick_size=0.0001,
-        option_type="CALL",
-        strike_price=100.0,
-        expiry_date=None,
-        underlying_symbol="STOCK_A",
-    )
-    option_errors = run_stream_consistency_test(
-        "option_basic",
-        OptionBasicStrategy,
-        "option_basic.parquet",
-        {
-            "initial_cash": 10000.0,
-            "instruments_config": [option_config],
-            "commission_rate": 0.0,
-        },
-    )
-    failures.extend(option_errors)
-
-    cancel_errors = run_stream_consistency_test(
-        "order_cancel",
-        OrderCancelStrategy,
-        "order_cancel.parquet",
-        {
-            "initial_cash": 100000.0,
-            "commission_rate": 0.0,
-        },
-    )
-    failures.extend(cancel_errors)
-
-    failures.extend(
-        run_stream_consistency_test(
-            "stock_minute_auction",
-            StockMinuteAuctionStrategy,
-            "stock_minute_auction.parquet",
-            STOCK_MINUTE_AUCTION_CONFIG,
+    for test_name, strategy_cls, data_file, config in _SCENARIOS:
+        failures.extend(
+            run_stream_consistency_test(test_name, strategy_cls, data_file, config)
         )
-    )
-    failures.extend(
-        run_stream_consistency_test(
-            "futures_night_weekend",
-            FuturesNightWeekendStrategy,
-            "futures_night_weekend.parquet",
-            futures_night_weekend_config(),
-        )
-    )
+    return failures
 
+
+def run_simulated_tick_invariance_test(
+    test_name: str,
+    strategy_cls: Any,
+    data_file: str,
+    config: Dict[str, Any],
+) -> List[str]:
+    """同一个场景打开 simulate_ticks 并给策略加空 on_tick, 结果须与基线逐项相同."""
+    df = pd.read_parquet(DATA_DIR / data_file)
+    bc_config = BacktestConfig(
+        strategy_config=StrategyConfig(
+            initial_cash=config.get("initial_cash", 100000.0)
+        ),
+        instruments_config=config.get("instruments_config", []),
+    )
+    delivered = {"ticks": 0}
+
+    def _count_only(self: Any, tick: Any) -> None:
+        delivered["ticks"] += 1
+
+    # 类名、模块名保持原样: 输出里可能带策略标识。
+    with_noop_on_tick = type(
+        strategy_cls.__name__,
+        (strategy_cls,),
+        {"on_tick": _count_only, "__module__": strategy_cls.__module__},
+    )
+    result = run_backtest(
+        data=df,
+        strategy=with_noop_on_tick,
+        config=bc_config,
+        t_plus_one=config.get("t_plus_one", False),
+        fill_policy=aq.NextOpen(),
+        lot_size=config.get("lot_size", 1),
+        commission_rate=config.get("commission_rate", 0.0),
+        min_commission=config.get("min_commission", 0.0),
+        stamp_tax_rate=config.get("stamp_tax_rate", 0.0),
+        transfer_fee_rate=config.get("transfer_fee_rate", 0.0),
+        show_progress=False,
+        simulate_ticks=True,
+        **config.get("run_kwargs", {}),
+    )
+    out_dir = CURRENT_DIR / f"{test_name}__simulate_ticks"
+    save_result(result, out_dir)
+    print(f"simulate_ticks invariance {test_name}: {delivered['ticks']} 个模拟 tick")
+    errors = [
+        f"{test_name}: {error}"
+        for error in compare_results(BASELINE_DIR / test_name, out_dir)
+    ]
+    if delivered["ticks"] == 0:
+        # 一个模拟 tick 都没生成时"与基线相同"是恒真的, 不算通过。
+        errors.append(f"{test_name}: 没有生成任何模拟 tick, 不变量未被检验")
+    return errors
+
+
+def run_simulated_tick_invariance_suite() -> List[str]:
+    """六个 golden 场景的 simulate_ticks 不变量检查."""
+    failures: List[str] = []
+    for test_name, strategy_cls, data_file, config in _SCENARIOS:
+        failures.extend(
+            run_simulated_tick_invariance_test(
+                test_name, strategy_cls, data_file, config
+            )
+        )
     return failures
 
 
@@ -643,132 +725,9 @@ def main(generate_baseline: bool = False) -> None:
         generate_baseline: Whether to generate new baselines.
     """
     failures = []
-
-    # 1. Stock T+1 Test
-    # Stock T+1: Buy Day 1, Sell Day 2 (OK), Buy Day 3, Sell Day 3 (Fail),
-    # Sell Day 4 (OK)
-    errs = run_test(
-        "stock_t1",
-        StockT1Strategy,
-        "stock_t1.parquet",
-        {
-            "t_plus_one": True,
-            "lot_size": 100,
-            "commission_rate": 0.0003,
-            "min_commission": 5.0,
-            "stamp_tax_rate": 0.001,
-            "transfer_fee_rate": 0.00002,
-        },
-        generate_baseline,
-    )
-    if errs:
-        failures.append("stock_t1")
-
-    # 2. Futures Margin Test
-    # Buy 1 lot (margin OK), Buy 2nd lot (margin fail)
-    # Multiplier 300, Margin 0.1, Price ~3500. Margin ~105,000.
-    # Initial Cash 200,000.
-    future_config = InstrumentConfig(
-        symbol="FUTURE_A",
-        asset_type="FUTURES",
-        multiplier=300.0,
-        margin_ratio=0.1,
-        tick_size=0.2,
-    )
-    errs = run_test(
-        "futures_margin",
-        FutureMarginStrategy,
-        "future_margin.parquet",
-        {
-            "initial_cash": 200000.0,
-            "instruments_config": [future_config],
-            "commission_rate": 0.0001,  # Futures commission
-        },
-        generate_baseline,
-    )
-    if errs:
-        failures.append("futures_margin")
-
-    # 3. Option Basic Test
-    # Buy 1 Call, Price 50 -> 60. Multiplier 100.
-    # Commission 5 per contract.
-    option_config = InstrumentConfig(
-        symbol="OPTION_A",
-        asset_type="OPTION",
-        multiplier=100.0,
-        margin_ratio=1.0,  # Options usually full premium paid if buying
-        tick_size=0.0001,
-        option_type="CALL",
-        strike_price=100.0,
-        expiry_date=None,  # "20250101", # Integer/Timestamp conversion fix required
-        underlying_symbol="STOCK_A",
-    )
-
-    # Note: akquant run_backtest doesn't support 'commission_per_contract'
-    # easily via kwargs yet unless we pass a custom config object or specific
-    # kwargs handled by run_backtest.
-    # We will rely on default or pass it via config if supported.
-    # Checking run_backtest signature... it takes **kwargs.
-    # But let's assume standard commission rate for now or implement per-contract
-    # support in runner if needed.
-    # For now, let's use 0 commission to verify PnL cleanly.
-    errs = run_test(
-        "option_basic",
-        OptionBasicStrategy,
-        "option_basic.parquet",
-        {
-            "initial_cash": 10000.0,
-            "instruments_config": [option_config],
-            "commission_rate": 0.0,
-        },
-        generate_baseline,
-    )
-    if errs:
-        failures.append("option_basic")
-
-    # 4. Order Cancel Lifecycle Test
-    # Rest 3 limit orders + 1 market buy; cancel one, query it across bars,
-    # then cancel_all_orders. Pins the撤单 bookkeeping no other scenario covers.
-    errs = run_test(
-        "order_cancel",
-        OrderCancelStrategy,
-        "order_cancel.parquet",
-        {
-            "initial_cash": 100000.0,
-            "commission_rate": 0.0,
-        },
-        generate_baseline,
-    )
-    if errs:
-        failures.append("order_cancel")
-
-    # 5. A-share 1-minute auction test (rule 2.0.0)
-    # 600000.SH two days: day-1 continuous buy + Day limit order expiring at the
-    # close; day-2 09:20 timer buy filled at the 09:25 opening-auction price and
-    # 14:58 sell filled at the 15:00 closing-auction price.
-    errs = run_test(
-        "stock_minute_auction",
-        StockMinuteAuctionStrategy,
-        "stock_minute_auction.parquet",
-        STOCK_MINUTE_AUCTION_CONFIG,
-        generate_baseline,
-    )
-    if errs:
-        failures.append("stock_minute_auction")
-
-    # 6. Futures night session across the weekend (rule 2.0.0)
-    # rb with CN_FUTURES_NIGHT_23: Friday night belongs to Monday; open on the
-    # Friday night session, close on the Monday day session; settlements at
-    # Friday 15:00 and Monday 15:00.
-    errs = run_test(
-        "futures_night_weekend",
-        FuturesNightWeekendStrategy,
-        "futures_night_weekend.parquet",
-        futures_night_weekend_config(),
-        generate_baseline,
-    )
-    if errs:
-        failures.append("futures_night_weekend")
+    for test_name, strategy_cls, data_file, config in _SCENARIOS:
+        if run_test(test_name, strategy_cls, data_file, config, generate_baseline):
+            failures.append(test_name)
 
     if failures:
         print(f"\nGolden Suite FAILED: {failures}")

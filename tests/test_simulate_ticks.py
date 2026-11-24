@@ -916,3 +916,283 @@ def test_datafeed_with_real_tick_raises_in_engine() -> None:
 
     with pytest.raises(ValueError, match="simulate_ticks"):
         _run(_Recorder(), feed, simulate_ticks=True, symbols=[_SYMBOL])
+
+
+class _TimerEquityNextOpen(_TimerEquityProbe):
+    """同上, 缺省成交模式(NextOpen): 第 2 根开盘成交, 定时器登记在第 3 根的时间戳上."""
+
+    def on_start(self) -> None:
+        self.schedule(pd.Timestamp("2024-01-02 09:33:00", tz=_TZ), "probe")
+
+
+def test_timer_on_bar_timestamp_reads_tick_prices_under_next_open() -> None:
+    """缺省 NextOpen 下同样区分得出: 打开时按第 3 根收盘价计, 关闭时按第 2 根的."""
+    frame = _frame(4)
+
+    on = _TimerEquityNextOpen()
+    _run(on, frame, simulate_ticks=True)
+    off = _TimerEquityNextOpen()
+    _run(off, frame)
+
+    # 第 1 根 on_bar 买入 100 股, 第 2 根开盘价 11.0 成交; 权益 = 现金 + 100 * (最新价
+    # - 11.0)。第 2 根收盘 11.4、第 3 根收盘 12.4。
+    assert on.timer_equity == pytest.approx(1_000_000.0 + 100 * (12.4 - 11.0))
+    assert off.timer_equity == pytest.approx(1_000_000.0 + 100 * (11.4 - 11.0))
+
+
+def test_tick_count_is_reset_when_instance_is_reused(caplog: Any) -> None:
+    """同一实例先开开关收到 tick, 再关开关跑一次: 第二次照样告警 on_tick 从未触发."""
+    instance = _OverridesOnTick()
+    _run(instance, _frame(3), simulate_ticks=True)
+    assert instance.__dict__.get("_tick_event_count", 0) > 0
+
+    with caplog.at_level("WARNING"):
+        _run(instance, _frame(3))
+
+    assert len(_never_fired_warnings(caplog)) == 1
+
+
+# ---------------------------------------------------------------------------
+# 不变量(S15): golden 场景之外, 跨交易日、多标的、成交回调与 on_start 定时器
+# ---------------------------------------------------------------------------
+
+_OTHER = "600001"
+
+
+def _two_days(count: int = 4) -> pd.DataFrame:
+    """两个交易日各 count 根 1 分钟线."""
+    return pd.concat(
+        [_frame(count), _frame(count, base=20.0, start="2024-01-03 09:31:00")],
+        ignore_index=True,
+    )
+
+
+def _date_only_daily(count: int = 3) -> pd.DataFrame:
+    """只有日期(本地 0 点)的日线: 引擎改写到收盘时刻, 区间为前 24 小时."""
+    frame = _frame(count)
+    frame["timestamp"] = pd.date_range("2024-01-02", periods=count, freq="1D", tz=_TZ)
+    return frame
+
+
+class _LifecycleProbe(Strategy):
+    """记下生命周期回调与 on_bar 的时刻、交易日与权益; 第 2 根 K 线买入."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: List[Tuple[Any, ...]] = []
+        self.bars = 0
+
+    def _now(self) -> int:
+        assert self.ctx is not None
+        return int(self.ctx.current_time)
+
+    def on_pre_open(self, event: Any) -> None:
+        self.records.append(("pre_open", self._now(), str(self.trading_day)))
+
+    def on_before_trading(self, trading_date: Any, timestamp: int) -> None:
+        self.records.append(("before", str(trading_date), int(timestamp), self._now()))
+
+    def on_after_trading(self, trading_date: Any, timestamp: int) -> None:
+        self.records.append(
+            (
+                "after",
+                str(trading_date),
+                int(timestamp),
+                self._now(),
+                round(float(self.equity), 6),
+            )
+        )
+
+    def on_bar(self, bar: Bar) -> None:
+        self.bars += 1
+        if self.bars == 2:
+            self.buy(bar.symbol, 100)
+        self.records.append(("bar", int(bar.timestamp), str(self.trading_day)))
+
+
+class _LifecycleProbeWithTick(_LifecycleProbe):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ticks = 0
+
+    def on_tick(self, tick: Tick) -> None:
+        self.ticks += 1
+
+
+@pytest.mark.parametrize(
+    ("frame", "freq"),
+    [(_two_days(), "1min"), (_date_only_daily(), None)],
+    ids=["minute_two_days", "date_only_daily"],
+)
+def test_lifecycle_hooks_across_trading_days_match_switch_off(
+    frame: pd.DataFrame, freq: Optional[str]
+) -> None:
+    """跨交易日: 盘前、开始交易、收盘后回调的时刻与参数, 开与关逐项相同."""
+    off = _LifecycleProbe()
+    result_off = _run(off, frame, freq=freq)
+    on = _LifecycleProbeWithTick()
+    result_on = _run(on, frame, freq=freq, simulate_ticks=True)
+
+    assert on.ticks == 4 * len(frame)
+    kinds = [entry[0] for entry in off.records]
+    assert kinds.count("before") >= 2, "基线应跨至少两个交易日"
+    assert kinds.count("after") >= 1
+    assert on.records == off.records
+    assert _order_rows(result_on) == _order_rows(result_off)
+    assert list(result_on.equity_curve.items()) == list(result_off.equity_curve.items())
+    assert result_on.trading_day_ends == result_off.trading_day_ends
+
+
+class _TwoSymbolRebalancer(Strategy):
+    """多标的: 在第一个标的的 on_bar 里按目标市值调第二个标的, 记下当时的权益."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.equity_in_bar: List[Tuple[str, int, float]] = []
+        self.seen = 0
+
+    def on_bar(self, bar: Bar) -> None:
+        self.equity_in_bar.append(
+            (str(bar.symbol), int(bar.timestamp), round(float(self.equity), 6))
+        )
+        if bar.symbol != _SYMBOL:
+            return
+        self.seen += 1
+        if self.seen == 2:
+            self.order_target_value(target_value=100_000.0, symbol=_OTHER)
+        if self.seen == 3:
+            # 下一根(第二个标的停牌)撮合不了, 按停牌拒单
+            self.order_target_value(target_value=50_000.0, symbol=_OTHER)
+        if self.seen == 5:
+            self.order_target_value(target_value=0.0, symbol=_OTHER)
+
+
+class _TwoSymbolRebalancerWithTick(_TwoSymbolRebalancer):
+    def on_tick(self, tick: Tick) -> None:
+        pass
+
+
+def _two_symbols_with_suspension() -> pd.DataFrame:
+    """两个标的同刻的 1 分钟线; 第二个标的第 4 根停牌(成交量为 0)."""
+    other = _frame(6, symbol=_OTHER, base=20.0)
+    other.loc[3, "volume"] = 0.0
+    return pd.concat([_frame(6), other], ignore_index=True)
+
+
+def _order_rows(result: Any) -> List[Tuple[Any, ...]]:
+    orders = result.orders_df.sort_values("created_at")
+    return [
+        (
+            int(pd.Timestamp(row["created_at"]).value),
+            str(row["status"]),
+            float(row["quantity"]),
+            float(row["filled_quantity"]),
+        )
+        for row in orders.to_dict("records")
+    ]
+
+
+def test_two_symbols_with_suspension_match_switch_off() -> None:
+    """多标的(含停牌): on_bar 里读到的权益、按最新价定的下单数量与关闭时相同.
+
+    同刻全部标的的模拟 tick 排在 K 线之前; K 线到来时其余标的的最新价不能停在
+    它们自己的模拟 tick 价上(关闭开关时那里还是上一根的收盘价)。
+    """
+    frame = _two_symbols_with_suspension()
+    symbols = [_SYMBOL, _OTHER]
+    off = _TwoSymbolRebalancer()
+    result_off = _run(off, frame, symbols=symbols)
+    on = _TwoSymbolRebalancerWithTick()
+    result_on = _run(on, frame, symbols=symbols, simulate_ticks=True)
+
+    rows_off = _order_rows(result_off)
+    assert len(rows_off) == 3
+    assert "rejected" in rows_off[1][1].lower(), "停牌那根应拒单"
+    assert _order_rows(result_on) == rows_off
+    assert on.equity_in_bar == off.equity_in_bar
+    assert _fingerprint(result_on) == _fingerprint(result_off)
+
+
+class _TradeAccountProbe(Strategy):
+    """第 1 根 K 线买入(缺省 NextOpen, 第 2 根开盘成交); on_trade 里记账户权益."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bought = False
+        self.in_trade: List[Tuple[int, float, float]] = []
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.bought:
+            self.bought = True
+            self.buy(bar.symbol, 1000)
+
+    def on_trade(self, trade: Any) -> None:
+        assert self.ctx is not None
+        self.in_trade.append(
+            (
+                int(self.ctx.current_time),
+                round(float(self.equity), 6),
+                round(float(self.get_account()["equity"]), 6),
+            )
+        )
+
+
+class _TradeAccountProbeWithTick(_TradeAccountProbe):
+    def on_tick(self, tick: Tick) -> None:
+        pass
+
+
+def test_account_seen_in_on_trade_matches_switch_off() -> None:
+    """on_trade 里的账户口径(更新本根价格之前的快照)与关闭开关时相同."""
+    frame = _frame(4)
+    off = _TradeAccountProbe()
+    _run(off, frame)
+    on = _TradeAccountProbeWithTick()
+    _run(on, frame, simulate_ticks=True)
+
+    second_end = int(pd.Timestamp("2024-01-02 09:32:00", tz=_TZ).value)
+    # 第 2 根开盘价 11.0 买入 1000 股, 按上一根收盘价 10.4 计价。
+    expected = round(1_000_000.0 + 1000 * (10.4 - 11.0), 6)
+    assert off.in_trade == [(second_end, expected, expected)]
+    assert on.in_trade == off.in_trade
+
+
+class _EarlyDailyTimer(Strategy):
+    """on_start 里登记每日 09:30:58 的定时器(首根 K 线 09:31 之前 2 秒)."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.fired: List[int] = []
+
+    def on_start(self) -> None:
+        self.schedule_daily("09:30:58", "early")
+
+    def on_timer(self, payload: str) -> None:
+        assert self.ctx is not None
+        self.fired.append(int(self.ctx.current_time))
+
+    def on_bar(self, bar: Bar) -> None:
+        pass
+
+
+class _EarlyDailyTimerWithTick(_EarlyDailyTimer):
+    def __init__(self) -> None:
+        super().__init__()
+        self.ticks = 0
+
+    def on_tick(self, tick: Tick) -> None:
+        self.ticks += 1
+
+
+def test_on_start_timers_are_registered_against_the_first_bar() -> None:
+    """on_start 里登记的定时任务按首根 K 线跳过已过的时点, 不按它前面的模拟 tick."""
+    frame = _two_days(3)
+    off = _EarlyDailyTimer()
+    _run(off, frame)
+    on = _EarlyDailyTimerWithTick()
+    _run(on, frame, simulate_ticks=True)
+
+    assert on.ticks > 0
+    # 首日 09:30:58 早于首根 K 线(09:31), 跳过; 次日照常触发。
+    assert off.fired == [int(pd.Timestamp("2024-01-03 09:30:58", tz=_TZ).value)]
+    assert on.fired == off.fired

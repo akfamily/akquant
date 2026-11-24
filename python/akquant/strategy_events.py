@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Dict, Optional
 
 import numpy as np
 
@@ -154,10 +154,25 @@ def _position_for_holding_bars(
     return float(ctx.get_position(symbol))
 
 
+def _restore_last_prices(strategy: Any, saved: Dict[str, Optional[float]]) -> None:
+    """把模拟 tick 写过的最新价还原成它们之前的值(之前没有的删去)."""
+    prices = strategy._last_prices
+    for symbol, price in saved.items():
+        if price is None:
+            prices.pop(symbol, None)
+        else:
+            prices[symbol] = price
+
+
 def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
     """引擎调用的 Bar 回调 (Internal)."""
     ensure_framework_state(strategy)
     strategy.ctx = ctx
+    # simulate_ticks: 本组第一根 K 线到来时还原模拟 tick 写过的最新价(见
+    # on_tick_event), 订单回调与 on_bar 里按最新价定量时与关闭开关时相同。
+    saved_prices = strategy.__dict__.pop("_sim_tick_saved_prices", None)
+    if saved_prices:
+        _restore_last_prices(strategy, saved_prices)
     flush_pending_schedules(strategy)
     register_cross_section_timers(strategy)
     strategy._last_event_type = "bar"
@@ -249,7 +264,11 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
     """引擎调用的 Tick 回调 (Internal)."""
     ensure_framework_state(strategy)
     strategy.ctx = ctx
-    flush_pending_schedules(strategy)
+    simulated = bool(getattr(strategy, "_framework_simulated_ticks", False))
+    if not simulated:
+        # 模拟 tick 上不刷: on_start 里登记的定时任务按首根 K 线跳过已过的时点,
+        # 与关闭开关时相同(模拟 tick 早于它所属的 K 线)。
+        flush_pending_schedules(strategy)
     register_cross_section_timers(strategy)
     strategy._last_event_type = "tick"
     # 收到过 tick 的次数(真实与模拟都计), 供回测结束时判断 on_tick 是否从未触发。
@@ -272,6 +291,10 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
     _drive_local_stops(strategy, tick.symbol, tick.price)
     if hasattr(strategy, "_update_incremental_indicators"):
         strategy._update_incremental_indicators(tick)
+    if simulated:
+        # 记下模拟 tick 改写之前的最新价, 本组第一根 K 线到来时还原(on_bar_event)。
+        saved = strategy.__dict__.setdefault("_sim_tick_saved_prices", {})
+        saved.setdefault(tick.symbol, previous_price)
     strategy._last_prices[tick.symbol] = tick.price
     dispatch_portfolio_update(strategy)
     call_user_callback(strategy, "on_tick", tick, payload=tick)
