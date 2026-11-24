@@ -20,4 +20,8 @@ pub enum Event {
         trading_day: NaiveDate,
         source: String,
     },
+    /// 行情源推来的未收盘 K 线（仅 live feed）。不是行情：只交给策略做指标试算，
+    /// 不推进时钟、不进时间片、不撮合、不更新最新价、不进历史缓冲。
+    /// `timestamp` 是这一桶将来收盘 bar 的时间戳（晚于当前时刻）。
+    FormingBar(Bar),
 }

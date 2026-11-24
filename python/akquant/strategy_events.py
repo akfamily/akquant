@@ -274,6 +274,21 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
     _flush_indicator_snapshots(strategy)
 
 
+def on_forming_bar_event(strategy: Any, bar: Bar) -> None:
+    """引擎调用的未收盘 K 线入口 (Internal).
+
+    只给声明了 ``intrabar=True`` 的基础周期指标试算临时值并刷出快照; 不是行情:
+    不设 ``current_bar``、不更新最新价、不调用任何用户回调。
+    """
+    ensure_framework_state(strategy)
+    if _is_before_active_start(strategy, int(bar.timestamp)):
+        return
+    if not getattr(strategy, "_incremental_indicators", None):
+        return
+    strategy._peek_forming_bar(bar)
+    _flush_indicator_snapshots(strategy)
+
+
 def _flushes_schedules_on_timer(strategy: Any, payload: str) -> bool:
     """定时器事件上是否刷出 on_start 里登记的定时任务.
 

@@ -459,6 +459,20 @@ impl Processor for DataProcessor {
             FeedAction::Event(event) => {
                 let event = *event;
 
+                // 未收盘 K 线: 不是行情, 就地交给策略做指标试算后丢弃。必须在下面
+                // 任何时间片/时钟/计数逻辑之前返回——它的时间戳是这一桶将来的收盘
+                // 时刻, 晚于当前时刻。白名单口径与下面的行情事件一致。
+                if let Event::FormingBar(bar) = &event {
+                    let allowed = engine
+                        .symbol_whitelist
+                        .as_ref()
+                        .is_none_or(|whitelist| whitelist.contains(bar.symbol.as_str()));
+                    if allowed {
+                        engine.dispatch_forming_bar(py, strategy, bar)?;
+                    }
+                    return Ok(ProcessorResult::Loop);
+                }
+
                 // 行情源交易日: 与前后行情同序在此处理(校验/修正日历), 不是行情,
                 // 不进时间片、不派发给策略。修正只发生在所涉交易日尚未开日时, 被改动
                 // 的日子都晚于当前时间片, 故本片 slice_sessions 不受影响、无需清空。

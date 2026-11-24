@@ -194,6 +194,8 @@ class IndicatorDeclaration:
     #: True 表示在 bar 未闭合期间试算临时值: 窗口周期指标(``freq`` 非 None)在
     #: 每根基础 bar 上用未闭合窗口快照试算; 基础周期指标(``freq`` 为 None)在
     #: 每笔 tick 上用形成中的 :class:`PartialBar` 试算(此时 tick 不再 ``update``)。
+    #: 行情源推来的未收盘 K 线(``Strategy._peek_forming_bar``)是基础周期指标的
+    #: 另一种来源。
     intrabar: bool = False
     #: symbol -> 当前未确认的临时值。有临时值时 ``[0]`` 是它, ``[1]`` 是
     #: ``history[-1]`` —— 与 Pine 里 realtime bar 占据 index 0 一致。

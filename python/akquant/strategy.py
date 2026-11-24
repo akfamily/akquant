@@ -65,6 +65,9 @@ from .strategy_events import (
     on_foreign_timer_event as _on_foreign_timer_event_impl,
 )
 from .strategy_events import (
+    on_forming_bar_event as _on_forming_bar_event_impl,
+)
+from .strategy_events import (
     on_tick_event as _on_tick_event_impl,
 )
 from .strategy_events import (
@@ -1730,7 +1733,9 @@ class Strategy:
             告知当前 ``[0]`` 是否已确认; 流事件带 ``confirmed=false``。窗口周期
             指标(``freq=``)在每根基础 bar 上用未闭合窗口快照试算; 基础周期指标在
             每笔 tick 上用形成中的 bar 试算——此时 **tick 不再 update() 它**,
-            只有 bar 闭合才推进状态。默认 False 时: tick/bar 双流的标的上基础
+            只有 bar 闭合才推进状态。行情源经 ``DataFeed.add_forming_bar`` 推来
+            未收盘 K 线时(bar 驱动的实盘会话), 基础周期指标同样在它上面试算。
+            默认 False 时: tick/bar 双流的标的上基础
             周期指标只由 bar 推进(tick 不 update); 纯 tick 会话(无 bar)里 tick
             照旧 update, 纯 tick 策略依赖此行为。
         :return: 可下标回溯的绑定代理
@@ -2110,6 +2115,12 @@ class Strategy:
                     interval_start=getattr(bar, "interval_start", None),
                 )
         if isinstance(bar, Bar) and bar.freq is None:
+            if bar_symbol is not None and getattr(self, "_has_base_intrabar", False):
+                # 未收盘 bar 的过期判据(见 _peek_forming_bar): 实时与预热回放
+                # 的基础 bar 都经过这里。只有声明了基础周期 intrabar 指标才用得到。
+                self.__dict__.setdefault("_last_confirmed_base_ts", {})[
+                    str(bar_symbol)
+                ] = int(bar.timestamp)
             self._peek_intrabar_indicators(bar)
 
     def _track_intrabar_partial(
@@ -2220,6 +2231,70 @@ class Strategy:
         self._report_declared_indicator(
             name, item, resolved_symbol, value, timestamp=label, confirmed=False
         )
+
+    def _peek_forming_bar(self, bar: Bar) -> None:
+        """行情源推来的未收盘基础 bar: 给 ``intrabar`` 的基础周期指标试算临时值.
+
+        ``bar.timestamp`` 就是这一桶将来收盘 bar 的时间戳, 临时点与确认点同 time,
+        前端按 time 覆盖。时间戳不晚于该标的最近一根已确认基础 bar 的, 是迟到的
+        旧帧, 丢弃。试算用指标**副本**(见 :func:`peek_indicator`), 原状态不变。
+
+        单个指标试算失败时跳过本次并只告警一次(之后每帧仍会重试): 试算点是锦上添花,
+        不能因为它中断会话(同一个错误若出在确认 bar 上, 仍按原路径报错)。
+        """
+        symbol = str(bar.symbol)
+        label = int(bar.timestamp)
+        last_confirmed = self.__dict__.get("_last_confirmed_base_ts", {}).get(symbol)
+        if last_confirmed is not None and label <= int(last_confirmed):
+            logged: set[str] = self.__dict__.setdefault("_forming_stale_logged", set())
+            if symbol not in logged:
+                logged.add(symbol)
+                _live_subscribe_logger.info(
+                    "标的 %s 的未收盘 K 线时间戳 %d 不晚于最近一根已收盘 bar(%d), "
+                    "已丢弃; 该标的之后不再提示。偶发属正常(迟到的旧帧); 若一直没有"
+                    "临时点, 多半是行情源没有按这一桶的收盘时间打戳",
+                    symbol,
+                    label,
+                    int(last_confirmed),
+                )
+            return
+        for name in list(self._incremental_indicators.keys()):
+            item = self._get_incremental_registration(name)
+            if not item.intrabar or item.freq is not None or item.precomputed:
+                continue
+            if item.symbols is not None and symbol not in item.symbols:
+                continue
+            try:
+                instance = self._get_incremental_indicator_instance(name, symbol)
+                args = self._build_incremental_indicator_args(
+                    payload=bar, source=item.source, input_mode=item.input_mode
+                )
+                value = peek_indicator(instance, args)
+                item.set_provisional(symbol, value, label)
+            except Exception:
+                failed: set[str] = self.__dict__.setdefault(
+                    "_forming_peek_failed", set()
+                )
+                if name not in failed:
+                    failed.add(name)
+                    _live_subscribe_logger.warning(
+                        "指标 %r 在未收盘 K 线上试算失败(标的 %s): 本次临时点不上报, "
+                        "确认值不受影响; 该指标之后再失败不再重复告警",
+                        name,
+                        symbol,
+                        exc_info=True,
+                    )
+                continue
+            if item.plot:
+                self._report_declared_indicator(
+                    name,
+                    item,
+                    symbol,
+                    value,
+                    timestamp=label,
+                    confirmed=False,
+                    interval_start=getattr(bar, "interval_start", None),
+                )
 
     def _peek_intrabar_indicators(self, bar: Bar) -> None:
         """基础 bar 闭合后, 给开了 ``intrabar`` 的窗口指标试算临时值.
@@ -2760,6 +2835,10 @@ class Strategy:
 
     def _on_tick_event(self, tick: Tick, ctx: StrategyContext) -> None:
         _on_tick_event_impl(self, tick, ctx)
+
+    def _on_forming_bar_event(self, bar: Bar) -> None:
+        """引擎入口: 行情源推来的未收盘 K 线 (Internal)."""
+        _on_forming_bar_event_impl(self, bar)
 
     def _on_timer_event(self, payload: str, ctx: StrategyContext) -> None:
         _on_timer_event_impl(self, payload, ctx)

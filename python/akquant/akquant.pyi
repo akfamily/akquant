@@ -796,6 +796,17 @@ class DataFeed:
         :raises RuntimeError: 在回测数据源上调用
         """
         ...
+    def add_forming_bar(self, bar: Bar) -> None:
+        r"""
+        推送一根未收盘的 K 线（仅实盘）.
+
+        只用于给声明了 ``intrabar=True`` 的基础周期指标试算临时值；不触发 ``on_bar``，
+        不撮合，不进历史。``bar.timestamp`` 须等于这一桶将来收盘 bar 的时间戳。
+
+        :param bar: 未收盘的 K 线
+        :raises RuntimeError: 在回测数据源上调用
+        """
+        ...
     def add_arrays(
         self,
         timestamps: numpy.ndarray,

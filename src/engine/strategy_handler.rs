@@ -61,6 +61,12 @@ pub trait StrategyHandler: Send + Sync {
         callback: StrategyCallback<'_>,
         ctx: &Py<StrategyContext>,
     ) -> PyResult<Option<PendingEnginePlans>>;
+
+    /// 行情源推来的未收盘 K 线: 只供指标试算。不产生订单、定时器或待注册计划,
+    /// 也不需要策略上下文, 故不经 [`StrategyHandler::invoke`]。缺省什么都不做。
+    fn on_forming_bar(&self, _py: Python<'_>, _bar: &Bar) -> PyResult<()> {
+        Ok(())
+    }
 }
 
 /// 引擎持有的策略句柄(多个槽位、流水线各阶段共享)。
@@ -152,6 +158,14 @@ impl StrategyHandler for PyStrategy {
             oco_groups,
             bracket_plans,
         }))
+    }
+
+    fn on_forming_bar(&self, py: Python<'_>, bar: &Bar) -> PyResult<()> {
+        let strategy = self.obj.bind(py);
+        if strategy.hasattr("_on_forming_bar_event")? {
+            strategy.call_method1("_on_forming_bar_event", (bar.clone(),))?;
+        }
+        Ok(())
     }
 }
 
