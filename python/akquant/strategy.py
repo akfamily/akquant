@@ -755,6 +755,9 @@ class Strategy:
         # (optimize.py 多进程会 pickle 策略), 且属于会话级运行时状态。
         if "_live_subscription_forwarder" in state:
             del state["_live_subscription_forwarder"]
+        # 模拟 tick 标记只属于某次回测(run_backtest 注入): 存档带走会让续跑或
+        # 实盘把真实 tick 当成模拟 tick, 缺省值回到类属性 False。
+        state.pop("_framework_simulated_ticks", None)
         # 已确保过的历史容量绑着上下文对象(见 strategy_history), 是会话级运行时状态;
         # 续跑时缓冲区按存档恢复、开跑前还会重配容量, 须重新确认。
         if "_history_capacity_ensured" in state:

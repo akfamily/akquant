@@ -1534,6 +1534,8 @@ class LiveRunner:
         for target in targets:
             setattr(target, "_framework_dual_stream", dual_stream)
             setattr(target, "_framework_tick_bar_resolver", tick_bar_resolver)
+            # 实例若先跑过 simulate_ticks 回测, 标记须复位: 实盘的 tick 都是真实的。
+            setattr(target, "_framework_simulated_ticks", False)
         if dual_stream:
             logger.info(
                 "tick/bar 双流(%s): 基础周期指标只由 bar 推进",

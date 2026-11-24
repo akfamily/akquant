@@ -91,6 +91,7 @@ def run_backtest(
     indicator_recorder: Optional[IndicatorSink] = None,
     broker_profile: Optional[str] = None,
     fill_policy: Optional[FillMode] = None,
+    simulate_ticks: bool = False,
     strict_strategy_params: bool = True,
     **kwargs: Any,
 ) -> BacktestResult
@@ -232,6 +233,7 @@ def run_from_checkpoint(
 *   旧的 `fill_policy=dict`（`price_basis`/`bar_offset`/`temporal`）与 `make_fill_policy(...)` 已移除，传入 dict 会抛出 `TypeError`。请改用上述 `FillMode` 构造器。
 *   `legacy_execution_policy_compat`（通过 `**kwargs`）: 已移除。
 *   迁移建议：legacy 执行参数已不再接受，统一使用 `FillMode` 对象。
+*   `simulate_ticks`: 回测数据只有 K 线时，把每根 K 线拆成四个模拟 tick（开盘价、两个极值、收盘价）驱动 `on_tick`，缺省 `False`。`on_tick` 里下的单按模拟 tick 撮合：市价单在该 tick 上按 tick 价成交；挂着的限价单被越过时按限价成交，止损单按触发时的 tick 价成交。`on_bar`、`on_timer` 里下的单仍按 K 线撮合，结果与关闭时相同。数据里已有真实 tick 时不能使用，也只用于回测。见[策略指南](../guide/strategy.md#simulate-ticks)“只有 K 线时回测 `on_tick`”。
 *   `strict_strategy_params`: 是否严格校验策略构造参数（默认 `True`）。
     *   当传入策略不接受的参数时会立即抛错；
     *   推荐保持默认值，避免参数错配被静默忽略导致回测结果偏差。

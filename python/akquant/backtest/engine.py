@@ -6665,6 +6665,8 @@ def run_from_checkpoint(
     # None` 的判据等价(两者都是"无覆盖"), 且 None 与该属性未被设置过时的
     # getattr 默认值一致, 不引入第三种状态。
     for current_strategy in [strategy_instance, *slot_strategy_instances.values()]:
+        # 续跑不支持模拟 tick: 实例若先跑过 simulate_ticks 回测, 标记须复位。
+        setattr(current_strategy, "_framework_simulated_ticks", False)
         setattr(
             current_strategy,
             "_strategy_fill_policy_map",

@@ -817,6 +817,65 @@ def test_simulated_flag_is_reset_when_instance_is_reused() -> None:
     assert getattr(instance, "_framework_simulated_ticks") is False
 
 
+def test_simulated_flag_is_reset_when_instance_goes_live() -> None:
+    """跑过模拟 tick 回测的实例再交给 run_live: 标记复位."""
+    from akquant import run_live
+    from akquant.akquant import AssetType, Instrument
+
+    instance = _Recorder()
+    _run(instance, _frame(3), simulate_ticks=True)
+    assert getattr(instance, "_framework_simulated_ticks") is True
+
+    idx = pd.date_range(
+        "2024-01-02 09:31:00", periods=3, freq="1min", tz="Asia/Shanghai"
+    )
+    bars = [
+        Bar(int(ts.value), 10.0 + i, 10.5 + i, 9.5 + i, 10.1 + i, 100.0, _SYMBOL)
+        for i, ts in enumerate(idx)
+    ]
+    run_live(
+        strategy_cls=instance,
+        instruments=[
+            Instrument(
+                symbol=_SYMBOL,
+                asset_type=AssetType.Stock,
+                multiplier=1.0,
+                margin_ratio=1.0,
+                tick_size=0.01,
+                lot_size=100,
+                option_type=None,
+                strike_price=None,
+                expiry_date=None,
+            )
+        ],
+        broker="replay",
+        trading_mode="paper",
+        gateway_options={"bars": bars, "freq": "1min"},
+        cash=1e6,
+        show_progress=False,
+        duration="30s",
+    )
+
+    assert getattr(instance, "_framework_simulated_ticks") is False
+
+
+def test_simulated_flag_is_not_pickled() -> None:
+    """存档不带模拟 tick 标记, 恢复后回到类属性缺省值 False.
+
+    回测跑完的实例仍持有引擎句柄, 整体不可 pickle(与本功能无关), 所以直接断言
+    ``__getstate__`` 的结果, 再用它重建一个实例验证缺省值。
+    """
+    instance = _Recorder()
+    _run(instance, _frame(3), simulate_ticks=True)
+    assert getattr(instance, "_framework_simulated_ticks") is True
+
+    state = instance.__getstate__()
+    assert "_framework_simulated_ticks" not in state
+    restored = _Recorder.__new__(_Recorder)
+    restored.__setstate__(state)
+    assert getattr(restored, "_framework_simulated_ticks") is False
+
+
 class _TimerEquityProbe(Strategy):
     """第 1 根 K 线买入; 定时器登记在第 2 根 K 线的时间戳上, 记下权益."""
 
