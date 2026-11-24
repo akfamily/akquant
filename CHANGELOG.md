@@ -14,7 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - `__init__` 里没有账户可读，`get_account()` 仍报 “Context not ready”。
     - MCP 服务遇到 “Context not ready” 时给出上述提示。
 
+### Changed
+- **`import akquant` 不再加载 plotly**：plotly 改为第一次画图时才导入，`import akquant` 约快 70 毫秒（同一台机器交替实测，中位数约 730 → 660 毫秒）。绘图接口的用法不变；没装 plotly 时仍在调用绘图接口那一刻提示安装。
+
 ### Docs
+- **更正导入耗时的说法**：0.3.96 一条里的“本机实测 680 → 565 毫秒”是当时那台机器的读数，换机器或换时间测绝对值都不同，不能当基准。可比的是相对值：`import akquant` 的耗时约为同机 `import pandas` 的 1.5 倍，其中约六成花在导入 pandas 上。
 - **更正 `on_start` 的说明**：策略指南此前写“引擎上下文在 `on_start` 才就绪”，提示词模板的排错条目建议把报 “Context not ready” 的逻辑挪到 `on_start`，两处都与实际不符。现在写明 `on_start` 里可以读账户与持仓、订阅、声明指标，下单与取历史数据要等行情回调。
 
 ## [0.3.98] - 2026-11-24
