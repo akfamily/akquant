@@ -442,7 +442,7 @@ later with the same `time`, so a frontend overwrites by `(owner_strategy_id, ind
 (`akquant.lwc.to_lwc_update()` already does). Provisional points **never** enter
 `indicator_df()` / `export_indicators()` - those exits hold confirmed values only.
 
-Three limits:
+Four notes:
 
 - **Base-period indicators (no `freq=`) peek on every tick**: the framework builds the forming
   bar from the ticks itself (real open/high/low/close, so ATR-style H/L indicators work too);
@@ -455,6 +455,17 @@ Three limits:
   interval start), streaming stops for that symbol with one warning while `[0]` keeps working.
   **With the default `intrabar=False` ticks still `update()` base indicators** - pure-tick
   strategies rely on that and it is unchanged.
+- **When the market gateway pushes the forming bar itself, base-period indicators are peeked
+  on it**: in a bar-driven live session a gateway may call `feed.add_forming_bar(bar)` with
+  the bar that is still forming (`bar.timestamp` equals the timestamp its closed bar will
+  carry). The framework only peeks base-period indicators declared with `intrabar=True` and
+  emits `confirmed=false` points; it **does not call `on_bar`, match orders, write history or
+  advance the clock**. The same bucket may be pushed repeatedly (the latest wins) and the
+  closed bar later overwrites it with the confirmed value. A forming bar whose timestamp is
+  not later than the last closed bar is dropped. A failing peek is logged once and never
+  stops the session. Whether forming bars are pushed is up to the gateway; do not combine
+  ticks and forming bars for the same symbol. Backtests and the `replay` broker have no
+  forming bars.
 - **Provisional points stream only when the base period is known** (backtest:
   `run_backtest(data=[Tick,...], freq=)`; live: the gateway declares `metadata["freq"]`).
   With an unknown base period the window label drifts every base bar and a frontend could

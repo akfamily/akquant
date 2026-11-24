@@ -1378,6 +1378,7 @@ run_live(
 *   `add_tick(tick)`: 向实时数据源追加单个 `Tick`。
 *   `add_arrays(timestamps, opens, highs, lows, closes, volumes, symbol)`: 通过数组快速批量构建 `Bar` 并注入数据源；可选 `interval_starts=` 传区间起点列。
 *   `add_trading_day_hint(timestamp_ns, trading_day, source)`: 推送行情源报告的交易日（仅实盘数据源，回测数据源上调用抛 `RuntimeError`），与行情同序进入引擎。传了 `trading_calendar=` 时不一致只告警；未传时在所涉交易日开日前按它修正缺省日历（内置交易所日历或工作日）。replay 回放可用 `gateway_options={"trading_day_hints": [(ts_ns, date), ...]}` 模拟。
+*   `add_forming_bar(bar)`: 推送一根未收盘的 K 线（仅实盘数据源，回测数据源上调用抛 `RuntimeError`）。只用于给声明了 `intrabar=True` 的基础周期指标试算临时值，不触发 `on_bar`、不撮合、不进历史。`bar.timestamp` 须等于这一桶将来收盘 bar 的时间戳，且该标的此前的收盘 bar 须都已 `add_bar`。
 *   `sort()`: 对当前历史数据源按事件时间排序。
 
 **使用边界:**

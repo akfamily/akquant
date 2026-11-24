@@ -404,7 +404,7 @@ class S(Strategy):
 `(owner_strategy_id, indicator_key, symbol, timestamp)` 覆盖即可（`akquant.lwc.to_lwc_update()` 已按此处理）。
 临时点**不进** `indicator_df()` / `export_indicators()`，那两个出口只含确认值。
 
-三条限制：
+四点说明：
 
 - **基础周期指标（不给 `freq=`）在每笔 tick 上试算**：框架从 tick 自己累出形成中的 bar
   （真实的 open/high/low/close，ATR 之类 H/L 指标也能试算），tick **不再 `update()`** 该指标，
@@ -414,6 +414,13 @@ class S(Strategy):
   bar 真闭合时若与实际不符（行情源按起点打戳），该标的
   停发临时点并告警一次，`[0]` 仍可读。**默认 `intrabar=False` 时 tick 照旧 `update()` 基础
   指标**——纯 tick 策略依赖这个行为，未改动。
+- **行情源直接推来未收盘 K 线时，基础周期指标在它上面试算**：bar 驱动的实盘会话里，行情
+  网关可以调用 `feed.add_forming_bar(bar)` 推送正在形成的那一根（`bar.timestamp` 等于它将来
+  收盘时的时间戳）。框架只给声明了 `intrabar=True` 的基础周期指标试算并发出
+  `confirmed=false` 的点，**不触发 `on_bar`、不撮合、不进历史、不推进时钟**；同一桶可以反复
+  推，后到的覆盖先到的，收盘 bar 到达后以确认值覆盖。时间戳不晚于最近一根已收盘 bar 的
+  会被丢弃。试算出错只告警一次，不中断会话。是否推送由行情网关决定（见各网关的说明）；
+  同一标的不要同时用 tick 与未收盘 K 线两种来源。回测与 `replay` 行情没有未收盘 K 线。
 - **临时点只在基础周期已知时上报**（回测 `run_backtest(data=[Tick,...], freq=)`，实盘网关声明
   `metadata["freq"]`）。基础周期未知时窗口标签会随每根基础 bar 漂移，前端无法覆盖，此时只算
   `[0]` 不发流事件，告警一次。

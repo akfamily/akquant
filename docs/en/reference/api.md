@@ -1295,6 +1295,7 @@ The main entry point for the backtesting engine (usually used implicitly via `ru
 *   `add_tick(tick)`: Append one `Tick` to a live feed.
 *   `add_arrays(timestamps, opens, highs, lows, closes, volumes, symbol)`: Build bars from arrays and inject them into the feed efficiently; optional `interval_starts=` passes an interval-start column.
 *   `add_trading_day_hint(timestamp_ns, trading_day, source)`: Push the trading day reported by the market-data source (live feeds only; calling it on a backtest feed raises `RuntimeError`); it enters the engine in order with the market data. With `trading_calendar=` a mismatch only warns; without it the hint corrects the default calendar (built-in exchange calendar or weekdays) before the affected trading day is opened. Replay can simulate it with `gateway_options={"trading_day_hints": [(ts_ns, date), ...]}`.
+*   `add_forming_bar(bar)`: Push a bar that is still forming (live feeds only; raises `RuntimeError` on a backtest feed). It is only used to peek provisional values of base-period indicators declared with `intrabar=True`; it never triggers `on_bar`, matching or history writes. `bar.timestamp` must equal the timestamp of the bucket's future closed bar, and all earlier closed bars of the symbol must already have been pushed with `add_bar`.
 *   `sort()`: Sort the current historical feed by event time.
 
 **When to use it:**

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`DataFeed.add_forming_bar(bar)`：行情源可推送未收盘的 K 线**（仅实盘）。引擎只用它给声明了 `intrabar=True` 的基础周期 `self.I()` 指标试算临时值，发出 `confirmed=false` 的指标点（时间戳等于这一桶将来收盘 bar 的时间戳，收盘后被确认值覆盖）；不触发 `on_bar`、不撮合、不进历史、不推进时钟。未声明 `intrabar` 的指标、回测与 `replay` 行情不受影响；规则版本与指标流协议版本不变。行情网关作者见 `docs/zh/guide/custom_indicator.md` 的“实时值”一节。
+
 ## [0.3.99] - 2026-11-24
 
 > 规则版本 2.5.2 → 2.5.3：`on_start` 里读得到账户资金与持仓了（见下文）。撮合不变；在 `on_start` 里读 `self.cash`、`self.equity` 等来定量的策略，此前读到 0，现在读到真实值，这类策略的结果会变。
