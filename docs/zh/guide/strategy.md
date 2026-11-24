@@ -880,8 +880,8 @@ class MyStrategy(Strategy):
 ### 6.4 参数声明 (Parameter Declaration) {: #param-declaration }
 
 AKQuant 推荐用**内联字段**声明策略参数：直接在类体内用 `IntParam` /
-`FloatParam` / `BoolParam` / `ChoiceParam` / `DateRangeParam` / `ListParam`
-赋值，无需再单独定义 `ParamModel` 子类或手写 `__init__` 签名。
+`FloatParam` / `BoolParam` / `StrParam` / `ChoiceParam` / `DateRangeParam` /
+`ListParam` 赋值，无需再单独定义 `ParamModel` 子类或手写 `__init__` 签名。
 
 ```python
 from akquant import IntParam, PrecomputedIndicator, Strategy
@@ -936,12 +936,75 @@ class SMACrossStrategy(Strategy):
 *   **与优化联动**：`run_grid_search(..., param_grid={...})` 的
     `param_grid` 键名必须和内联字段名完全一致；键名拼写错误或取值越界
     （超出 `ge`/`le`、不在 `choices` 内）都会在校验阶段直接报错，而不是
-    静默忽略。
+    静默忽略。`strategy_params` 传入的值同样校验。
 *   `get_strategy_param_schema(StrategyCls)` 可导出参数的 JSON Schema；
     `validate_strategy_params(StrategyCls, payload)` 可在构造策略前单独校验
     一份参数字典，两者都读取同一套内联字段声明，不需要额外维护 Schema。
 
 完整可运行示例见：`examples/02_parameter_optimization.py`。
+
+#### 参数类型一览
+
+| 声明函数 | 取值 | 说明 |
+|---|---|---|
+| `IntParam(default, *, ge=None, le=None, title=None, description=None)` | 整数 | `ge` / `le` 为上下限（含端点） |
+| `FloatParam(default, *, ge=None, le=None, title=None, description=None)` | 小数 | 同上 |
+| `BoolParam(default, *, title=None, description=None)` | 布尔 | |
+| `StrParam(default, *, title=None, description=None)` | 任意字符串 | 首尾空白会被去掉 |
+| `ChoiceParam(default, *, choices, title=None, description=None)` | `choices` 里的一项 | 单选；每一项都是字符串 |
+| `DateRangeParam(*, default=None, title=None, description=None)` | `DateRange` 或 `None` | 日期区间，含 `start` / `end` |
+| `ListParam(default=None, *, item_type=str, title=None, description=None)` | 列表 | `item_type` 为元素类型 |
+
+签名里 `*` 之后的参数只能按关键字传：`ChoiceParam("trend", choices=["trend", "revert"])`
+是对的，`ChoiceParam("trend", ["trend", "revert"])` 会报 `TypeError`；`DateRangeParam`
+的 `default` 同理。`title` 是参数在界面上的显示名，`description` 是补充说明。
+
+字符串、单选、日期区间三种参数的用法：
+
+```python
+from akquant import ChoiceParam, DateRange, DateRangeParam, Strategy, StrParam
+
+
+class RegimeStrategy(Strategy):
+    mode = ChoiceParam("trend", choices=["trend", "revert"], title="交易模式")
+    note = StrParam("对照组", title="备注")
+    window = DateRangeParam(
+        default=DateRange(start="2024-01-01", end="2024-06-30"), title="交易区间"
+    )
+
+    def on_bar(self, bar):
+        # bar.timestamp 是 UTC 纳秒整数，先转成本地时间再取日期
+        today = self.to_local_time(bar.timestamp).date()
+        window = self.params.window
+        if not (window.start <= today <= window.end):
+            return
+        if self.params.mode == "trend":
+            ...  # 顺势逻辑
+        else:
+            ...  # 反转逻辑
+```
+
+外部传值时，日期区间写成带 `start` / `end` 的字典：
+
+```python
+strategy_params = {
+    "mode": "revert",
+    "note": "实验组",
+    "window": {"start": "2024-02-01", "end": "2024-04-30"},
+}
+```
+
+*   **`StrParam`**：接受任意字符串，不做类型转换，传数字会报错。只允许固定的几个
+    取值时用 `ChoiceParam`。
+*   **`ChoiceParam`**：取值必须是 `choices` 里的一项，否则在构造策略（以及
+    `param_grid` 校验）时报错并列出可选值。默认值也必须在 `choices` 内，否则类定义时
+    就报错。取值是字符串，数字选项请写成 `"1"` 这样的形式。
+*   **`DateRangeParam`**：`start` / `end` 写日期（`"2024-01-01"`）读出来是
+    `datetime.date`，带时间（`"2024-01-01 09:30:00"`）读出来是 `datetime.datetime`，
+    比较时两边类型要一致；`end` 早于 `start` 会报错。不给 `default` 时参数可空：默认
+    `None`，外部也可以显式传 `None`，策略里用之前要判空；给了 `default` 则恒有值。
+*   **日期区间参数不会限制回测区间**：它只是策略自己读取的一个参数。回测的起止
+    时间由 `run_backtest(start_time=..., end_time=...)` 决定。
 
 ## 7. 订单与交易详解 (Orders & Execution)
 

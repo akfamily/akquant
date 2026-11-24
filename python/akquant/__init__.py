@@ -87,6 +87,7 @@ from .params import (
     IntParam,
     ListParam,
     ParamModel,
+    StrParam,
 )
 from .params_adapter import (
     build_param_grid_from_search_space,
@@ -234,6 +235,7 @@ if hasattr(_akquant, "__all__"):  # noqa: F405
         "IntParam",
         "FloatParam",
         "BoolParam",
+        "StrParam",
         "ChoiceParam",
         "DateRangeParam",
         "ListParam",
@@ -344,6 +346,7 @@ else:
         "IntParam",
         "FloatParam",
         "BoolParam",
+        "StrParam",
         "ChoiceParam",
         "DateRangeParam",
         "ListParam",

@@ -18,7 +18,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
 
 1.  **Strategy Structure**:
     *   Inherit from `akquant.Strategy`.
-    *   **Parameters**: Declare tunable parameters as **inline class fields** (`fast = IntParam(10, ge=2, le=200)`, also `FloatParam` / `BoolParam` / `ChoiceParam` / `ListParam`) and read them via `self.params.fast`. **`__init__` is NOT a parameter entry point** — passing params through the constructor signature raises `TypeError`.
+    *   **Parameters**: Declare tunable parameters as **inline class fields** (`fast = IntParam(10, ge=2, le=200)`, also `FloatParam` / `BoolParam` / `StrParam` / `ChoiceParam(default, choices=[...])` / `ListParam`) and read them via `self.params.fast`. **`__init__` is NOT a parameter entry point** — passing params through the constructor signature raises `TypeError`.
     *   **Initialization**: Put derived setup (indicators, caches, warmup override) in `on_start`, where `self.params` is ready. Note `on_start` runs again on warm-start resume while `__init__` does not, so guard per-object accumulated state with `if not self.is_restored:`.
     *   **Subscription**: Call `self.subscribe(symbol)` in `on_start` to explicitly declare interest. In backtest, it's optional if data is provided.
     *   **Logic**: Implement trading logic in `on_bar(self, bar: Bar)`.
@@ -29,7 +29,7 @@ Your task is to write trading strategies or backtest scripts based on user requi
         *   **Static**: `warmup_period = N` (Class Attribute).
         *   **Dynamic**: `self.warmup_period = N` in `on_start` (the engine reads it after `on_start` runs).
         *   **Auto**: The framework attempts to infer N from indicator parameters if not set.
-    *   **Current Bar**: Access via `bar.close`, `bar.open`, `bar.high`, `bar.low`, `bar.volume`, `bar.timestamp` (pd.Timestamp).
+    *   **Current Bar**: Access via `bar.close`, `bar.open`, `bar.high`, `bar.low`, `bar.volume`, `bar.timestamp` (int, UTC nanoseconds; `self.to_local_time(bar.timestamp)` gives a `pd.Timestamp`).
     *   **History (Numpy)**: `self.get_history(count=N, symbol=None, field="close")` returns a `np.ndarray`.
     *   **History (DataFrame)**: `self.get_history_df(count=N, symbol=None)` returns a `pd.DataFrame` with OHLCV columns.
     *   **Check Data Sufficiency**: Always check `if len(history) < N: return`.
