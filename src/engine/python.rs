@@ -52,6 +52,20 @@ impl Engine {
         self.state.portfolio.clone()
     }
 
+    /// 开跑前的账户视图.
+    ///
+    /// 按引擎此刻的资金、持仓生成一份只读上下文, 供策略在 on_start 里读账户
+    /// (此时第一个行情事件还没到, 策略上没有绑定上下文)。调用不改变引擎状态。
+    ///
+    /// :return: 只用于读取的 StrategyContext
+    fn prestart_context(
+        &mut self,
+        py: Python<'_>,
+    ) -> PyResult<Py<crate::context::StrategyContext>> {
+        let ctx = self.build_prestart_context();
+        Py::new(py, ctx)
+    }
+
     fn get_account_metrics(&self) -> (f64, f64, f64, f64, f64, f64) {
         let prices = self.last_prices.read().expect("last_prices 读锁被污染");
         let metrics = calculate_account_metrics(

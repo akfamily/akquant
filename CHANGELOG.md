@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`on_start` 里读不到账户：`get_account()` 报 “Context not ready”，`self.cash`、`self.equity`、`self.buying_power` 静默返回 0**（规则版本 2.5.2 → 2.5.3）：`on_start` 早于第一个行情事件，引擎上下文还没绑定到策略上。“开局读初始资金”的写法要么报错，要么拿 0 去算仓位且没有任何提示；从检查点恢复时，`on_resume`、`on_start` 里连已恢复的持仓也读成 0。现在这两个回调里读到的是开跑前的账户：全新回测与 paper 实盘是初始资金，从检查点恢复是恢复出来的资金与持仓，`get_account()` 的各项与第一个行情回调里下单前读到的完全一致。涉及 `get_account()`、`self.cash`、`self.equity`、`self.buying_power`、`get_position()`、`get_available_position()`、`get_position_detail()`、`self.positions`。经柜台交易的会话读数一直来自柜台，不受影响。
+    - 下单仍要等行情回调：`on_start` 里调用 `buy()`、`sell()`、`order_target*()` 照旧报 “Context not ready”。
+    - **行为变化**：`on_start` 里的 `order_target_percent()`、`close_position()` 等此前因为读到的权益、持仓是 0 而静默不下单，现在读到真实值后会走到下单那一步，报 “Context not ready”。这类调用此前就没有生效，请挪到 `on_bar` 等行情回调里。
+    - `__init__` 里没有账户可读，`get_account()` 仍报 “Context not ready”。
+    - MCP 服务遇到 “Context not ready” 时给出上述提示。
+
+### Docs
+- **更正 `on_start` 的说明**：策略指南此前写“引擎上下文在 `on_start` 才就绪”，提示词模板的排错条目建议把报 “Context not ready” 的逻辑挪到 `on_start`，两处都与实际不符。现在写明 `on_start` 里可以读账户与持仓、订阅、声明指标，下单与取历史数据要等行情回调。
+
 ## [0.3.98] - 2026-11-24
 
 > 规则版本不变（2.5.2），撮合结果不变。本版只动策略参数声明：新增 `StrParam`；`ChoiceParam` 开始校验取值，给它传了 `choices` 以外的值、或默认值不在 `choices` 内的策略，现在会报错（见下文）。

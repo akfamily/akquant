@@ -67,6 +67,13 @@ HINT_RULES: Tuple[Tuple[Tuple[str, ...], str], ...] = (
         'self.I(SMA(5), name="ma"); 周期等构造参数写在指标对象里',
     ),
     (
+        ("Context not ready",),
+        "下单(buy / sell / order_target_* 等)要放在 on_bar 等行情回调里: "
+        "引擎上下文在第一个行情事件到来时才绑定, __init__ 和 on_start 里还不能下单。"
+        "读账户与持仓(get_account() / self.cash / self.equity / get_position())"
+        "可以放在 on_start",
+    ),
+    (
         ("History tracking is not enabled",),
         "get_history 等历史数据接口要先设置历史深度: 在 on_start 里调用 "
         "self.set_history_depth(N), N 不小于要取的根数",

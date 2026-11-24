@@ -393,8 +393,8 @@ run_backtest(..., config=BacktestConfig(strategy_config=strategy_config))
     *   **解决**: 在类定义中设置 `warmup_period = N` 或在 `__init__` 中设置 `self.warmup_period = N`。
 
 2.  **"Context not ready"**:
-    *   **原因**: 在 `__init__` 中调用了需要 Context 的方法（如 `get_history`, `buy`）。
-    *   **解决**: 将逻辑移至 `on_start` 或 `on_bar` 中。
+    *   **原因**: 在 `__init__` 或 `on_start` 中下单（`buy`、`order_target_percent` 等），或在 `__init__` 中读账户。引擎上下文在第一个行情回调时才绑定。
+    *   **解决**: 下单逻辑移至 `on_bar` 等行情回调。读账户资金与持仓（`get_account()`、`self.cash`、`self.equity`、`get_position()`）可以放在 `on_start`，全新运行读到的是初始资金。
 
 3.  **订单被拒绝 (Order Rejected)**:
     *   **原因**: 资金不足、触及风控限制、或者不在交易时段。

@@ -1,3 +1,4 @@
+import copy
 import datetime as dt_module
 import logging
 import os
@@ -626,6 +627,56 @@ def _merge_risk_config(
                 else:
                     logger.warning("Unknown risk config key: %s", k, extra=log_extra)
     return current
+
+
+# 生成开跑前账户视图时合并风控配置用: 未知键的告警留给正式那次合并去报。
+_PRESTART_LOGGER = logging.getLogger("akquant.backtest.prestart")
+_PRESTART_LOGGER.addHandler(logging.NullHandler())
+_PRESTART_LOGGER.propagate = False
+
+
+def _attach_prestart_account_view(strategies: Sequence[Any], engine: Any) -> None:
+    """把开跑前的账户视图挂到各策略上, 供 ``on_start`` / ``on_resume`` 读账户.
+
+    这两个回调早于第一个行情事件, 策略上还没有引擎上下文。视图由引擎按此刻的
+    资金与持仓生成, 只用于读取; 第一个行情事件到来后读数改走引擎绑定的上下文。
+
+    :param strategies: 主策略与各槽位策略
+    :param engine: 已设好资金(恢复时已还原持仓)的引擎; 没有该方法的替身引擎跳过
+    """
+    build = getattr(engine, "prestart_context", None)
+    if not callable(build):
+        return
+    view = build()
+    for strategy in strategies:
+        strategy._framework_prestart_ctx = view
+
+
+def _build_prestart_view_engine(
+    initial_cash: float,
+    config: Optional[BacktestConfig],
+    risk_config: Optional[Union[Dict[str, Any], RiskConfig]],
+) -> Engine:
+    """建一个只带初始资金与风控配置的引擎, 专供生成开跑前的账户视图.
+
+    全新回测里 ``on_start`` 早于正式引擎的创建(数据加载要先拿到 ``on_start``
+    里的订阅), 所以单独建一个。风控配置决定账户类型与可买资金的安全垫, 按与
+    正式引擎相同的规则合并; 合并在副本上做, 不动调用方传入的配置对象。
+
+    :param initial_cash: 初始资金
+    :param config: 回测配置
+    :param risk_config: 入口传入的风控配置
+    :return: 只用于生成视图的引擎
+    """
+    engine = Engine()
+    engine.set_cash(float(initial_cash))
+    base: Optional[RiskConfig] = None
+    if config and config.strategy_config and config.strategy_config.risk:
+        base = copy.deepcopy(config.strategy_config.risk)
+    merged = _merge_risk_config(base, risk_config, _PRESTART_LOGGER, {})
+    if merged:
+        apply_risk_config(engine, merged)
+    return engine
 
 
 def _risk_config_snapshot(
@@ -4144,6 +4195,12 @@ def run_backtest(
     # _start_initialized 挡住, 不会再触发), 直到引擎启动都不会报错。
     freeze_window_subscriptions(all_strategy_instances)
 
+    # on_start 早于正式引擎的创建, 先挂上开跑前的账户视图, 让它读得到初始资金。
+    _attach_prestart_account_view(
+        all_strategy_instances,
+        _build_prestart_view_engine(initial_cash, config, risk_config),
+    )
+
     # 调用 on_start 获取订阅
     # 注意：现在调用 _on_start_internal 来触发自动发现
     if hasattr(strategy_instance, "_on_start_internal"):
@@ -7528,6 +7585,9 @@ def run_from_checkpoint(
 
     # subscribe_bars 只认 __init__: 与 run_backtest 对称, 必须在 on_start 之前冻结。
     freeze_window_subscriptions(all_strategy_instances)
+
+    # 引擎已还原资金与持仓: on_resume / on_start 读到的是恢复出来的账户。
+    _attach_prestart_account_view(all_strategy_instances, engine)
 
     if hasattr(strategy_instance, "_on_start_internal"):
         strategy_instance._on_start_internal()

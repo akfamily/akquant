@@ -2200,6 +2200,47 @@ impl Engine {
         Ok(())
     }
 
+    /// 开跑前的账户视图: 按引擎此刻的账户状态生成一份上下文, 供策略在 `on_start`
+    /// (以及恢复时的 `on_resume`)里读资金与持仓。那时第一个行情事件还没到,
+    /// 策略上没有绑定上下文。
+    ///
+    /// 只读: 不建槽位、不登记订单台账、不解析交易日, 调用前后引擎状态不变
+    /// (账户指标缓存除外)。它不绑定到策略的 `ctx`, 下单仍要等行情回调。
+    pub(crate) fn build_prestart_context(&mut self) -> StrategyContext {
+        let active_orders = Arc::new(self.state.order_manager.active_orders.clone());
+        let previous_cash = self.state.portfolio.cash;
+        let previous_account_metrics = self.current_account_metrics();
+        let sessions = crate::context::ContextSessions {
+            trading_day: None,
+            session_resolver: self.session_resolver.clone(),
+            slice_sessions: Arc::downgrade(&self.slice_sessions),
+            event_interval_start: None,
+            event_at_instant: false,
+        };
+        let ledger_key = self
+            .default_strategy_id
+            .clone()
+            .filter(|id| !id.trim().is_empty())
+            .unwrap_or_else(|| "_default".to_string());
+        // 台账只查不建: 开跑前还没有在途委托, 没有就给一份空的。
+        let order_ledger = self
+            .order_ledgers
+            .get(&ledger_key)
+            .cloned()
+            .unwrap_or_default();
+        self.create_context(
+            active_orders,
+            Vec::new(),
+            Vec::new(),
+            None,
+            previous_cash,
+            previous_account_metrics,
+            sessions,
+            order_ledger,
+            None,
+        )
+    }
+
     pub(crate) fn create_context(
         &mut self,
         active_orders: Arc<Vec<Order>>,
@@ -3246,6 +3287,50 @@ mod lifecycle_tests {
         assert_eq!(
             lifecycle_timers(&engine)[0],
             (sh(1, 4, 9, 15) - 1, "pre_open|2024-01-04".to_string())
+        );
+    }
+
+    #[test]
+    fn prestart_context_reads_account_without_touching_engine_state() {
+        let mut engine = Engine::new();
+        engine.set_cash(123_456.0);
+        let slots_before = engine.strategy_slots.len();
+        let contexts_before = engine.strategy_contexts.len();
+
+        let ctx = engine.build_prestart_context();
+
+        assert_eq!(ctx.cash, rust_decimal::Decimal::from(123_456));
+        assert_eq!(ctx.account_equity, 123_456.0);
+        assert!(ctx.positions.is_empty());
+        // 只读: 不建槽位、不留上下文、不登记订单台账、不解析交易日
+        assert_eq!(engine.strategy_slots.len(), slots_before);
+        assert_eq!(engine.strategy_contexts.len(), contexts_before);
+        assert!(engine.order_ledgers.is_empty());
+        assert!(engine.session_resolver.is_none());
+        assert_eq!(
+            engine.state.portfolio.cash,
+            rust_decimal::Decimal::from(123_456)
+        );
+    }
+
+    #[test]
+    fn prestart_context_reflects_restored_positions() {
+        let mut engine = Engine::new();
+        engine.set_cash(50_000.0);
+        std::sync::Arc::make_mut(&mut engine.state.portfolio.positions)
+            .insert("AAA".to_string(), rust_decimal::Decimal::from(1000));
+        std::sync::Arc::make_mut(&mut engine.state.portfolio.available_positions)
+            .insert("AAA".to_string(), rust_decimal::Decimal::from(1000));
+
+        let ctx = engine.build_prestart_context();
+
+        assert_eq!(
+            ctx.positions.get("AAA"),
+            Some(&rust_decimal::Decimal::from(1000))
+        );
+        assert_eq!(
+            ctx.available_positions.get("AAA"),
+            Some(&rust_decimal::Decimal::from(1000))
         );
     }
 

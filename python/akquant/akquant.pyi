@@ -1338,6 +1338,17 @@ class Engine:
         """
         ...
 
+    def prestart_context(self) -> StrategyContext:
+        r"""
+        开跑前的账户视图.
+
+        按引擎此刻的资金、持仓生成一份只读上下文, 供策略在 on_start 里读账户
+        (此时第一个行情事件还没到, 策略上没有绑定上下文)。调用不改变引擎状态。
+
+        :return: 只用于读取的 StrategyContext
+        """
+        ...
+
     def add_data(self, feed: DataFeed) -> None:
         r"""
         添加数据源.

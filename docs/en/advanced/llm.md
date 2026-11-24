@@ -310,8 +310,8 @@ run_backtest(..., config=BacktestConfig(strategy_config=strategy_config))
     *   **Solution**: Set `warmup_period = N` in class definition or `self.warmup_period = N` in `__init__`.
 
 2.  **"Context not ready"**:
-    *   **Cause**: Called methods requiring Context (like `get_history`, `buy`) inside `__init__`.
-    *   **Solution**: Move logic to `on_start` or `on_bar`.
+    *   **Cause**: Placing orders (`buy`, `order_target_percent`, ...) inside `__init__` or `on_start`, or reading the account inside `__init__`. The engine context is bound at the first market-data callback.
+    *   **Solution**: Move order logic to `on_bar` or another market-data callback. Reading the account and positions (`get_account()`, `self.cash`, `self.equity`, `get_position()`) is fine in `on_start`; a fresh run sees the initial cash.
 
 3.  **Order Rejected**:
     *   **Cause**: Insufficient funds, hitting risk limits, or outside trading hours.
