@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.98] - 2026-11-24
+
+> 规则版本不变（2.5.2），撮合结果不变。本版只动策略参数声明：新增 `StrParam`；`ChoiceParam` 开始校验取值，给它传了 `choices` 以外的值、或默认值不在 `choices` 内的策略，现在会报错（见下文）。
+
 ### Added
 - **新增 `StrParam`，声明字符串参数**：`note = StrParam("对照组", title="备注")`，读取用 `self.params.note`。此前没有字符串参数的声明入口。取值为任意字符串，首尾空白会被去掉；不做类型转换，传数字会报错。导出的参数 schema 是不带 `enum` 的 `string`。只允许固定的几个取值时仍用 `ChoiceParam`。
 
