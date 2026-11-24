@@ -1249,6 +1249,9 @@ impl ExecutionClient for SimulatedExecutionClient {
         // 事件上按竞价价统一撮合(与本事件的常规撮合同一次调用, 排在它之前)。
         // 模拟 tick 只在连续竞价时段生成, 不参与竞价: 结束开盘竞价的仍是随后的
         // K 线(与关闭开关时同一时刻), 否则 K 线通道的竞价单会在模拟 tick 的时刻成交。
+        // 这一行为 S15 不变量而设: golden 场景 stock_minute_auction 在"开关打开、
+        // on_tick 为空"下, 09:25 竞价价的统一撮合须落在 09:31 的 K 线上(而不是其前
+        // 4 秒的模拟 tick 上)。
         let quote = match event {
             Event::Bar(b) => Some((b.symbol.as_str(), b.timestamp, b.close, b.volume, false)),
             Event::Tick(_) if self.simulated_ticks => None,

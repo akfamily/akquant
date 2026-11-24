@@ -362,6 +362,10 @@ pub struct Engine {
     /// 行情源里不允许有真实 tick, 于是"当前事件是 tick"即"当前事件是模拟 tick"
     /// (见 [`Engine::on_simulated_tick`])。不进存档。
     pub(crate) simulate_ticks: bool,
+    /// simulate_ticks: 在模拟 tick 上创建、终态尚未派发给策略的订单(tick 通道里
+    /// 未了结的事)。为空时模拟 tick 步不派发订单回调(spec S8, 见
+    /// [`Engine::hold_order_events_on_step`])。不进存档。
+    pub(crate) sim_tick_open_orders: HashSet<String>,
     /// 因不在 `symbol_whitelist` 内而被 `pipeline/stages/data.rs` 丢弃的事件数.
     ///
     /// 只计数、不逐事件打日志(那会淹没输出) —— 由 `Engine::run` 在会话结束时
@@ -859,6 +863,13 @@ impl Engine {
     #[inline]
     pub(crate) fn on_simulated_tick(&self) -> bool {
         self.simulate_ticks && matches!(self.current_event, Some(Event::Tick(_)))
+    }
+
+    /// 本步(模拟 tick)是否把订单回调留到下一步: tick 通道没有未了结的订单时不派发,
+    /// `on_tick` 为空的策略的订单回调于是永远落在 K 线步或定时器步(spec S8)。
+    #[inline]
+    pub(crate) fn hold_order_events_on_step(&self) -> bool {
+        self.on_simulated_tick() && self.sim_tick_open_orders.is_empty()
     }
 
     pub(crate) fn current_event_timestamp(&self) -> Option<i64> {
@@ -2551,6 +2562,13 @@ impl Engine {
             previous_cash,
             previous_account_metrics,
         )?;
+        if self.hold_order_events_on_step() {
+            // 订单回调与到期回调都留到下一步(每步列表由 StrategyProcessor 保留);
+            // 到期事件在引擎侧保留到下次日终结算, 下一步照常送达(Python 侧按键去重)。
+            let mut ctx_mut = py_ctx.borrow_mut(py);
+            ctx_mut.hold_order_events = true;
+            ctx_mut.recent_expiry_events.clear();
+        }
         let pending_plans = strategy.invoke(py, callback, &py_ctx)?;
         let (new_orders, new_timers, canceled_ids) = Self::take_context_outputs(py, &py_ctx);
         Ok((new_orders, new_timers, canceled_ids, pending_plans))

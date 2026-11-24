@@ -693,6 +693,7 @@ impl Engine {
             bar_count: 0,
             symbol_whitelist: None,
             simulate_ticks: false,
+            sim_tick_open_orders: HashSet::new(),
             whitelist_filtered_event_count: 0,
             progress_total_steps: 0,
             progress_bar: None,

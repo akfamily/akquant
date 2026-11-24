@@ -448,3 +448,188 @@ def test_order_from_on_tick_is_never_matched_by_a_bar() -> None:
     assert strategy.trigger is not None
     # 只有 on_bar 里那一笔买入; 限价单始终没有成交。
     assert len([f for f in strategy.fills if f[0] == "buy"]) == 1
+
+
+class _MarketableLimit(_TickLane):
+    """在第 4 根的最低价 tick(12.8)上下买入限价 13.0: 当场可成交."""
+
+    def act(self, tick: Tick) -> None:
+        self.buy(tick.symbol, 100, price=13.0)
+
+
+def test_marketable_limit_from_on_tick_fills_at_that_tick_price() -> None:
+    """当场可成交的限价单按该 tick 的价格成交(不是限价)."""
+    strategy = _MarketableLimit()
+
+    _run(strategy, _frame(8), simulate_ticks=True)
+
+    assert strategy.trigger is not None
+    buys = [f for f in strategy.fills if f[0] == "buy"]
+    assert len(buys) == 2
+    assert buys[1] == ("buy", strategy.trigger[0], pytest.approx(12.8))
+
+
+class _StopLimit(_TickLane):
+    """在第 4 根的开盘 tick 上挂卖出止损限价单(触发价 12.9)."""
+
+    at = (4, 0)
+    limit = 12.7
+    trigger_at = 12.9
+
+    def act(self, tick: Tick) -> None:
+        self.sell(tick.symbol, 1000, price=self.limit, trigger_price=self.trigger_at)
+
+
+def test_stop_limit_fills_at_the_triggering_tick_price() -> None:
+    """止损限价单被触发的那个 tick 上按 tick 价成交(满足限价时), 不按限价.
+
+    按限价 12.7 成交会低于这根 K 线的最低价 12.8。
+    """
+    strategy = _StopLimit()
+
+    _run(strategy, _frame(8), simulate_ticks=True)
+
+    assert strategy.trigger is not None
+    sells = [f for f in strategy.fills if f[0] == "sell"]
+    assert sells == [("sell", strategy.trigger[0] + _SEC, pytest.approx(12.8))]
+
+
+class _StopLimitRests(_StopLimit):
+    limit = 12.85
+
+
+def test_triggered_stop_limit_not_marketable_rests_as_limit() -> None:
+    """触发的 tick(12.8)不满足限价 12.85 时不成交, 之后按挂着的限价单撮合."""
+    strategy = _StopLimitRests()
+
+    _run(strategy, _frame(8), simulate_ticks=True)
+
+    assert strategy.trigger is not None
+    sells = [f for f in strategy.fills if f[0] == "sell"]
+    # 下一个 tick 是最高价 13.6, 越过限价 12.85, 按限价成交。
+    assert sells == [("sell", strategy.trigger[0] + 2 * _SEC, pytest.approx(12.85))]
+
+
+# ---------------------------------------------------------------------------
+# 订单回调的派发步(S8): 模拟 tick 步只在 tick 通道有未了结订单时派发
+# ---------------------------------------------------------------------------
+
+
+class _TradeReactor(Strategy):
+    """没有 on_tick; 第 2 根 on_bar 买入, 对买入成交在 on_trade 里卖出 100 股."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bars_seen = 0
+        self.sold = False
+        self.trade_times: List[int] = []
+        self.order_log: List[Tuple[str, str, int]] = []
+
+    def on_bar(self, bar: Bar) -> None:
+        self.bars_seen += 1
+        if self.bars_seen == 2:
+            self.buy(bar.symbol, 1000)
+
+    def on_order(self, order: Any) -> None:
+        assert self.ctx is not None
+        self.order_log.append(
+            (str(order.side), str(order.status), int(self.ctx.current_time))
+        )
+
+    def on_trade(self, trade: Any) -> None:
+        assert self.ctx is not None
+        self.trade_times.append(int(self.ctx.current_time))
+        if not self.sold and str(trade.side).endswith("Buy"):
+            self.sold = True
+            self.sell(trade.symbol, 100)
+
+
+@pytest.mark.parametrize(
+    "fill_policy", [aq.NextOpen, aq.CurrentClose, aq.NextClose, aq.NextAverage]
+)
+def test_order_callbacks_without_tick_orders_match_switch_off(
+    fill_policy: Any,
+) -> None:
+    """不在模拟 tick 上下单的策略: 订单回调的时刻与关闭开关时相同.
+
+    回调里的单属 K 线通道。
+    """
+    frame = _frame(8)
+    off = _TradeReactor()
+    result_off = _run(off, frame, fill_policy=fill_policy())
+    on = _TradeReactor()
+    result_on = _run(on, frame, fill_policy=fill_policy(), simulate_ticks=True)
+
+    assert off.sold, "基线应在 on_trade 里卖出"
+    assert _fingerprint(result_on) == _fingerprint(result_off)
+    assert on.trade_times == off.trade_times
+    assert on.order_log == off.order_log
+    assert list(result_on.orders_df["created_at"]) == list(
+        result_off.orders_df["created_at"]
+    )
+
+
+class _BuyBackOnTrade(_MarketStop):
+    """on_tick 在最低价 tick 上市价卖出; 对这笔卖出成交在 on_trade 里市价买回 100 股."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bought_back = False
+
+    def on_trade(self, trade: Any) -> None:
+        super().on_trade(trade)
+        if self.fills[-1][0] == "sell" and not self.bought_back:
+            self.bought_back = True
+            self.buy(trade.symbol, 100)
+
+
+def test_callback_of_tick_order_is_dispatched_on_the_next_tick() -> None:
+    """模拟 tick 上下的单, 回调在下一个 tick 步派发.
+
+    回调里下的单在那个 tick 上当场成交。
+    """
+    strategy = _BuyBackOnTrade()
+
+    _run(strategy, _frame(8), simulate_ticks=True)
+
+    assert strategy.trigger is not None
+    buys = [f for f in strategy.fills if f[0] == "buy"]
+    # 第一笔是 on_bar 里的买入; 买回在最低价之后的 tick(最高价 13.6)上成交。
+    assert len(buys) == 2
+    assert buys[1] == ("buy", strategy.trigger[0] + _SEC, pytest.approx(13.6))
+
+
+class _T1SellOnTick(_TickLane):
+    """T+1 下当日买入后, 在模拟 tick 上卖出当日买入的股票."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.rejects: List[str] = []
+
+    def act(self, tick: Tick) -> None:
+        self.sell(tick.symbol, 1000)
+
+    def on_order(self, order: Any) -> None:
+        if str(order.status).endswith("Rejected"):
+            self.rejects.append(str(order.reject_reason))
+
+
+@pytest.mark.parametrize(
+    "fill_policy", [aq.NextOpen, aq.CurrentClose, aq.NextClose, aq.NextAverage]
+)
+def test_tick_order_is_risk_checked_with_its_own_fill_policy(fill_policy: Any) -> None:
+    """模拟 tick 上的单在提交时按改写后的成交模式过风控: T+1 卖单当场被拒."""
+    strategy = _T1SellOnTick()
+
+    _run(
+        strategy,
+        _frame(8),
+        fill_policy=fill_policy(),
+        simulate_ticks=True,
+        t_plus_one=True,
+    )
+
+    assert strategy.trigger is not None
+    assert len(strategy.rejects) == 1
+    assert "Insufficient available position" in strategy.rejects[0]
+    assert "at execution" not in strategy.rejects[0]

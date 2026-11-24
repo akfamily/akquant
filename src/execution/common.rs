@@ -450,6 +450,8 @@ impl CommonMatcher {
                 }
 
                 // 1. Check Trigger
+                // 本 tick 刚由止损触发: 转成的限价单不算"之前挂着的", 见下面限价口径。
+                let triggered_now = order.trigger_price.is_some();
                 if let Some(trigger_price) = order.trigger_price {
                     let triggered = match order.side {
                         OrderSide::Buy => tick.price >= trigger_price,
@@ -482,9 +484,11 @@ impl CommonMatcher {
                             }
                             if execute_price.is_some() {
                                 // 真实 tick 按成交价成交。模拟 tick 上: 本 tick 刚下
-                                // 的可成交限价单按 tick 价; 之前挂着的被越过, 按限价。
-                                let resting =
-                                    ctx.simulated_ticks && order.created_at < tick.timestamp;
+                                // 的、或本 tick 刚由止损触发转成的可成交限价单按 tick
+                                // 价; 之前就挂着的限价单被越过, 按限价。
+                                let resting = ctx.simulated_ticks
+                                    && !triggered_now
+                                    && order.created_at < tick.timestamp;
                                 if !resting {
                                     execute_price = Some(tick.price);
                                 }

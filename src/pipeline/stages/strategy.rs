@@ -108,6 +108,8 @@ impl Processor for StrategyProcessor {
 
             // 带所属策略的定时器只调所属槽位的 on_timer; 其余槽位只刷订单回调。
             let timer_target = timer_target_slot(engine, &event);
+            // simulate_ticks: 本步(模拟 tick)是否把订单回调留到下一步(spec S8)。
+            let hold = engine.hold_order_events_on_step();
 
             for slot_index in 0..slot_count {
                 let deliver_timer = timer_target.is_none_or(|target| target == slot_index);
@@ -153,22 +155,46 @@ impl Processor for StrategyProcessor {
                 let bars = std::mem::take(&mut engine.pending_window_bars);
                 engine.dispatch_window_bars(py, strategy, bars)?;
             }
-            engine.state.order_manager.current_step_trades.clear();
-            engine
-                .state
-                .order_manager
-                .current_step_rejected_orders
-                .clear();
-            engine
-                .state
-                .order_manager
-                .current_step_expired_orders
-                .clear();
-            engine
-                .state
-                .order_manager
-                .current_step_finalized_orders
-                .clear();
+            // 有槽位把订单回调留到了下一步(回调里没下单): 每步列表原样留给下一步。
+            // 已派发过的槽位下一步再看到同样的内容不会重复回调(订单账本按状态指纹
+            // 与成交指纹去重)。
+            let held = hold
+                && engine
+                    .strategy_contexts
+                    .iter()
+                    .flatten()
+                    .any(|ctx| ctx.borrow(py).orders.is_empty());
+            if !held {
+                engine.state.order_manager.current_step_trades.clear();
+                engine
+                    .state
+                    .order_manager
+                    .current_step_rejected_orders
+                    .clear();
+                engine
+                    .state
+                    .order_manager
+                    .current_step_expired_orders
+                    .clear();
+                engine
+                    .state
+                    .order_manager
+                    .current_step_finalized_orders
+                    .clear();
+            }
+            // 本步派发过订单回调: 已离开在途的 tick 通道订单, 终态已随本步送达。
+            if !hold && !engine.sim_tick_open_orders.is_empty() {
+                let active: std::collections::HashSet<&str> = engine
+                    .state
+                    .order_manager
+                    .active_orders
+                    .iter()
+                    .map(|o| o.id.as_str())
+                    .collect();
+                engine
+                    .sim_tick_open_orders
+                    .retain(|id| active.contains(id.as_str()));
+            }
         }
         Ok(ProcessorResult::Next)
     }
