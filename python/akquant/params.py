@@ -6,9 +6,16 @@
 
 import datetime as dt
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Mapping, Sequence, cast
+from typing import TYPE_CHECKING, Annotated, Any, Mapping, Sequence, cast
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    model_validator,
+)
 
 
 class ParamModel(BaseModel):
@@ -131,6 +138,26 @@ def BoolParam(
     return ParamSpec(bool, Field(default, title=title, description=description))
 
 
+def StrParam(
+    default: str,
+    *,
+    title: str | None = None,
+    description: str | None = None,
+) -> ParamSpec:
+    """
+    声明字符串参数字段.
+
+    取值为任意字符串, 首尾空白会被去掉; 只允许固定的几个取值时用
+    ``ChoiceParam``。
+
+    :param default: 默认值
+    :param title: 展示标题
+    :param description: 描述
+    :return: 参数规格
+    """
+    return ParamSpec(str, Field(default, title=title, description=description))
+
+
 def ChoiceParam(
     default: str,
     *,
@@ -139,24 +166,48 @@ def ChoiceParam(
     description: str | None = None,
 ) -> ParamSpec:
     """
-    声明枚举参数字段.
+    声明单选参数字段.
 
-    :param default: 默认值
-    :param choices: 可选值列表
+    取值只能是 ``choices`` 里的某一项(首尾空白先去掉再比较), 否则校验报错;
+    ``choices`` 同时写进参数 schema 的 ``enum``, 供前端渲染下拉框。
+
+    :param default: 默认值, 必须是 ``choices`` 里的一项
+    :param choices: 可选值列表, 每一项都是字符串
     :param title: 展示标题
     :param description: 描述
     :return: 参数规格
-    :raises ValueError: choices 为空
+    :raises TypeError: choices 是单个字符串, 或其中有非字符串的项
+    :raises ValueError: choices 为空, 或 default 不在 choices 内
     """
-    if not choices:
+    if isinstance(choices, str):
+        raise TypeError(
+            f"choices 应为字符串列表, 收到单个字符串 {choices!r}; "
+            f"请写成 choices=[{choices!r}]"
+        )
+    allowed = list(choices)
+    if not allowed:
         raise ValueError("choices cannot be empty")
+    non_str = [item for item in allowed if not isinstance(item, str)]
+    if non_str:
+        raise TypeError(
+            f"choices 的每一项都必须是字符串, 收到 {non_str!r}; "
+            "ChoiceParam 的取值是字符串, 数字请写成 '1' 这样的形式"
+        )
+    if default not in allowed:
+        raise ValueError(f"默认值 {default!r} 不在 choices {allowed!r} 内")
+
+    def _check_choice(value: str) -> str:
+        if value not in allowed:
+            raise ValueError(f"取值必须是 {allowed!r} 之一, 收到 {value!r}")
+        return value
+
     return ParamSpec(
-        str,
+        cast(type, Annotated[str, AfterValidator(_check_choice)]),
         Field(
             default,
             title=title,
             description=description,
-            json_schema_extra={"enum": list(choices)},
+            json_schema_extra={"enum": list(allowed)},
         ),
     )
 
@@ -170,12 +221,17 @@ def DateRangeParam(
     """
     声明日期区间参数字段.
 
-    :param default: 默认值
+    外部以 ``{"start": ..., "end": ...}`` 传值, 读出来是 ``DateRange``。不给
+    默认值时参数可空: 默认 ``None``, 外部也可以显式传 ``None``, 策略里用之前要
+    判空; 给了默认值则恒有值。
+
+    :param default: 默认值; ``None`` 表示参数可空
     :param title: 展示标题
     :param description: 描述
     :return: 参数规格
     """
-    return ParamSpec(DateRange, Field(default, title=title, description=description))
+    python_type = DateRange if default is not None else cast(type, DateRange | None)
+    return ParamSpec(python_type, Field(default, title=title, description=description))
 
 
 def ListParam(
@@ -281,7 +337,7 @@ _MAX_LISTED_FIELDS = 20
 def _migration_hint(sample: str) -> str:
     """拼出「怎么改」的那一句, 供报错与告警共用.
 
-    不点名具体参数类型——原参数可能是 int/float/list 等任意类型, 硬编码
+    不点名具体参数类型——原参数可能是 int/float/str/list 等任意类型, 硬编码
     ``IntParam`` 会对 ``symbols``(list)、``stop_loss_pct``(float) 这类用户给出
     错误指引, 故这里枚举可选项, 由用户按实际类型挑选。
 
@@ -290,7 +346,8 @@ def _migration_hint(sample: str) -> str:
     """
     return (
         f"迁移: 类体按类型声明 {sample} = IntParam(默认值) / FloatParam(默认值) / "
-        f"BoolParam(默认值) / ChoiceParam(默认值, choices=[...]) / "
+        f"BoolParam(默认值) / StrParam(默认值) / "
+        f"ChoiceParam(默认值, choices=[...]) / "
         f"ListParam(默认值) 等之一, 读取处 self.{sample} -> self.params.{sample}; "
         f"详见 {PARAM_DOC_ANCHOR}"
     )
@@ -397,6 +454,7 @@ __all__ = [
     "IntParam",
     "FloatParam",
     "BoolParam",
+    "StrParam",
     "ChoiceParam",
     "DateRangeParam",
     "ListParam",

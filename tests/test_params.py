@@ -1,5 +1,7 @@
 import datetime as dt
+from typing import Annotated, get_args, get_origin
 
+import akquant
 import pytest
 from akquant import Strategy
 from akquant.params import (
@@ -13,6 +15,7 @@ from akquant.params import (
     ListParam,
     ParamModel,
     ParamSpec,
+    StrParam,
     legacy_init_warning_message,
     unknown_param_message,
 )
@@ -31,8 +34,13 @@ def test_field_helpers_carry_python_types() -> None:
     """Test all field helpers carry correct python_type."""
     assert FloatParam(1.0).python_type is float
     assert BoolParam(True).python_type is bool
-    assert ChoiceParam("a", choices=["a", "b"]).python_type is str
-    assert DateRangeParam().python_type is DateRange
+    assert StrParam("a").python_type is str
+    # ChoiceParam 的类型是「带取值校验的 str」, 底层仍是 str。
+    choice_type = ChoiceParam("a", choices=["a", "b"]).python_type
+    assert get_origin(choice_type) is Annotated
+    assert get_args(choice_type)[0] is str
+    default = DateRange(start=dt.date(2024, 1, 1), end=dt.date(2024, 6, 30))
+    assert DateRangeParam(default=default).python_type is DateRange
 
 
 def test_choice_param_records_enum() -> None:
@@ -198,3 +206,141 @@ def test_list_param_none_default_is_empty_list() -> None:
         tags = ListParam(item_type=str)
 
     assert EmptyStrategy().params.tags == []
+
+
+def test_str_param_default_and_external_value() -> None:
+    """StrParam 声明任意字符串参数, 可由外部传值覆盖."""
+
+    class CodeStrategy(Strategy):
+        code = StrParam("IF2412", title="合约代码")
+
+    assert CodeStrategy().params.code == "IF2412"
+    assert CodeStrategy(code="IC2412").params.code == "IC2412"
+
+
+def test_str_param_strips_surrounding_whitespace() -> None:
+    """表单手输的首尾空格不应带进策略."""
+
+    class CodeStrategy(Strategy):
+        code = StrParam("IF2412")
+
+    assert CodeStrategy(code="  IC2412 ").params.code == "IC2412"
+
+
+def test_str_param_rejects_non_string() -> None:
+    """StrParam 不做隐式类型转换, 数字不会被当成字符串收下."""
+
+    class CodeStrategy(Strategy):
+        code = StrParam("IF2412")
+
+    with pytest.raises(ValidationError):
+        CodeStrategy(code=2412)
+
+
+def test_str_param_schema_is_plain_string() -> None:
+    """StrParam 导出的 schema 是不带 enum 的 string, 前端据此渲染文本框."""
+
+    class CodeStrategy(Strategy):
+        code = StrParam("IF2412", title="合约代码", description="主力合约")
+
+    prop = CodeStrategy.__param_model__.model_json_schema()["properties"]["code"]
+    assert prop == {
+        "default": "IF2412",
+        "description": "主力合约",
+        "title": "合约代码",
+        "type": "string",
+    }
+
+
+def test_str_param_exported_from_package_root() -> None:
+    """StrParam 与其它参数声明函数一样从 akquant 顶层导出."""
+    assert akquant.StrParam is StrParam
+    assert "StrParam" in akquant.__all__
+
+
+def test_choice_param_rejects_value_outside_choices() -> None:
+    """取值不在 choices 内时, 构造策略即报错并列出可选值."""
+
+    class ModeStrategy(Strategy):
+        mode = ChoiceParam("trend", choices=["trend", "revert"])
+
+    with pytest.raises(ValidationError, match="trend.*revert"):
+        ModeStrategy(mode="xxx")
+
+
+def test_choice_param_accepts_listed_value_with_surrounding_whitespace() -> None:
+    """可选值两侧带空格时去掉空格后收下."""
+
+    class ModeStrategy(Strategy):
+        mode = ChoiceParam("trend", choices=["trend", "revert"])
+
+    assert ModeStrategy(mode="revert").params.mode == "revert"
+    assert ModeStrategy(mode="  revert ").params.mode == "revert"
+
+
+def test_choice_param_rejects_default_outside_choices() -> None:
+    """默认值不在 choices 内属于声明错误, 声明处即报错."""
+    with pytest.raises(ValueError, match="zzz"):
+        ChoiceParam("zzz", choices=["a", "b"])
+
+
+def test_choice_param_rejects_bare_string_choices() -> None:
+    """Choices 传成单个字符串会被逐字符拆开, 声明处即拒绝."""
+    with pytest.raises(TypeError):
+        ChoiceParam("a", choices="abc")
+
+
+def test_choice_param_rejects_non_string_choice_items() -> None:
+    """ChoiceParam 的取值是字符串, 非字符串的可选项永远选不中, 声明处即拒绝."""
+    with pytest.raises(TypeError):
+        ChoiceParam("1", choices=["1", 2])  # type: ignore[list-item]
+
+
+def test_choice_param_schema_keeps_enum_and_string_type() -> None:
+    """加上取值校验后, 导出的 schema 不变: string + enum."""
+
+    class ModeStrategy(Strategy):
+        mode = ChoiceParam("trend", choices=["trend", "revert"], title="模式")
+
+    prop = ModeStrategy.__param_model__.model_json_schema()["properties"]["mode"]
+    assert prop == {
+        "default": "trend",
+        "enum": ["trend", "revert"],
+        "title": "模式",
+        "type": "string",
+    }
+
+
+def test_date_range_param_without_default_accepts_none() -> None:
+    """没给默认值时参数可空: 默认 None, 外部显式传 None 也收下."""
+
+    class WindowStrategy(Strategy):
+        window = DateRangeParam(title="统计区间")
+
+    assert WindowStrategy().params.window is None
+    assert WindowStrategy(window=None).params.window is None
+
+
+def test_date_range_param_accepts_mapping_value() -> None:
+    """外部以 {"start": ..., "end": ...} 传值, 读出来是 DateRange."""
+
+    class WindowStrategy(Strategy):
+        window = DateRangeParam()
+
+    window = WindowStrategy(
+        window={"start": "2024-01-01", "end": "2024-03-01"}
+    ).params.window
+    assert window == DateRange(start=dt.date(2024, 1, 1), end=dt.date(2024, 3, 1))
+
+
+def test_date_range_param_with_default_rejects_none() -> None:
+    """给了默认值的区间参数恒有值, 策略里不必判空."""
+
+    class WindowStrategy(Strategy):
+        window = DateRangeParam(
+            default=DateRange(start=dt.date(2024, 1, 1), end=dt.date(2024, 6, 30))
+        )
+
+    assert WindowStrategy().params.window.start == dt.date(2024, 1, 1)
+    with pytest.raises(ValidationError):
+        WindowStrategy(window=None)

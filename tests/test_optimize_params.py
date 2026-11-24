@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 from akquant import Strategy, run_grid_search
 from akquant.optimize import _validate_strategy_param_grid_keys
-from akquant.params import IntParam
+from akquant.params import ChoiceParam, IntParam
 
 
 class OStrat(Strategy):
@@ -28,6 +28,17 @@ def test_out_of_range_value_rejected() -> None:
     """越界候选值应被拒绝."""
     with pytest.raises((TypeError, ValueError)):
         _validate_strategy_param_grid_keys(OStrat, {"fast": [1, 200]})  # 越界
+
+
+def test_choice_value_outside_choices_rejected() -> None:
+    """网格里不在 choices 内的候选值应被拒绝."""
+
+    class ChoiceStrat(Strategy):
+        mode = ChoiceParam("trend", choices=["trend", "revert"])
+
+    _validate_strategy_param_grid_keys(ChoiceStrat, {"mode": ["trend", "revert"]})
+    with pytest.raises((TypeError, ValueError)):
+        _validate_strategy_param_grid_keys(ChoiceStrat, {"mode": ["trend", "xxx"]})
 
 
 def test_mixed_valid_and_unknown_keys_rejected_for_unknown_only() -> None:

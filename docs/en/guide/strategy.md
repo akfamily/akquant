@@ -636,6 +636,75 @@ class MyStrategy(Strategy):
 
 **When `count` exceeds the retained length, the history grows automatically and warns once**: the first time `get_history` / `get_history_df` asks for a larger `count`, the framework grows the retained length to `count` and logs a warning with the value to set; data dropped before the growth cannot be recovered, so the window is complete only from `count` bars later. Call `self.set_history_depth(N)` in `on_start` as the warning suggests (this takes effect in both backtests and live sessions). NaN padding during warmup (not enough data yet) is normal and does not warn. Automatic growth is capped at the larger of 10000 and the `history_depth` / `warmup_period` you declared explicitly: beyond the cap it no longer grows, warns once on its own, and pads with NaN as before, so a `count` that keeps increasing (such as `get_history(self.bars_held)`) cannot grow the buffer without bound in a live session.
 
+### Parameter Declaration {: #param-declaration }
+
+Tunable parameters are declared as inline class fields and read through
+`self.params.<name>`. `self.params` is validated when the strategy is constructed and
+is read-only afterwards.
+
+| Helper | Value | Notes |
+|---|---|---|
+| `IntParam(default, *, ge=None, le=None, title=None, description=None)` | integer | `ge` / `le` are inclusive bounds |
+| `FloatParam(default, *, ge=None, le=None, title=None, description=None)` | float | same as above |
+| `BoolParam(default, *, title=None, description=None)` | boolean | |
+| `StrParam(default, *, title=None, description=None)` | any string | surrounding whitespace is stripped |
+| `ChoiceParam(default, *, choices, title=None, description=None)` | one item of `choices` | single choice; every item is a string |
+| `DateRangeParam(*, default=None, title=None, description=None)` | `DateRange` or `None` | date range with `start` / `end` |
+| `ListParam(default=None, *, item_type=str, title=None, description=None)` | list | `item_type` is the element type |
+
+Arguments after `*` are keyword-only: `ChoiceParam("trend", choices=["trend", "revert"])`
+is correct, while `ChoiceParam("trend", ["trend", "revert"])` raises `TypeError`. The
+same applies to `default` of `DateRangeParam`. `title` is the display name in a UI and
+`description` is a longer explanation.
+
+```python
+from akquant import ChoiceParam, DateRange, DateRangeParam, Strategy, StrParam
+
+
+class RegimeStrategy(Strategy):
+    mode = ChoiceParam("trend", choices=["trend", "revert"], title="Mode")
+    note = StrParam("control", title="Note")
+    window = DateRangeParam(
+        default=DateRange(start="2024-01-01", end="2024-06-30"), title="Trading window"
+    )
+
+    def on_bar(self, bar):
+        # bar.timestamp is an integer (UTC nanoseconds); convert it first
+        today = self.to_local_time(bar.timestamp).date()
+        window = self.params.window
+        if not (window.start <= today <= window.end):
+            return
+        if self.params.mode == "trend":
+            ...  # trend-following logic
+        else:
+            ...  # mean-reversion logic
+```
+
+When passing values from outside, a date range is a mapping with `start` / `end`:
+
+```python
+strategy_params = {
+    "mode": "revert",
+    "note": "treatment",
+    "window": {"start": "2024-02-01", "end": "2024-04-30"},
+}
+```
+
+*   **`StrParam`** accepts any string and does not coerce other types; passing a number
+    raises. Use `ChoiceParam` when only a fixed set of values is allowed.
+*   **`ChoiceParam`** only accepts an item of `choices`; anything else raises when the
+    strategy is constructed (and when a `param_grid` is validated), listing the allowed
+    values. The default must be in `choices` too, otherwise the class definition itself
+    raises. Values are strings, so write numeric options as `"1"`.
+*   **`DateRangeParam`**: a date (`"2024-01-01"`) is read back as `datetime.date` and a
+    date with time (`"2024-01-01 09:30:00"`) as `datetime.datetime`, so compare like with
+    like; an `end` earlier than `start` raises. Without a `default` the parameter is
+    nullable: it defaults to `None` and `None` may be passed explicitly, so check for it
+    before use. With a `default` it always has a value.
+*   **A date-range parameter does not bound the backtest.** It is just a value your
+    strategy reads; the backtest period is set by
+    `run_backtest(start_time=..., end_time=...)`.
+
 ## 5. Orders & Execution
 
 ### 4.1 Order Lifecycle

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **新增 `StrParam`，声明字符串参数**：`note = StrParam("对照组", title="备注")`，读取用 `self.params.note`。此前没有字符串参数的声明入口。取值为任意字符串，首尾空白会被去掉；不做类型转换，传数字会报错。导出的参数 schema 是不带 `enum` 的 `string`。只允许固定的几个取值时仍用 `ChoiceParam`。
+
+### Fixed
+- **`ChoiceParam` 不校验取值，`choices` 以外的值也能传进策略**：`mode = ChoiceParam("trend", choices=["trend", "revert"])` 之后，`strategy_params={"mode": "xxx"}` 此前照常运行，策略里读到的就是 `"xxx"`；`param_grid` 里的候选值同样不查。`choices` 只写进了参数 schema 的 `enum`，与文档“不在 `choices` 内会直接报错”的说法不符。现在取值必须是 `choices` 里的一项（首尾空白先去掉再比较），否则在构造策略、校验 `param_grid` 时报错并列出可选值。声明本身也一并检查，以下三种写法在类定义时就报错：默认值不在 `choices` 内（`ValueError`）；`choices` 写成单个字符串，如 `choices="abc"`，此前会被逐字符拆成三个选项（`TypeError`）；`choices` 里有非字符串的项（`TypeError`），取值是字符串，这样的项永远选不中，数字选项请写成 `"1"`。导出的参数 schema 不变。
+- **`DateRangeParam` 不给默认值时，显式传 `None` 报错**：`window = DateRangeParam()` 的默认值是 `None`，但 `strategy_params={"window": None}` 会报“Input should be a valid dictionary or instance of DateRange”。现在不给默认值的区间参数可空，默认 `None`，也接受显式的 `None`；给了默认值的仍然恒有值，传 `None` 报错。可空参数导出的 schema 由 `{"$ref": ...}` 变为 `{"anyOf": [{"$ref": ...}, {"type": "null"}]}`，按 `$ref` 直接取类型的前端需要适配；带默认值的不变。
+
+### Docs
+- **策略指南补上“参数类型一览”**（`docs/zh/guide/strategy.md` 的“参数声明”一节，英文版同步新增该节）：列出七个声明函数的签名与取值，写明 `*` 之后的参数只能按关键字传（`ChoiceParam("trend", ["trend", "revert"])` 会报 `TypeError`），并给出字符串、单选、日期区间三种参数的完整示例。同时写明两点容易误解的地方：日期区间参数只是策略自己读取的值，不会限制回测区间；`bar.timestamp` 是 UTC 纳秒整数，取日期要先经 `self.to_local_time()`。大模型提示词模板（`docs/*/advanced/llm.md`）里把 `bar.timestamp` 写成 `pd.Timestamp` 的错误一并改正。
+
 ## [0.3.97] - 2026-11-24
 
 > 规则版本 2.5.1 → 2.5.2：公司行动的浮点比例按十进制取值、目标仓位为 0 时卖出零股、含 `Tick` 的列表输入登记数据里的标的（见下文）。带送转、拆股的回测，以及传 `Tick` 列表且未传 `symbols` 的回测结果会变；其余回测不变。另含一处 CTP 实盘的下单方向修复。

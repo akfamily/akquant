@@ -30,8 +30,8 @@ _INDICATOR_NAME_RE = re.compile(r"[Ii]ndicator '([^']+)'")
 HINT_RULES: Tuple[Tuple[Tuple[str, ...], str], ...] = (
     (
         ("Unknown strategy param(s)",),
-        "参数要在类体里用 IntParam / FloatParam / BoolParam / ChoiceParam / "
-        "ListParam 声明, 读取用 self.params.<名>",
+        "参数要在类体里用 IntParam / FloatParam / BoolParam / StrParam / "
+        "ChoiceParam / ListParam 声明, 读取用 self.params.<名>",
     ),
     (
         (
