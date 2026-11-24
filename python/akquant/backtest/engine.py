@@ -5142,7 +5142,7 @@ def run_backtest(
         # tick 事件计数每次回测清零(实例复用时不带上一次的计数); 上一次中途失败
         # 留下的待还原最新价一并丢掉。
         current_strategy.__dict__["_tick_event_count"] = 0
-        current_strategy.__dict__.pop("_sim_tick_saved_prices", None)
+        current_strategy.__dict__.pop("_sim_tick_saved_state", None)
     if stream_on_event is not None:
         cast(Any, engine).set_stream_callback(stream_on_event)
         cast(Any, engine).set_stream_options(

@@ -424,6 +424,9 @@ class Strategy:
     _framework_history_cutoff_ns: Optional[int]
     _framework_freq: Optional[str]
     _framework_dual_stream: Union[bool, frozenset[str]]
+    #: simulate_ticks 是否打开(回测入口每次写实例属性); 其余入口(实盘、续跑)取这里的
+    #: 缺省值, 热路径只读一个布尔属性
+    _framework_simulated_ticks: bool = False
     _framework_use_previous_account_snapshot: bool
     _framework_previous_account_details: Optional[Dict[str, float]]
     # 开跑前的账户视图: on_start / on_resume 早于第一个行情事件, ctx 还没绑定,

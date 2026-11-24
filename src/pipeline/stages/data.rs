@@ -112,7 +112,8 @@ impl DataProcessor {
             if session != TradingSession::Continuous {
                 continue;
             }
-            for tick in super::sim_ticks::simulated_ticks(bar, self.last_timestamp) {
+            let floor = sim_tick_floor(engine, bar.timestamp, self.last_timestamp)?;
+            for tick in super::sim_ticks::simulated_ticks(bar, floor) {
                 ticks.push((tick, session));
             }
         }
@@ -955,6 +956,26 @@ impl Processor for DataProcessor {
             }
         }
     }
+}
+
+/// simulate_ticks: 传给 `simulated_ticks` 的"上一个行情事件时间"。K 线晚于当前交易日
+/// 收盘(或尚未开过交易日)时取它与这根 K 线所属交易日区间起点(上一交易日收盘)的较大者,
+/// 四个模拟 tick 于是都严格晚于该收盘, 不会落进前一交易日、夹在它的日终结算前后
+/// (spec S5)。取不到区间(日历越界)时退回当前交易日的收盘时刻。
+fn sim_tick_floor(engine: &mut Engine, bar_ts: i64, last_ts: i64) -> PyResult<i64> {
+    let current_end = engine.current_day_span.map(|(_, end)| end);
+    if current_end.is_some_and(|end| bar_ts <= end) {
+        return Ok(last_ts);
+    }
+    engine.ensure_session_resolver()?;
+    let resolver = engine.session_resolver.as_ref().expect("刚构造");
+    let day_start = resolver
+        .session_trading_day(bar_ts)
+        .and_then(|day| resolver.session_day_span(day))
+        .map(|(start, _)| start)
+        .ok()
+        .or(current_end);
+    Ok(day_start.map_or(last_ts, |start| last_ts.max(start)))
 }
 
 /// simulate_ticks: 本组第一根 K 线到来时, 把模拟 tick 写过的最新价还原成它们之前

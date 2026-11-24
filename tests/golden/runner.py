@@ -79,6 +79,7 @@ def futures_night_weekend_config() -> Dict[str, Any]:
 
 # 六个 golden 场景: (test_name, strategy_cls, data_file, config)。基线比对、流式一致性、
 # simulate_ticks 不变量三个套件共用这一份, 不各自抄配置。
+# 其中的配置对象(dict、InstrumentConfig)在套件间共用, 必须当作只读, 不得原地修改。
 _SCENARIOS: List[Tuple[str, Any, str, Dict[str, Any]]] = [
     # Stock T+1: Buy Day 1, Sell Day 2 (OK), Buy Day 3, Sell Day 3 (Fail),
     # Sell Day 4 (OK)

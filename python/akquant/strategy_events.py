@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
 
@@ -154,25 +154,34 @@ def _position_for_holding_bars(
     return float(ctx.get_position(symbol))
 
 
-def _restore_last_prices(strategy: Any, saved: Dict[str, Optional[float]]) -> None:
-    """把模拟 tick 写过的最新价还原成它们之前的值(之前没有的删去)."""
+#: 本组模拟 tick 写之前的(各标的最新价, 组合快照去重状态, 组合脏标记), 见 on_tick_event
+_SimTickSaved = Tuple[Dict[str, Optional[float]], Any, Any]
+
+
+def _restore_before_simulated_ticks(strategy: Any, saved: _SimTickSaved) -> None:
+    """把模拟 tick 写过的最新价与组合快照去重状态还原成本组 tick 之前的值."""
+    saved_prices, portfolio_state, portfolio_dirty = saved
     prices = strategy._last_prices
-    for symbol, price in saved.items():
+    for symbol, price in saved_prices.items():
         if price is None:
             prices.pop(symbol, None)
         else:
             prices[symbol] = price
+    strategy._framework_last_portfolio_state = portfolio_state
+    strategy._framework_portfolio_dirty = portfolio_dirty
 
 
 def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:
     """引擎调用的 Bar 回调 (Internal)."""
     ensure_framework_state(strategy)
     strategy.ctx = ctx
-    # simulate_ticks: 本组第一根 K 线到来时还原模拟 tick 写过的最新价(见
-    # on_tick_event), 订单回调与 on_bar 里按最新价定量时与关闭开关时相同。
-    saved_prices = strategy.__dict__.pop("_sim_tick_saved_prices", None)
-    if saved_prices:
-        _restore_last_prices(strategy, saved_prices)
+    # simulate_ticks: 本组第一根 K 线到来时还原模拟 tick 写过的最新价与组合快照去重
+    # 状态(见 on_tick_event): 订单回调、on_bar 里按最新价定量与 K 线步的
+    # on_portfolio_update 都与关闭开关时相同。
+    if strategy._framework_simulated_ticks:
+        saved = strategy.__dict__.pop("_sim_tick_saved_state", None)
+        if saved is not None:
+            _restore_before_simulated_ticks(strategy, saved)
     flush_pending_schedules(strategy)
     register_cross_section_timers(strategy)
     strategy._last_event_type = "bar"
@@ -264,7 +273,7 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
     """引擎调用的 Tick 回调 (Internal)."""
     ensure_framework_state(strategy)
     strategy.ctx = ctx
-    simulated = bool(getattr(strategy, "_framework_simulated_ticks", False))
+    simulated = strategy._framework_simulated_ticks
     if not simulated:
         # 模拟 tick 上不刷: on_start 里登记的定时任务按首根 K 线跳过已过的时点,
         # 与关闭开关时相同(模拟 tick 早于它所属的 K 线)。
@@ -284,6 +293,18 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
     if _is_before_active_start(strategy, int(tick.timestamp)):
         return
 
+    if simulated:
+        # 记下本组模拟 tick 改写之前的最新价与组合快照去重状态(状态每组只记第一个
+        # tick 之前的), 本组第一根 K 线到来时还原(on_bar_event)。
+        saved = strategy.__dict__.get("_sim_tick_saved_state")
+        if saved is None:
+            saved = (
+                {},
+                getattr(strategy, "_framework_last_portfolio_state", None),
+                getattr(strategy, "_framework_portfolio_dirty", True),
+            )
+            strategy.__dict__["_sim_tick_saved_state"] = saved
+        saved[0].setdefault(tick.symbol, previous_price)
     current_pos = ctx.get_position(tick.symbol)
     if current_pos != 0 and previous_price is not None and previous_price != tick.price:
         mark_portfolio_dirty(strategy)
@@ -291,10 +312,6 @@ def on_tick_event(strategy: Any, tick: Tick, ctx: StrategyContext) -> None:
     _drive_local_stops(strategy, tick.symbol, tick.price)
     if hasattr(strategy, "_update_incremental_indicators"):
         strategy._update_incremental_indicators(tick)
-    if simulated:
-        # 记下模拟 tick 改写之前的最新价, 本组第一根 K 线到来时还原(on_bar_event)。
-        saved = strategy.__dict__.setdefault("_sim_tick_saved_prices", {})
-        saved.setdefault(tick.symbol, previous_price)
     strategy._last_prices[tick.symbol] = tick.price
     dispatch_portfolio_update(strategy)
     call_user_callback(strategy, "on_tick", tick, payload=tick)

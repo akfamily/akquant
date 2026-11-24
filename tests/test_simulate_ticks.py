@@ -1196,3 +1196,124 @@ def test_on_start_timers_are_registered_against_the_first_bar() -> None:
     # 首日 09:30:58 早于首根 K 线(09:31), 跳过; 次日照常触发。
     assert off.fired == [int(pd.Timestamp("2024-01-03 09:30:58", tz=_TZ).value)]
     assert on.fired == off.fired
+
+
+def _midnight_boundary() -> pd.DataFrame:
+    """全天连续时段下, 后一交易日的第一根 K 线打在前一交易日收盘(0 点)后 2 秒."""
+    stamps = [
+        "2024-01-02 10:00:00",
+        "2024-01-02 23:58:00",
+        "2024-01-03 00:00:02",
+        "2024-01-03 10:00:00",
+        "2024-01-04 10:00:00",
+    ]
+    return pd.DataFrame(
+        {
+            "timestamp": pd.to_datetime(stamps).tz_localize(_TZ),
+            "symbol": _SYMBOL,
+            "open": 10.0,
+            "high": 10.5,
+            "low": 9.5,
+            "close": 10.2,
+            "volume": 100.0,
+        }
+    )
+
+
+class _BoundaryProbe(Strategy):
+    """第 1 根买入 1000 股; 收盘后回调里记下交易日与权益."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bought = False
+        self.after: List[Tuple[str, float]] = []
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.bought:
+            self.bought = True
+            self.buy(bar.symbol, 1000)
+
+    def on_after_trading(self, trading_date: Any, timestamp: int) -> None:
+        self.after.append((str(trading_date), round(float(self.equity), 6)))
+
+
+class _BoundaryProbeWithTick(_BoundaryProbe):
+    def __init__(self) -> None:
+        super().__init__()
+        self.tick_times: List[int] = []
+
+    def on_tick(self, tick: Tick) -> None:
+        self.tick_times.append(int(tick.timestamp))
+
+
+def test_simulated_ticks_never_reach_back_into_the_previous_trading_day() -> None:
+    """K 线晚于当前交易日收盘时, 它的四个模拟 tick 都严格晚于该收盘(spec S5)."""
+    frame = _midnight_boundary()
+    kwargs: Any = {
+        "freq": None,
+        "sessions": {"default": "ALWAYS_OPEN"},
+        "initial_cash": 100_000.0,
+    }
+    off = _BoundaryProbe()
+    _run(off, frame, **kwargs)
+    on = _BoundaryProbeWithTick()
+    _run(on, frame, simulate_ticks=True, **kwargs)
+
+    # 23:58 开盘价 10.0 买入 1000 股, 01-02 收盘按 10.2 计价。
+    assert off.after[0] == ("2024-01-02", 100_200.0)
+    assert on.after == off.after
+    close = int(pd.Timestamp("2024-01-03 00:00:00", tz=_TZ).value)
+    bar_end = int(pd.Timestamp("2024-01-03 00:00:02", tz=_TZ).value)
+    previous_bar = int(pd.Timestamp("2024-01-02 23:58:00", tz=_TZ).value)
+    boundary_ticks = [t for t in on.tick_times if previous_bar < t < bar_end]
+    assert len(boundary_ticks) == 4
+    assert all(close < t < bar_end for t in boundary_ticks)
+
+
+class _PortfolioProbe(Strategy):
+    """两个标的, 第 1 根买入第一个标的; on_portfolio_update 里记下回调所在的步与快照."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bought = False
+        self.updates: List[Tuple[Any, ...]] = []
+
+    def on_bar(self, bar: Bar) -> None:
+        if not self.bought and bar.symbol == _SYMBOL:
+            self.bought = True
+            self.buy(bar.symbol, 1000)
+
+    def on_portfolio_update(self, snapshot: Any) -> None:
+        self.updates.append(
+            (
+                self.current_bar is not None,
+                int(snapshot["timestamp"]),
+                round(float(snapshot["cash"]), 6),
+                round(float(snapshot["equity"]), 6),
+                tuple(sorted(snapshot["positions"].items())),
+            )
+        )
+
+
+class _PortfolioProbeWithTick(_PortfolioProbe):
+    def on_tick(self, tick: Tick) -> None:
+        pass
+
+
+def test_portfolio_updates_on_bar_steps_match_switch_off() -> None:
+    """K 线步上的 on_portfolio_update(次数、时刻、快照)与关闭开关时相同.
+
+    模拟 tick 步上多出的回调属 spec S17, 不在比较之列。
+    """
+    frame = pd.concat(
+        [_frame(6), _frame(6, symbol=_OTHER, base=20.0)], ignore_index=True
+    )
+    symbols = [_SYMBOL, _OTHER]
+    off = _PortfolioProbe()
+    _run(off, frame, symbols=symbols)
+    on = _PortfolioProbeWithTick()
+    _run(on, frame, symbols=symbols, simulate_ticks=True)
+
+    assert off.updates, "基线应有组合更新回调"
+    assert all(entry[0] for entry in off.updates)
+    assert [entry for entry in on.updates if entry[0]] == off.updates
