@@ -481,7 +481,13 @@ impl CommonMatcher {
                                 }
                             }
                             if execute_price.is_some() {
-                                execute_price = Some(tick.price);
+                                // 真实 tick 按成交价成交。模拟 tick 上: 本 tick 刚下
+                                // 的可成交限价单按 tick 价; 之前挂着的被越过, 按限价。
+                                let resting =
+                                    ctx.simulated_ticks && order.created_at < tick.timestamp;
+                                if !resting {
+                                    execute_price = Some(tick.price);
+                                }
                             }
                         }
                     }

@@ -1115,8 +1115,16 @@ impl Engine {
     /// ``on_tick``。只用于回测, 行情源里不得有真实 tick。
     ///
     /// :param enabled: 是否打开
-    fn set_simulate_ticks(&mut self, enabled: bool) {
+    /// :raises RuntimeError: 行情源是实盘数据源
+    fn set_simulate_ticks(&mut self, enabled: bool) -> PyResult<()> {
+        if enabled && self.state.feed.is_live() {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "simulate_ticks 只用于回测: 行情源是实盘数据源时不能打开",
+            ));
+        }
         self.simulate_ticks = enabled;
+        self.execution_model.set_simulated_ticks(enabled);
+        Ok(())
     }
 
     /// 设置时区偏移 (秒)
@@ -1274,6 +1282,9 @@ impl Engine {
     /// 默认模式。在内存中撮合订单。
     fn use_simulated_execution(&mut self) {
         self.execution_model = Box::new(SimulatedExecutionClient::new());
+        // 换撮合器不丢 simulate_ticks 开关
+        self.execution_model
+            .set_simulated_ticks(self.simulate_ticks);
     }
 
     /// 启用实盘执行 (CTP/Broker 模式)
@@ -1282,6 +1293,8 @@ impl Engine {
     /// 在此模式下，订单会被标记为 Submitted 并等待回调 (目前仅模拟发送)。
     fn use_realtime_execution(&mut self) {
         self.execution_model = Box::new(RealtimeExecutionClient::new());
+        self.execution_model
+            .set_simulated_ticks(self.simulate_ticks);
     }
 
     /// 注册自定义撮合器 (Python)

@@ -102,6 +102,7 @@ mod tests {
             ignore_volume: false,
             bar_index: 0,
             last_price: None,
+            simulated_ticks: false,
         }
     }
 
@@ -170,6 +171,7 @@ mod tests {
             ignore_volume: false,
             bar_index: 0,
             last_price: None,
+            simulated_ticks: false,
         };
         let res = matcher.match_order(&mut order, &ctx);
 
@@ -213,6 +215,7 @@ mod tests {
             ignore_volume: false,
             bar_index: 0,
             last_price: None,
+            simulated_ticks: false,
         };
         let res = matcher.match_order(&mut order, &ctx);
 
@@ -249,6 +252,7 @@ mod tests {
             ignore_volume: false,
             bar_index: 0,
             last_price: None,
+            simulated_ticks: false,
         };
         let res = matcher.match_order(&mut order, &ctx);
 
@@ -294,6 +298,7 @@ mod tests {
             ignore_volume: false,
             bar_index: 0,
             last_price: None,
+            simulated_ticks: false,
         };
         let res = matcher.match_order(&mut order, &ctx);
 
@@ -335,6 +340,7 @@ mod tests {
             ignore_volume: false,
             bar_index: 0,
             last_price: None,
+            simulated_ticks: false,
         };
         let first_res = matcher.match_order(&mut order, &first_ctx);
         assert!(first_res.is_none());
@@ -364,6 +370,7 @@ mod tests {
             ignore_volume: false,
             bar_index: 1,
             last_price: None,
+            simulated_ticks: false,
         };
         let second_res = matcher.match_order(&mut order, &second_ctx);
         assert!(second_res.is_some());
@@ -398,6 +405,7 @@ mod tests {
             ignore_volume: false,
             bar_index: 0,
             last_price: None,
+            simulated_ticks: false,
         };
         let first_res = matcher.match_order(&mut order, &first_ctx);
         assert!(first_res.is_none());
@@ -415,6 +423,7 @@ mod tests {
             ignore_volume: false,
             bar_index: 1,
             last_price: None,
+            simulated_ticks: false,
         };
         let second_res = matcher.match_order(&mut order, &second_ctx);
         assert!(second_res.is_none());
@@ -432,6 +441,7 @@ mod tests {
             ignore_volume: false,
             bar_index: 2,
             last_price: None,
+            simulated_ticks: false,
         };
         let third_res = matcher.match_order(&mut order, &third_ctx);
         assert!(third_res.is_some());

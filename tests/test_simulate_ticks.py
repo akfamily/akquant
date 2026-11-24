@@ -1,6 +1,6 @@
 """回测用 K 线模拟 tick: ``run_backtest(simulate_ticks=True)``."""
 
-from typing import Any, List, Tuple
+from typing import Any, List, Optional, Tuple
 
 import akquant as aq
 import pandas as pd
@@ -169,6 +169,16 @@ def test_zero_volume_bar_gets_no_simulated_ticks() -> None:
     assert ticks_per_bar == [4, 0, 4]
 
 
+def test_set_simulate_ticks_rejects_live_feed() -> None:
+    """行情源是实盘数据源时不能打开开关(会绕过实盘的等待逻辑); 关闭照常."""
+    engine = aq.Engine()
+    engine.add_data(aq.DataFeed.create_live())
+
+    with pytest.raises(RuntimeError, match="simulate_ticks"):
+        engine.set_simulate_ticks(True)
+    engine.set_simulate_ticks(False)
+
+
 def test_real_ticks_are_rejected_when_simulating() -> None:
     """数据里已有真实 tick 时不能再模拟."""
     stamp = int(pd.Timestamp("2024-01-02 09:31:00", tz=_TZ).value)
@@ -253,6 +263,8 @@ def _fingerprint(result: Any) -> Tuple[Any, ...]:
         trades[["entry_price", "exit_price", "quantity", "pnl"]]
         .round(6)
         .values.tolist(),
+        [int(pd.Timestamp(t).value) for t in trades["entry_time"]],
+        [int(pd.Timestamp(t).value) for t in trades["exit_time"]],
         round(float(result.metrics.total_return_pct), 9),
         round(float(result.metrics.max_drawdown_pct), 9),
     )
@@ -267,8 +279,9 @@ def _progress(events: List[Any]) -> List[int]:
     ]
 
 
-# Task 2(撮合通道)完成后, 这里补上 aq.NextClose 与 aq.NextAverage。
-@pytest.mark.parametrize("fill_policy", [aq.NextOpen, aq.CurrentClose])
+@pytest.mark.parametrize(
+    "fill_policy", [aq.NextOpen, aq.CurrentClose, aq.NextClose, aq.NextAverage]
+)
 def test_noop_on_tick_leaves_results_unchanged(fill_policy: Any) -> None:
     """不变量: on_tick 为空时, 开关开与关的权益曲线、成交、指标逐项相同."""
     # SMA(3) 使推断的 warmup 为 3, on_bar 从下标 2 起触发: 卖单在下标 7 的 K 线上
@@ -311,3 +324,127 @@ def test_get_history_in_on_tick_holds_closed_bars_only() -> None:
     assert trader.warmup_period == 3
     assert trader.history_in_tick[:4] == [closes[2:4]] * 4
     assert trader.history_in_tick[4:8] == [closes[3:5]] * 4
+
+
+# ---------------------------------------------------------------------------
+# 两条撮合通道(S8～S11)
+# ---------------------------------------------------------------------------
+
+
+class _TickLane(Strategy):
+    """第 2 根 K 线买入; 之后按 ``action`` 在某个模拟 tick 上下单."""
+
+    #: (第几根 K 线(从 1 起)的模拟 tick, 该根的第几个 tick(从 0 起))
+    at: Tuple[int, int] = (4, 1)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bars_seen = 0
+        self.tick_index = 0
+        self.trigger: Optional[Tuple[int, float]] = None
+        self.fills: List[Tuple[str, int, float]] = []
+
+    def act(self, tick: Tick) -> None:
+        raise NotImplementedError
+
+    def on_bar(self, bar: Bar) -> None:
+        self.bars_seen += 1
+        self.tick_index = 0
+        if self.bars_seen == 2:
+            self.buy(bar.symbol, 1000)
+
+    def on_tick(self, tick: Tick) -> None:
+        if (self.bars_seen + 1, self.tick_index) == self.at:
+            self.trigger = (int(tick.timestamp), round(float(tick.price), 6))
+            self.act(tick)
+        self.tick_index += 1
+
+    def on_trade(self, trade: Any) -> None:
+        side = "buy" if str(trade.side).endswith("Buy") else "sell"
+        self.fills.append((side, int(trade.timestamp), round(float(trade.price), 6)))
+
+
+class _MarketStop(_TickLane):
+    def act(self, tick: Tick) -> None:
+        self.sell(tick.symbol, 1000)
+
+
+@pytest.mark.parametrize(
+    "fill_policy", [aq.NextOpen, aq.CurrentClose, aq.NextClose, aq.NextAverage]
+)
+def test_market_order_from_on_tick_fills_on_that_tick(fill_policy: Any) -> None:
+    """on_tick 里的市价单按触发它的模拟 tick 的时刻与价格成交, 不看运行级成交模式."""
+    strategy = _MarketStop()
+
+    _run(strategy, _frame(8), fill_policy=fill_policy(), simulate_ticks=True)
+
+    assert strategy.trigger is not None
+    sells = [f for f in strategy.fills if f[0] == "sell"]
+    assert sells == [("sell", strategy.trigger[0], strategy.trigger[1])]
+    # 第 4 根 K 线的第 2 个 tick 是最低价: open=13, low=12.8。
+    assert strategy.trigger[1] == pytest.approx(12.8)
+
+
+class _RestingLimit(_TickLane):
+    """在第 4 根的开盘 tick 上挂低于现价的买入限价单(限价 12.9, 该根最低 12.8)."""
+
+    at = (4, 0)
+
+    def act(self, tick: Tick) -> None:
+        self.buy(tick.symbol, 100, price=12.9)
+
+
+def test_resting_limit_from_on_tick_fills_at_limit_price_on_a_later_tick() -> None:
+    """挂单被之后的模拟 tick 越过时按限价成交(不给价格改善), 时刻是越过它的那个 tick."""
+    strategy = _RestingLimit()
+
+    _run(strategy, _frame(8), simulate_ticks=True)
+
+    assert strategy.trigger is not None
+    buys = [f for f in strategy.fills if f[0] == "buy"]
+    # 第一笔是 on_bar 里的买入; 第二笔是限价单: 下一个 tick(最低价 12.8)越过 12.9。
+    assert len(buys) == 2
+    assert buys[1] == ("buy", strategy.trigger[0] + _SEC, pytest.approx(12.9))
+
+
+class _RestingStop(_TickLane):
+    """在第 4 根的开盘 tick 上挂卖出止损单(触发价 12.9, 该根最低 12.8)."""
+
+    at = (4, 0)
+
+    def act(self, tick: Tick) -> None:
+        self.sell(tick.symbol, 1000, trigger_price=12.9)
+
+
+def test_resting_stop_from_on_tick_fills_at_the_triggering_tick_price() -> None:
+    """止损单被模拟 tick 触发后按该 tick 的价格成交."""
+    strategy = _RestingStop()
+
+    _run(strategy, _frame(8), simulate_ticks=True)
+
+    assert strategy.trigger is not None
+    sells = [f for f in strategy.fills if f[0] == "sell"]
+    assert sells == [("sell", strategy.trigger[0] + _SEC, pytest.approx(12.8))]
+
+
+class _LimitOnCloseTick(_TickLane):
+    """在第 4 根的收盘 tick 上挂买入限价单(限价 12.85).
+
+    限价高于该根最低 12.8, 但之后各根的最低价都高于它。
+    """
+
+    at = (4, 3)
+
+    def act(self, tick: Tick) -> None:
+        self.buy(tick.symbol, 100, price=12.85)
+
+
+def test_order_from_on_tick_is_never_matched_by_a_bar() -> None:
+    """模拟 tick 上下的单不被 K 线撮合: 否则会被紧随其后的本根 K 线(最低 12.8)成交."""
+    strategy = _LimitOnCloseTick()
+
+    _run(strategy, _frame(8), simulate_ticks=True)
+
+    assert strategy.trigger is not None
+    # 只有 on_bar 里那一笔买入; 限价单始终没有成交。
+    assert len([f for f in strategy.fills if f[0] == "buy"]) == 1

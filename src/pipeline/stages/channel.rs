@@ -4,7 +4,7 @@ use super::shared::{
 use crate::context::{EngineContext, SessionView};
 use crate::engine::Engine;
 use crate::event::Event;
-use crate::model::{Order, OrderStatus};
+use crate::model::{ExecutionPolicyCore, Order, OrderStatus, PriceBasis, TemporalPolicy};
 use crate::pipeline::processor::{Processor, ProcessorResult};
 use pyo3::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -223,9 +223,24 @@ impl Processor for ChannelProcessor {
                 drained_event = true;
                 match event {
                     Event::OrderRequest(order) => pending_order_requests.push(order),
-                    Event::OrderValidated(order) => {
+                    Event::OrderValidated(mut order) => {
                         record_creation_session(engine, &order);
+                        // 模拟 tick 上创建的订单(spec S8/S9): 进 tick 通道, 并按
+                        // "当根、同周期"成交——策略回调之后在这个 tick 上立即撮合,
+                        // 不看运行级成交模式。显式给了成交模式的订单同样改写: tick
+                        // 通道里没有"下一根 K 线"。
+                        let on_sim_tick = engine.on_simulated_tick();
+                        if on_sim_tick {
+                            order.fill_policy_override = Some(ExecutionPolicyCore {
+                                price_basis: PriceBasis::Close,
+                                bar_offset: 0,
+                                temporal: TemporalPolicy::SameCycle,
+                            });
+                        }
                         engine.execution_model.on_order(order.clone());
+                        if on_sim_tick {
+                            engine.execution_model.mark_created_on_sim_tick(&order.id);
+                        }
                         // tick/定时器回调里下的单: 同刻、同品种的带区间 bar 不撮合它
                         if matches!(
                             engine.current_event,

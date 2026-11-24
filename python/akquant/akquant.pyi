@@ -968,6 +968,7 @@ class Engine:
         ``on_tick``。只用于回测, 行情源里不得有真实 tick。
 
         :param enabled: 是否打开
+        :raises RuntimeError: 行情源是实盘数据源
         """
         ...
 
