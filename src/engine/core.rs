@@ -2506,7 +2506,8 @@ impl Engine {
             Event::OrderRequest(_)
             | Event::OrderValidated(_)
             | Event::ExecutionReport(_, _)
-            | Event::TradingDayHint { .. } => {
+            | Event::TradingDayHint { .. }
+            | Event::FormingBar(_) => {
                 return Ok((Vec::new(), Vec::new(), Vec::new(), None));
             }
         };
@@ -2577,6 +2578,24 @@ impl Engine {
             canceled.extend(c.clone());
         }
         (orders, timers, canceled)
+    }
+
+    /// 把未收盘 K 线交给各策略槽做指标试算([`StrategyHandler::on_forming_bar`])。
+    ///
+    /// 不是行情事件: 不取策略上下文、不更新 last_prices、不收订单, 调用前后引擎
+    /// 状态不变。
+    pub(crate) fn dispatch_forming_bar(
+        &mut self,
+        py: Python<'_>,
+        strategy: &StrategyHandle,
+        bar: &Bar,
+    ) -> PyResult<()> {
+        self.ensure_strategy_slot_exists();
+        for slot_index in 0..self.strategy_slots.len() {
+            self.strategy_for_slot(slot_index, strategy)
+                .on_forming_bar(py, bar)?;
+        }
+        Ok(())
     }
 
     /// 把闭合的窗口 bar 逐个派发给各策略槽([`StrategyCallback::WindowBar`])。

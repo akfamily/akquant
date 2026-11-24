@@ -256,6 +256,25 @@ impl DataFeed {
             })
             .map_err(|e| PyValueError::new_err(e.to_string()))
     }
+
+    /// 推送一根未收盘的 K 线（仅实盘）.
+    ///
+    /// 只用于给声明了 ``intrabar=True`` 的基础周期指标试算临时值；不触发 ``on_bar``，
+    /// 不撮合，不进历史。``bar.timestamp`` 须等于这一桶将来收盘 bar 的时间戳；
+    /// 该标的此前的收盘 bar 须都已 ``add_bar``。同一桶可重复推送，后到的覆盖先到的。
+    ///
+    /// :param bar: 未收盘的 K 线
+    /// :raises RuntimeError: 在回测数据源上调用
+    pub fn add_forming_bar(&mut self, bar: Bar) -> PyResult<()> {
+        let Some(sender) = &self.live_sender else {
+            return Err(PyRuntimeError::new_err(
+                "add_forming_bar 仅实盘数据源可用（DataFeed.create_live() 创建的 feed）；回测没有未收盘的 K 线",
+            ));
+        };
+        sender
+            .send(Event::FormingBar(bar))
+            .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
 }
 
 // Helper method for Engine
@@ -473,5 +492,38 @@ mod tests {
 
         assert!(rendered.contains("\"phase\":\"data\""));
         assert!(!rendered.contains("event_time_iso"));
+    }
+
+    fn forming_test_bar() -> Bar {
+        Bar {
+            timestamp: 1_704_160_800_000_000_000,
+            symbol: "A".to_string(),
+            open: rust_decimal::Decimal::ONE,
+            high: rust_decimal::Decimal::ONE,
+            low: rust_decimal::Decimal::ONE,
+            close: rust_decimal::Decimal::ONE,
+            volume: rust_decimal::Decimal::ONE,
+            extra: std::collections::HashMap::new(),
+            freq: None,
+            interval_start: None,
+        }
+    }
+
+    #[test]
+    fn add_forming_bar_enqueues_forming_event_on_live_feed() {
+        let mut feed = DataFeed::create_live();
+        feed.add_forming_bar(forming_test_bar()).unwrap();
+
+        assert!(matches!(feed.next(), Some(Event::FormingBar(bar)) if bar.symbol == "A"));
+        assert!(feed.next().is_none());
+    }
+
+    #[test]
+    fn add_forming_bar_is_rejected_on_backtest_feed() {
+        Python::initialize();
+        let mut feed = DataFeed::new();
+
+        assert!(feed.add_forming_bar(forming_test_bar()).is_err());
+        assert!(feed.next().is_none());
     }
 }
