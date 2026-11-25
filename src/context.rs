@@ -697,26 +697,26 @@ impl StrategyContext {
     /// `position_effect`),用于目标仓位算 delta 判定"仓位将落在哪"。
     fn project_pending_position(&self, symbol: &str, reducing_only: bool) -> Decimal {
         let mut projected = self.positions.get(symbol).copied().unwrap_or(Decimal::ZERO);
-        for order in self.active_orders.iter().chain(self.orders.iter()) {
-            if order.symbol != symbol {
-                continue;
-            }
-            if !matches!(
-                order.status,
-                crate::model::OrderStatus::New
-                    | crate::model::OrderStatus::Submitted
-                    | crate::model::OrderStatus::PartiallyFilled
-            ) {
-                continue;
-            }
+        let pending: Vec<&Order> = self
+            .active_orders
+            .iter()
+            .chain(self.orders.iter())
+            .filter(|order| {
+                order.symbol == symbol
+                    && matches!(
+                        order.status,
+                        crate::model::OrderStatus::New
+                            | crate::model::OrderStatus::Submitted
+                            | crate::model::OrderStatus::PartiallyFilled
+                    )
+                    && (!reducing_only || crate::model::is_position_reducing_order(order))
+                    && order.quantity - order.filled_quantity > Decimal::ZERO
+            })
+            .collect();
+        // 同一 OCO 组(如 bracket 的止损止盈)只会成交一条腿, 按一组投影一次
+        for order in crate::model::dedup_oco_legs(pending, crate::model::larger_remaining) {
             let reducing = crate::model::is_position_reducing_order(order);
-            if reducing_only && !reducing {
-                continue;
-            }
             let remaining = order.quantity - order.filled_quantity;
-            if remaining <= Decimal::ZERO {
-                continue;
-            }
             // 减仓单统一按 Close 语义投影:`project_position_after` 已对平仓量
             // 做 `min(remaining, |pos|)` 封顶,等价于 vn.py 的 `min(frozen, pos)`。
             // 净仓模型下 CloseToday / CloseYesterday 与 Close 同效。

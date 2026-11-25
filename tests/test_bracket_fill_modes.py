@@ -1,6 +1,6 @@
 """place_bracket 的止损止盈子单在各成交模式下的提交与触发."""
 
-from typing import Any, Callable, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import akquant as aq
 import pandas as pd
@@ -361,3 +361,270 @@ def test_current_close_sell_then_buy_without_bracket_is_unchanged() -> None:
     assert [str(s) for s in result.orders_df["status"]] == ["filled"] * 3
     assert result.engine is not None
     assert float(result.engine.portfolio.cash) == pytest.approx(20916.9)
+
+
+# ---------------------------------------------------------------------------
+# 同一 OCO 组的在途量按一组算一次(取剩余量最大的一条腿)
+# ---------------------------------------------------------------------------
+
+_HOLD = [10.0] * 6
+
+
+class _Scripted(Strategy):
+    """按 K 线序号执行脚本; 记下动作返回值、投影持仓、买入力与冻结资金."""
+
+    script: Dict[int, List[Any]] = {}
+    probes: Dict[int, List[str]] = {}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.n = 0
+        self.returns: List[Any] = []
+        self.seen: Dict[str, float] = {}
+        self.min_position = 0.0
+        self.receipts: List[Any] = []
+
+    def on_bar(self, bar: Bar) -> None:
+        """按序号执行."""
+        ctx = self.ctx
+        assert ctx is not None
+        for probe in self.probes.get(self.n, []):
+            if probe == "projected":
+                self.seen["projected"] = ctx.get_projected_position(_SYMBOL)
+            elif probe == "closable":
+                self.seen["closable"] = ctx.get_closable_position(_SYMBOL)
+            elif probe == "buying_power":
+                self.seen["buying_power"] = float(self.buying_power)
+            elif probe == "frozen_cash":
+                self.seen["frozen_cash"] = float(self.get_account()["frozen_cash"])
+        for name, args, kwargs in self.script.get(self.n, []):
+            if name == "oco":
+                self.place_oco(self.receipts[-2], self.receipts[-1])
+                continue
+            value = getattr(self, name)(*args, **kwargs)
+            self.returns.append(value)
+            if name in ("buy", "sell"):
+                self.receipts.append(value)
+        self.min_position = min(self.min_position, self.get_position(_SYMBOL))
+        self.n += 1
+
+
+def _run_script(
+    script: Dict[int, List[Any]],
+    policy: Any,
+    *,
+    probes: Optional[Dict[int, List[str]]] = None,
+    prices: Optional[List[float]] = None,
+) -> Any:
+    strategy_cls = type(
+        "_ScriptedRun", (_Scripted,), {"script": script, "probes": probes or {}}
+    )
+    return aq.run_backtest(
+        data={_SYMBOL: _daily(prices or _HOLD)},
+        strategy=strategy_cls,
+        symbols=_SYMBOL,
+        initial_cash=100000.0,
+        freq="1d",
+        fill_policy=policy,
+        t_plus_one=False,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        show_progress=False,
+    )
+
+
+def _order_rows(result: Any) -> List[Tuple[str, str, str, float, str]]:
+    """(方向, 类型, 状态, 成交量, 拒单原因) 按提交顺序."""
+    return [
+        (
+            str(row["side"]),
+            str(row["order_type"]),
+            str(row["status"]),
+            float(row["filled_quantity"]),
+            str(row["reject_reason"]),
+        )
+        for row in result.orders_df.sort_values("created_at", kind="stable").to_dict(
+            "records"
+        )
+    ]
+
+
+_BRACKET_100 = (
+    "place_bracket",
+    (_SYMBOL, 100),
+    {"stop_trigger_price": 9.0, "take_profit_price": 13.0},
+)
+
+
+@pytest.mark.parametrize("policy", _POLICIES, ids=["next_open", "current_close"])
+def test_manual_sell_with_bracket_exits_counts_the_group_once(policy: Any) -> None:
+    """挂着 bracket 子单时 sell(100): 与挂一张 100 股普通卖单时相同.
+
+    NextOpen 提交时不校验可用持仓, 卖单成交; CurrentClose 提交时按
+    可用 100、在途 100 被拒(此前在途算成 200)。持仓始终不为负。
+    """
+    result = _run_script(
+        {0: [_BRACKET_100], 2: [("sell", (_SYMBOL, 100), {})]}, policy()
+    )
+
+    rows = _order_rows(result)
+    assert [row[:4] for row in rows[:3]] == [
+        ("buy", "market", "filled", 100.0),
+        ("sell", "stopmarket", "new", 0.0),
+        ("sell", "limit", "new", 0.0),
+    ]
+    manual = rows[3]
+    if policy is aq.NextOpen:
+        assert manual[:4] == ("sell", "market", "filled", 100.0)
+        assert _position(result) == 0.0
+    else:
+        assert manual[:4] == ("sell", "market", "rejected", 0.0)
+        assert "Available: 100, Pending Sell: 100, Required: 100" in manual[4]
+        assert _position(result) == 100.0
+    assert result.strategy.min_position >= 0.0
+
+
+@pytest.mark.parametrize("policy", _POLICIES, ids=["next_open", "current_close"])
+@pytest.mark.parametrize(
+    "action",
+    [
+        ("close_position", (_SYMBOL,), {}),
+        ("order_target", (_SYMBOL, 0), {}),
+        ("order_target_percent", (_SYMBOL, 0.0), {}),
+    ],
+    ids=["close_position", "order_target", "order_target_percent"],
+)
+def test_flatten_with_bracket_exits_does_not_buy_back(action: Any, policy: Any) -> None:
+    """挂着 bracket 子单时平到 0: 投影持仓为 0, 不下单, 不再反向买入."""
+    result = _run_script(
+        {0: [_BRACKET_100], 2: [action]}, policy(), probes={2: ["projected"]}
+    )
+
+    assert result.strategy.seen["projected"] == 0.0
+    assert result.strategy.returns[-1] is None
+    assert len(result.orders_df) == 3
+    assert _position(result) == 100.0
+
+
+@pytest.mark.parametrize("policy", _POLICIES, ids=["next_open", "current_close"])
+def test_extra_position_beyond_bracket_exits_can_be_sold(policy: Any) -> None:
+    """持仓 200、子单各 100: CurrentClose 下卖 100 成交(可用 200, 在途 100)."""
+    script: Dict[int, List[Any]] = {
+        0: [("buy", (_SYMBOL, 100), {})],
+        1: [_BRACKET_100],
+        3: [("sell", (_SYMBOL, 100), {})],
+    }
+    result = _run_script(script, policy())
+
+    rows = _order_rows(result)
+    assert rows[-1][:4] == ("sell", "market", "filled", 100.0)
+    assert not [row for row in rows if row[2] == "rejected"]
+    assert _position(result) == 100.0
+
+
+@pytest.mark.parametrize("policy", _POLICIES, ids=["next_open", "current_close"])
+def test_close_position_beyond_bracket_exits_sells_the_rest(policy: Any) -> None:
+    """持仓 200、子单各 100: close_position 卖出 100(投影持仓 100)."""
+    script: Dict[int, List[Any]] = {
+        0: [("buy", (_SYMBOL, 100), {})],
+        1: [_BRACKET_100],
+        3: [("close_position", (_SYMBOL,), {})],
+    }
+    result = _run_script(script, policy(), probes={3: ["projected"]})
+
+    assert result.strategy.seen["projected"] == 100.0
+    rows = _order_rows(result)
+    assert rows[-1][:4] == ("sell", "market", "filled", 100.0)
+    assert _position(result) == 100.0
+
+
+def test_manual_place_oco_reduces_projection_once() -> None:
+    """手工 place_oco 的两张卖单: 登记后投影持仓只减一次, 成员带上 oco 组号."""
+    script: Dict[int, List[Any]] = {
+        0: [("buy", (_SYMBOL, 100), {})],
+        1: [
+            ("sell", (_SYMBOL, 100), {"price": 13.0}),
+            ("sell", (_SYMBOL, 100), {"trigger_price": 9.0}),
+            ("oco", (), {}),
+        ],
+        2: [("close_position", (_SYMBOL,), {})],
+    }
+    result = _run_script(script, aq.NextOpen(), probes={2: ["projected", "closable"]})
+
+    strategy = result.strategy
+    assert strategy.seen["projected"] == 0.0
+    # auto 拆腿: 第一张定为平仓 100, 第二张(可平已为 0)定为开仓 100; 可平持仓
+    # 只扣平仓腿, 与不登记 OCO 时相同
+    assert strategy.seen["closable"] == 0.0
+    assert strategy.returns[-1] is None
+    legs = {str(getattr(r, "primary", r)) for r in strategy.receipts[1:]}
+    # 组号写在引擎的订单上(result.orders、ctx.active_orders 可见)
+    group_ids = {order.graph_id for order in result.orders if order.id in legs}
+    assert len(group_ids) == 1
+    assert str(next(iter(group_ids))).startswith("oco:")
+    assert _position(result) == 100.0
+
+
+def test_independent_sells_are_still_counted_separately() -> None:
+    """不变性: 不是 OCO 的两张在途卖单各算一次.
+
+    持仓 200、挂两张互不相干的 60 股限价卖单: 投影持仓与可平持仓都是 80;
+    之后卖 80 刚好通过提交时校验(可用 200, 在途 120)。用 200 股是为了避开
+    auto 拆腿: 持仓 100 时第二张 60 会被拆成平 40、开 20 两条腿。
+    """
+    script: Dict[int, List[Any]] = {
+        0: [("buy", (_SYMBOL, 200), {})],
+        1: [
+            ("sell", (_SYMBOL, 60), {"price": 13.0}),
+            ("sell", (_SYMBOL, 60), {"price": 14.0}),
+        ],
+        2: [("sell", (_SYMBOL, 80), {})],
+        3: [("sell", (_SYMBOL, 1), {})],
+    }
+    result = _run_script(
+        script, aq.CurrentClose(), probes={2: ["projected", "closable"]}
+    )
+
+    assert result.strategy.seen["projected"] == 80.0
+    assert result.strategy.seen["closable"] == 80.0
+    rows = _order_rows(result)
+    assert rows[3][:4] == ("sell", "market", "filled", 80.0)
+    # 余下 120 股都被两张在途卖单占着: 再卖 1 股被拒, 在途按 60 + 60 计
+    assert rows[4][:4] == ("sell", "market", "rejected", 0.0)
+    assert "Available: 120, Pending Sell: 120, Required: 1" in rows[4][4]
+
+
+def test_buying_power_with_bracket_exits_matches_a_single_resting_sell() -> None:
+    """资金投影: 挂着 bracket 子单时的买入力等于只挂一张等量普通止损卖单时的值."""
+    bracket = _run_script(
+        {0: [_BRACKET_100]}, aq.CurrentClose(), probes={2: ["buying_power"]}
+    )
+    single = _run_script(
+        {
+            0: [("buy", (_SYMBOL, 100), {})],
+            1: [("sell", (_SYMBOL, 100), {"trigger_price": 9.0})],
+        },
+        aq.CurrentClose(),
+        probes={2: ["buying_power"]},
+    )
+
+    assert bracket.strategy.seen["buying_power"] == pytest.approx(
+        single.strategy.seen["buying_power"]
+    )
+    assert single.strategy.seen["buying_power"] == pytest.approx(99990.0)
+
+
+def test_frozen_cash_counts_a_buy_side_oco_group_once() -> None:
+    """两张互斥的限价买单组成 OCO: 冻结资金取占用较大的那条腿(100×9)."""
+    script: Dict[int, List[Any]] = {
+        0: [
+            ("buy", (_SYMBOL, 100), {"price": 9.0}),
+            ("buy", (_SYMBOL, 100), {"price": 8.0}),
+            ("oco", (), {}),
+        ],
+    }
+    result = _run_script(script, aq.NextOpen(), probes={1: ["frozen_cash"]})
+
+    assert result.strategy.seen["frozen_cash"] == pytest.approx(900.0)

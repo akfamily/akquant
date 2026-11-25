@@ -155,8 +155,30 @@ impl OrderManager {
         members.insert(first.clone());
         members.insert(second.clone());
         self.oco_groups.insert(group_key.clone(), members);
+        for order in self
+            .active_orders
+            .iter_mut()
+            .filter(|order| order.id == first || order.id == second)
+        {
+            Self::stamp_oco_graph(order, &group_key);
+        }
         self.oco_order_to_group.insert(first, group_key.clone());
         self.oco_order_to_group.insert(second, group_key);
+    }
+
+    /// 给 `place_oco` 登记的组员写上组号(`oco:<组号>`), 供只拿得到订单列表的
+    /// 在途量统计识别同一组(见 `Order::oco_group_key`)。
+    /// 只写 `graph_id` 为空或本身就是这样写入的订单(重新登记到别的组时改写):
+    /// 成员已有别的 `graph_id`(如 bracket 子单)时不覆盖, 这样的组在统计里合并
+    /// 不了, 各算一次。
+    fn stamp_oco_graph(order: &mut Order, group: &str) {
+        let ours = order
+            .graph_id
+            .as_deref()
+            .is_none_or(|graph| graph.starts_with(crate::model::OCO_GRAPH_PREFIX));
+        if ours {
+            order.graph_id = Some(format!("{}{group}", crate::model::OCO_GRAPH_PREFIX));
+        }
     }
 
     pub fn consume_oco_peer_cancels_on_fill(&mut self, order_id: &str) -> Vec<String> {
@@ -318,7 +340,11 @@ impl OrderManager {
     }
 
     /// 添加新订单 (例如从 OrderValidated 事件)
-    pub fn add_active_order(&mut self, order: Order) {
+    pub fn add_active_order(&mut self, mut order: Order) {
+        // 在回调里下单并登记 OCO 时, 登记先于订单过风控进入在途列表。
+        if let Some(group) = self.oco_order_to_group.get(&order.id) {
+            Self::stamp_oco_graph(&mut order, group);
+        }
         self.active_orders.push(order);
     }
 
@@ -643,6 +669,16 @@ impl OrderManager {
                 self.oco_groups.remove(&old_group);
                 for oid in leftovers {
                     self.oco_order_to_group.remove(&oid);
+                    // 组已解散: 留下的那一张不再是 OCO 组员, 清掉写入的组号,
+                    // 免得之后与同名的新组(如别的策略槽位的 `oco-1`)合并统计。
+                    if let Some(order) = self.active_orders.iter_mut().find(|o| o.id == oid)
+                        && order
+                            .graph_id
+                            .as_deref()
+                            .is_some_and(|graph| graph.starts_with(crate::model::OCO_GRAPH_PREFIX))
+                    {
+                        order.graph_id = None;
+                    }
                 }
             }
         }
@@ -912,5 +948,36 @@ mod tests {
         assert_eq!(cancelled.status, OrderStatus::Cancelled);
         assert_eq!(cancelled.updated_at, 123);
         assert!(!manager.oco_order_to_group.contains_key("order-b"));
+    }
+
+    /// place_oco 的组员带上 oco: 组号(先在途、后在途两种顺序都覆盖); 已有
+    /// graph_id 的成员不覆盖; 组解散后留下的那一张清掉组号。
+    #[test]
+    fn register_oco_group_stamps_members_for_pending_statistics() {
+        let mut manager = OrderManager::new();
+        manager.add_active_order(make_order("a", OrderStatus::New));
+        manager.register_oco_group("g".to_string(), "a".to_string(), "b".to_string());
+        manager.add_active_order(make_order("b", OrderStatus::New));
+        let mut foreign = make_order("c", OrderStatus::New);
+        foreign.graph_id = Some("bracket-e".to_string());
+        manager.add_active_order(foreign);
+        manager.add_active_order(make_order("d", OrderStatus::New));
+        manager.register_oco_group("h".to_string(), "c".to_string(), "d".to_string());
+
+        let graph = |manager: &OrderManager, id: &str| {
+            manager
+                .active_orders
+                .iter()
+                .find(|order| order.id == id)
+                .and_then(|order| order.graph_id.clone())
+        };
+        assert_eq!(graph(&manager, "a").as_deref(), Some("oco:g"));
+        assert_eq!(graph(&manager, "b").as_deref(), Some("oco:g"));
+        assert_eq!(graph(&manager, "c").as_deref(), Some("bracket-e"));
+        assert_eq!(graph(&manager, "d").as_deref(), Some("oco:h"));
+
+        manager.handle_oco_terminal_without_fill("a");
+        assert_eq!(graph(&manager, "a").as_deref(), Some("oco:g"));
+        assert_eq!(graph(&manager, "b"), None);
     }
 }

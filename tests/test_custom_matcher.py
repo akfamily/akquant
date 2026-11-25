@@ -6,7 +6,16 @@ from typing import Any, List, Optional, Tuple
 import akquant as aq
 import pandas as pd
 import pytest
-from akquant import AssetType, Bar, Instrument, Order, OrderStatus, Strategy, Trade
+from akquant import (
+    AssetType,
+    Bar,
+    Instrument,
+    Order,
+    OrderSide,
+    OrderStatus,
+    Strategy,
+    Trade,
+)
 
 
 class CustomStockMatcher:
@@ -297,7 +306,7 @@ class _NoneMatcher(_CountingMatcher):
 
 
 class _BadTradeMatcher(_CountingMatcher):
-    """返回不合法的成交: 数量超过剩余、数量为 0、订单号不符."""
+    """返回不合法的成交: 数量超过剩余、数量为 0、订单号、品种或方向不符."""
 
     def __init__(self, kind: str) -> None:
         super().__init__()
@@ -312,11 +321,15 @@ class _BadTradeMatcher(_CountingMatcher):
             self.kind, float(order.quantity)
         )
         order_id = "not-this-order" if self.kind == "order_id" else str(order.id)
+        symbol = "600000.SH" if self.kind == "symbol" else str(order.symbol)
+        side = order.side
+        if self.kind == "side":
+            side = OrderSide.Sell if order.side == OrderSide.Buy else OrderSide.Buy
         return Trade(
             f"t{self.calls}",
             order_id,
-            str(order.symbol),
-            order.side,
+            symbol,
+            side,
             quantity,
             float(event.open),
             0.0,
@@ -418,7 +431,7 @@ def test_matcher_that_updates_order_itself_is_not_double_counted() -> None:
     _assert_single_full_fill(result, matcher)
 
 
-@pytest.mark.parametrize("kind", ["too_much", "zero", "order_id"])
+@pytest.mark.parametrize("kind", ["too_much", "zero", "order_id", "symbol", "side"])
 def test_matcher_invalid_trade_books_nothing(kind: str, caplog: Any) -> None:
     """不合法的成交不入账、订单保持未成交, 并记错误日志."""
     aq.configure_logging(aq.LogConfig(console=False, level="WARNING"))

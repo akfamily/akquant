@@ -29,7 +29,7 @@ impl RiskRule for StockAvailablePositionRule {
                 .copied()
                 .unwrap_or(Decimal::ZERO);
 
-            let pending_sell: Decimal = ctx
+            let pending: Vec<&Order> = ctx
                 .active_orders
                 .iter()
                 .filter(|o| o.symbol == order.symbol && o.side == OrderSide::Sell)
@@ -38,8 +38,15 @@ impl RiskRule for StockAvailablePositionRule {
                         || o.status == OrderStatus::Submitted
                         || o.status == OrderStatus::PartiallyFilled
                 })
-                .map(|o| o.quantity - o.filled_quantity)
-                .sum();
+                .collect();
+            // 同一 OCO 组(如 bracket 的止损止盈)只会成交一条腿, 按一组算一次
+            let pending_sell: Decimal = crate::model::dedup_oco_legs(
+                pending,
+                crate::model::larger_remaining,
+            )
+            .into_iter()
+            .map(|o| o.quantity - o.filled_quantity)
+            .sum();
 
             if available - pending_sell < order.quantity {
                 return Err(AkQuantError::OrderError(format!(

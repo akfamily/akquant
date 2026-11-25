@@ -1043,8 +1043,8 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `cancel_order(order_id: str | OrderReceipt | Order)`: 撤销指定订单。可传订单号、下单返回的 `OrderReceipt`（取首腿）或订单对象（取其 `id`）；其他类型抛 `TypeError`。
 *   `cancel_group(group_id: str | OrderReceipt)`: 按 `group_id` 撤销一个逻辑委托拆出的全部腿。传订单对象会抛 `TypeError`，撤单笔订单请用 `cancel_order`。
 *   `cancel_all_orders(symbol)`: 取消指定标的的所有挂单。如果不指定 `symbol`，则取消所有挂单。
-*   `place_oco(first_order_id, second_order_id, group_id=None) -> str`: 创建 OCO 订单组。组内任一订单成交后，另一订单会被自动撤单。
-*   `place_bracket(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...) -> str`: 创建 Bracket 订单。先提交进场单，进场成交后自动提交止损/止盈；当止损与止盈同时存在时会自动绑定 OCO。
+*   `place_oco(first_order_id, second_order_id, group_id=None) -> str`: 创建 OCO 订单组。组内任一订单成交后，另一订单会被自动撤单。组内只会成交一张，所以提交时的可用持仓校验、投影持仓与可平持仓（`order_target*`、`close_position` 据此算差额）、买入力、冻结资金等在途量统计里，同一组同品种同方向的两张单按一组算一次，取剩余量较大的那张。回测登记后，两张单的 `graph_id` 写为 `oco:<组号>`（此前为空）；单子本身已有 `graph_id` 时不改写，这样的组在统计里各算一次。
+*   `place_bracket(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...) -> str`: 创建 Bracket 订单。先提交进场单，进场成交后自动提交止损/止盈；当止损与止盈同时存在时会自动绑定 OCO，在途量统计里按一组算一次（同 `place_oco`）。子单挂着时，它们已占着进场的那部分持仓：`close_position` / `order_target(symbol, 0)` 不会再下单（与挂着一张等量普通卖单时相同），`CurrentClose` 等提交时校验可用持仓的模式下手动卖出同样数量会被拒；要手动离场，先撤掉子单。
 
 **数据与工具:**
 
@@ -1073,7 +1073,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
     *   只读，写入抛 `AttributeError`：数据粒度由数据源决定，改这个属性不会真的改变粒度。
 *   `get_account() -> AccountSnapshot`: 获取账户详情快照（字典），回测与实盘的键完全一致：`cash`、`equity`、`market_value`、`notional_value`、`margin`、`frozen_cash`、`available_cash`、`unrealized_pnl`、`borrowed_cash`、`short_market_value`、`maintenance_ratio`、`account_mode`、`accrued_interest`、`daily_interest`。
     *   三项资金满足 `equity == margin + frozen_cash + available_cash`：总权益 = 持仓占用 + 挂单冻结 + 可用资金。回测里严格成立；经柜台交易时三项各取柜台的值。
-    *   `margin` 是持仓占用的保证金，现金账户里的股票按全额市值计。`frozen_cash` 是未完成委托冻结的资金：每笔按自己的委托价估算（没有委托价的用最新价），只计会增加占用的委托，挂着的卖出、平仓单不占资金，也不会释放买单的冻结；不含手续费。
+    *   `margin` 是持仓占用的保证金，现金账户里的股票按全额市值计。`frozen_cash` 是未完成委托冻结的资金：每笔按自己的委托价估算（没有委托价的用最新价），只计会增加占用的委托，挂着的卖出、平仓单不占资金，也不会释放买单的冻结；不含手续费。同一 OCO 组（如两张互斥的限价买单）只冻结占用较大的那张。
     *   现金账户 / 现货账户下，`market_value` 通常表示持仓市值。
     *   期货保证金账户下，`equity` 表示账户权益，`margin` 表示已占用保证金，`notional_value` 表示期货名义敞口，`unrealized_pnl` 表示浮动盈亏；期货持仓不会像股票那样把全额名义本金直接计入 `cash` 扣减，也不会把名义敞口直接映射为 `market_value`。
     *   `cash` 是现金余额，`available_cash` 才是可用于新开仓的资金，与下单被拒时日志里的 `Available` 口径相近（后者另按 `safety_margin` 折减）。期货保证金账户下开仓不从 `cash` 扣减保证金，因此 `cash` 通常大于 `available_cash`；股票现金账户下没有挂单时二者相等。权益不足以覆盖占用与冻结时 `available_cash` 为负数。

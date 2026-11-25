@@ -243,6 +243,59 @@ mod tests {
         let res2 = rule.check(&order2, &ctx);
         assert!(res2.is_ok());
     }
+
+    /// 别的品种上在途的两张互斥买单(同一 OCO 组)只计一次敞口: 杠杆 0.6 而不是 0.7。
+    #[test]
+    fn max_leverage_counts_an_oco_group_once() {
+        let stock = |symbol: &str| Instrument {
+            asset_type: AssetType::Stock,
+            inner: InstrumentEnum::Stock(StockInstrument {
+                symbol: symbol.to_string(),
+                lot_size: Decimal::ONE,
+                tick_size: Decimal::new(1, 2),
+                expiry_date: None,
+                sellable_after_days: 0,
+            }),
+        };
+        let instrument = stock("A");
+        let instruments =
+            HashMap::from([("A".to_string(), stock("A")), ("B".to_string(), stock("B"))]);
+        let prices = HashMap::from([
+            ("A".to_string(), Decimal::from(100)),
+            ("B".to_string(), Decimal::from(100)),
+        ]);
+        let portfolio = Portfolio {
+            cash: Decimal::from(100_000),
+            positions: Arc::new(HashMap::new()),
+            available_positions: Arc::new(HashMap::new()),
+        };
+        let config = crate::risk::RiskConfig::new();
+        let tracker = crate::analysis::TradeTracker::new();
+        let leg = |id: &str, graph: &str| {
+            let mut order =
+                create_test_order("B", OrderSide::Buy, Decimal::from(100), Decimal::from(100));
+            order.id = id.to_string();
+            order.graph_id = Some(graph.to_string());
+            order
+        };
+        let order = create_test_order("A", OrderSide::Buy, Decimal::from(500), Decimal::from(100));
+        let rule = MaxLeverageRule {
+            max_leverage: Decimal::from_str("0.65").unwrap(),
+        };
+
+        let oco = [leg("a", "oco:g"), leg("b", "oco:g")];
+        let ctx = create_context(
+            &portfolio, &instrument, &instruments, &oco, &prices, &tracker, &config,
+        );
+        rule.check(&order, &ctx).expect("OCO legs count once: leverage 0.60");
+
+        let plain = [leg("a", "plan-1"), leg("b", "plan-1")];
+        let ctx = create_context(
+            &portfolio, &instrument, &instruments, &plain, &prices, &tracker, &config,
+        );
+        let err = rule.check(&order, &ctx).expect_err("non-OCO orders each count");
+        assert!(err.to_string().contains("Total leverage 0.70"));
+    }
 }
 
 /// Check max total leverage (Gross Exposure / Equity)
@@ -314,7 +367,12 @@ impl RiskRule for MaxLeverageRule {
         // But for simplicity and performance, maybe we only check the current order's impact?
         // User requirement implies "Total Leverage Circuit Breaker", so we should be strict.
         // Let's iterate active orders.
-        for o in ctx.active_orders {
+        // 同一 OCO 组(如 bracket 的止损止盈)只会成交一条腿, 按一组计一次
+        let pending = crate::model::dedup_oco_legs(
+            ctx.active_orders.iter().collect(),
+            crate::model::larger_remaining,
+        );
+        for o in pending {
             if o.symbol == order.symbol {
                 // Skip orders for the same symbol as we are calculating the "resulting" position
                 // Actually, this is complex. If I have a buy order pending, and I place another buy order.

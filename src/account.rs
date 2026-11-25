@@ -32,10 +32,21 @@ pub fn frozen_cash(
     let mut frozen = Decimal::ZERO;
     // 只记被在途订单改动过的标的的投影持仓, 其余直接读当前持仓。
     let mut projected: HashMap<&str, Decimal> = HashMap::new();
-    for order in active_orders {
-        if !order_reserves_cash(order) {
-            continue;
-        }
+    // 同一 OCO 组(如两张互斥的限价买单)只会成交一条腿, 只冻结占用较大的那条
+    let occupation = |order: &Order| {
+        order
+            .price
+            .or_else(|| prices.get(&order.symbol).copied())
+            .unwrap_or(Decimal::ZERO)
+            * (order.quantity - order.filled_quantity)
+    };
+    let reserving: Vec<&Order> = active_orders
+        .iter()
+        .filter(|order| order_reserves_cash(order))
+        .collect();
+    for order in crate::model::dedup_oco_legs(reserving, |candidate, current| {
+        occupation(candidate) > occupation(current)
+    }) {
         let symbol = order.symbol.as_str();
         let current_pos = projected
             .get(symbol)
