@@ -127,6 +127,10 @@ pub fn is_reduce_first_order(side: OrderSide, position_effect: PositionEffect) -
 /// `place_oco` 登记的组写进成员 `graph_id` 时用的前缀。
 pub const OCO_GRAPH_PREFIX: &str = "oco:";
 
+/// bracket 出场子单因所保护的持仓已了结(为 0 或已反向)而撤销时写入的原因。
+pub const BRACKET_EXIT_POSITION_CLOSED: &str =
+    "Bracket exit cancelled: position closed (flat or reversed)";
+
 /// 在途量统计里同一 OCO 组只算一次。
 ///
 /// 组内只会成交一条腿, 逐张累加会把同一份持仓或资金重复计入。`orders` 是调用方
@@ -542,6 +546,15 @@ impl Order {
     pub fn is_bracket_exit(&self) -> bool {
         self.parent_order_id.is_some()
             && matches!(self.order_role, OrderRole::StopLoss | OrderRole::TakeProfit)
+    }
+
+    /// 持仓为 `position` 时这张单最多能平掉的数量: 卖单平多头、买单平空头,
+    /// 持仓为 0 或与之同向时为 0。bracket 出场子单只减仓, 成交量以此为上限。
+    pub fn closable_quantity(&self, position: Decimal) -> Decimal {
+        match self.side {
+            OrderSide::Sell => position.max(Decimal::ZERO),
+            OrderSide::Buy => (-position).max(Decimal::ZERO),
+        }
     }
 
     /// 在途量统计用的 OCO 组号; 只认登记为 OCO 同伴的两类订单:

@@ -56,20 +56,98 @@ pub(crate) fn has_orders_matching_phase(engine: &Engine, phase: &ExecutionPhase,
         )
     })
 }
-pub(crate) fn flush_accumulated_trades(engine: &mut Engine, trades_to_process: &mut Vec<Trade>) {
+pub(crate) fn flush_accumulated_trades(
+    engine: &mut Engine,
+    py: Python<'_>,
+    trades_to_process: &mut Vec<Trade>,
+) {
     if trades_to_process.is_empty() {
         return;
     }
-    let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
-    engine.state.order_manager.process_trades(
-        std::mem::take(trades_to_process),
-        &mut engine.state.portfolio,
-        &engine.instruments,
-        &engine.risk_manager.config,
-        engine.market_manager.model.as_ref(),
-        &engine.history_buffer,
-        &prices,
+    // bracket 出场子单只减仓: 成交入账后, 持仓已了结的品种上不再有持仓可平的子单
+    // 立即撤销(在下一次撮合之前)。没有挂着的子单时(常态)不收集品种。
+    let traded: Vec<(String, i64)> = if engine
+        .state
+        .order_manager
+        .active_orders
+        .iter()
+        .any(Order::is_bracket_exit)
+    {
+        let mut latest: HashMap<&str, i64> = HashMap::new();
+        for trade in trades_to_process.iter() {
+            let ts = latest.entry(trade.symbol.as_str()).or_insert(trade.timestamp);
+            *ts = (*ts).max(trade.timestamp);
+        }
+        let mut traded: Vec<(String, i64)> = latest
+            .into_iter()
+            .map(|(symbol, ts)| (symbol.to_string(), ts))
+            .collect();
+        traded.sort();
+        traded
+    } else {
+        Vec::new()
+    };
+    {
+        let prices = engine.last_prices.read().expect("last_prices 读锁被污染");
+        engine.state.order_manager.process_trades(
+            std::mem::take(trades_to_process),
+            &mut engine.state.portfolio,
+            &engine.instruments,
+            &engine.risk_manager.config,
+            engine.market_manager.model.as_ref(),
+            &engine.history_buffer,
+            &prices,
+        );
+    }
+    for (symbol, ts) in traded {
+        cancel_bracket_exits_without_position(engine, py, &symbol, ts);
+    }
+}
+
+/// 回测与 paper: 撤掉 `symbol` 上已无持仓可平的 bracket 出场子单(持仓按账户合计, 见
+/// [`crate::order_manager::OrderManager::cancel_bracket_exits_without_position`]):
+/// 通知撮合器、改订单状态、发 order 流事件。策略的 `on_order(Cancelled)` 与 OCO
+/// 同伴撤单一样由订单账本在下一个回调入口派发, 与使持仓归零的那笔成交同一批:
+/// 账本先派发订单状态(按挂单顺序)、再派发成交, 所以它在那笔成交的 `on_trade`
+/// 之前。
+pub(crate) fn cancel_bracket_exits_without_position(
+    engine: &mut Engine,
+    py: Python<'_>,
+    symbol: &str,
+    updated_at: i64,
+) {
+    // 柜台路径不处理: 那里撤单要等柜台回报, 引擎先行把订单记为已撤会与柜台不一致。
+    if engine.execution_model.is_live() {
+        return;
+    }
+    let position = engine
+        .state
+        .portfolio
+        .positions
+        .get(symbol)
+        .copied()
+        .unwrap_or_default();
+    let cancelled = engine
+        .state
+        .order_manager
+        .cancel_bracket_exits_without_position(symbol, position, updated_at);
+    for order in cancelled {
+        engine.execution_model.on_cancel(&order.id);
+        emit_cancelled_order_event(engine, py, &order);
+    }
+}
+
+fn emit_cancelled_order_event(engine: &mut Engine, py: Python<'_>, order: &Order) {
+    let mut cancel_payload = HashMap::new();
+    cancel_payload.insert("order_id", order.id.clone());
+    cancel_payload.insert("status", format!("{:?}", order.status));
+    cancel_payload.insert("filled_qty", order.filled_quantity.to_string());
+    cancel_payload.insert("symbol", order.symbol.clone());
+    cancel_payload.insert(
+        "owner_strategy_id",
+        order.owner_strategy_id.clone().unwrap_or_default(),
     );
+    engine.emit_stream_event(py, "order", Some(order.symbol.as_str()), "info", cancel_payload);
 }
 
 pub(crate) fn apply_execution_report(
@@ -139,28 +217,7 @@ pub(crate) fn apply_execution_report(
                 .order_manager
                 .cancel_active_order(&peer_id, report_updated_at);
             if let Some(cancelled_order_snapshot) = cancelled_order_snapshot {
-                let mut cancel_payload = HashMap::new();
-                cancel_payload.insert("order_id", cancelled_order_snapshot.id.clone());
-                cancel_payload.insert("status", format!("{:?}", cancelled_order_snapshot.status));
-                cancel_payload.insert(
-                    "filled_qty",
-                    cancelled_order_snapshot.filled_quantity.to_string(),
-                );
-                cancel_payload.insert("symbol", cancelled_order_snapshot.symbol.clone());
-                cancel_payload.insert(
-                    "owner_strategy_id",
-                    cancelled_order_snapshot
-                        .owner_strategy_id
-                        .clone()
-                        .unwrap_or_default(),
-                );
-                engine.emit_stream_event(
-                    py,
-                    "order",
-                    Some(cancelled_order_snapshot.symbol.as_str()),
-                    "info",
-                    cancel_payload,
-                );
+                emit_cancelled_order_event(engine, py, &cancelled_order_snapshot);
             }
         }
 

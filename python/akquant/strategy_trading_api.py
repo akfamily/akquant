@@ -1,7 +1,14 @@
 from collections import deque
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union, cast
 
-from .akquant import Order, OrderStatus, OrderType, PositionEffect, TimeInForce
+from .akquant import (
+    Order,
+    OrderRole,
+    OrderStatus,
+    OrderType,
+    PositionEffect,
+    TimeInForce,
+)
 from .config import bare_slippage_error
 
 if TYPE_CHECKING:
@@ -1187,6 +1194,41 @@ def _position_from_execution(strategy: Any, symbol: str, method: str) -> float:
     return float(execution.get_position(symbol))
 
 
+def _cancel_bracket_exits_before_flatten(strategy: Any, symbol: str) -> None:
+    """把仓位平到 0 之前，撤掉该品种上本策略挂着的 bracket 止损止盈子单.
+
+    子单覆盖着持仓时投影持仓为 0，不先撤就不会下平仓单。撤单在本次回调返回后、
+    平仓单过提交时的风控之前生效，投影持仓也不再计入已请求撤单的订单。只撤
+    ``place_bracket`` 生成的子单：普通在途单、手工 ``place_oco`` 的组、其他品种、
+    其他策略槽位的订单都不动。柜台路径（broker_live）撤单要等回报，不在此处理。
+    """
+    execution = getattr(strategy, "execution", None)
+    get_open_orders_method = getattr(execution, "get_open_orders", None)
+    capabilities_method = getattr(execution, "capabilities", None)
+    cancel_order_method = getattr(execution, "cancel_order", None)
+    # 不提供这几个方法的精简后端没有 bracket 子单可撤
+    if not (
+        callable(get_open_orders_method)
+        and callable(capabilities_method)
+        and callable(cancel_order_method)
+    ):
+        return
+    if capabilities_method().get("broker_live"):
+        return
+    owner = str(getattr(strategy, "_owner_strategy_id", "") or "_default")
+    for order in get_open_orders_method(symbol=symbol):
+        if getattr(order, "parent_order_id", None) is None:
+            continue
+        if getattr(order, "order_role", None) not in (
+            OrderRole.StopLoss,
+            OrderRole.TakeProfit,
+        ):
+            continue
+        if str(getattr(order, "owner_strategy_id", None) or "_default") != owner:
+            continue
+        cancel_order_method(order.id)
+
+
 def _target_to_orders(
     strategy: Any,
     symbol: Optional[str] = None,
@@ -1195,10 +1237,16 @@ def _target_to_orders(
     round_to_lot: bool = True,
     **kwargs: Any,
 ) -> Optional[str]:
-    """目标持仓 → 下单的共享核心：按 lot_size 取整 delta（可关闭），不撤单."""
+    """目标持仓 → 下单的共享核心：按 lot_size 取整 delta（可关闭）.
+
+    不撤普通在途单；目标为 0 时先撤该品种上本策略挂着的 bracket 止损止盈
+    （见 ``_cancel_bracket_exits_before_flatten``）。
+    """
     if target_qty is None:
         raise ValueError("target requires a target quantity (目标持仓数量)")
     symbol = resolve_symbol(strategy, symbol)
+    if target_qty == 0:
+        _cancel_bracket_exits_before_flatten(strategy, symbol)
     # 目标仓位问的是"仓位最终会落在哪"，故按投影持仓（含全部在途单）算 delta。
     # 用结算仓会让同一 on_bar 内的连续调用按同一基准重复下单——例如先
     # close_position 再 order_target_percent，会在全平单之外再补一笔卖单造成

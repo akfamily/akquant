@@ -711,6 +711,10 @@ impl StrategyContext {
                     )
                     && (!reducing_only || crate::model::is_position_reducing_order(order))
                     && order.quantity - order.filled_quantity > Decimal::ZERO
+                    // 本次回调里已请求撤单的在途单不再计入(与 get_open_orders 同口径):
+                    // 撤单在回调返回后、新订单过风控之前生效, 先撤后下才能按撤单后的
+                    // 仓位算差额。
+                    && !self.canceled_order_ids.contains(&order.id)
             })
             .collect();
         // 同一 OCO 组(如 bracket 的止损止盈)只会成交一条腿, 按一组投影一次

@@ -294,10 +294,10 @@ impl Processor for ChannelProcessor {
                 if engine.on_simulated_tick()
                     || pending_order_requests.iter().any(Order::is_bracket_exit)
                 {
-                    flush_accumulated_trades(engine, &mut trades_to_process);
+                    flush_accumulated_trades(engine, py, &mut trades_to_process);
                 }
                 if settle_reductions_before_increases {
-                    flush_accumulated_trades(engine, &mut trades_to_process);
+                    flush_accumulated_trades(engine, py, &mut trades_to_process);
                     settle_reductions_before_increases = false;
                 }
                 if run_intermediate_reduce_match {
@@ -394,7 +394,7 @@ impl Processor for ChannelProcessor {
         // 事件全部处理完仍不认识的撤单订单号: 按原样告警并清空。
         engine.flush_deferred_cancels();
 
-        flush_accumulated_trades(engine, &mut trades_to_process);
+        flush_accumulated_trades(engine, py, &mut trades_to_process);
 
         Ok(ProcessorResult::Next)
     }

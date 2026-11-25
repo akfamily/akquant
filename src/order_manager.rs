@@ -215,6 +215,44 @@ impl OrderManager {
         None
     }
 
+    /// `symbol` 的持仓为 `position` 时, 撤掉该品种上已无持仓可平的 bracket 出场子单
+    /// (卖出子单在持仓 <= 0 时、买入子单在持仓 >= 0 时), 原因记为
+    /// [`crate::model::BRACKET_EXIT_POSITION_CLOSED`]; 返回被撤订单的快照。
+    ///
+    /// 持仓只是减少(仍与子单要平的方向一致)时一张都不撤, 成交量的上限由撮合时
+    /// 按持仓缩量兜底。只动未完成的子单: 已被 OCO 同伴撤掉或已成交的不再处理。
+    pub fn cancel_bracket_exits_without_position(
+        &mut self,
+        symbol: &str,
+        position: Decimal,
+        updated_at: i64,
+    ) -> Vec<Order> {
+        let ids: Vec<String> = self
+            .active_orders
+            .iter()
+            .filter(|order| {
+                order.symbol == symbol
+                    && order.is_bracket_exit()
+                    && matches!(
+                        order.status,
+                        OrderStatus::New | OrderStatus::Submitted | OrderStatus::PartiallyFilled
+                    )
+                    && order.closable_quantity(position) <= Decimal::ZERO
+            })
+            .map(|order| order.id.clone())
+            .collect();
+        let mut cancelled = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(order) = self.active_orders.iter_mut().find(|o| o.id == id) {
+                order.reject_reason = crate::model::BRACKET_EXIT_POSITION_CLOSED.to_string();
+            }
+            if let Some(snapshot) = self.cancel_active_order(&id, updated_at) {
+                cancelled.push(snapshot);
+            }
+        }
+        cancelled
+    }
+
     pub fn register_bracket_plan(
         &mut self,
         entry_order_id: String,
@@ -979,5 +1017,83 @@ mod tests {
         manager.handle_oco_terminal_without_fill("a");
         assert_eq!(graph(&manager, "a").as_deref(), Some("oco:g"));
         assert_eq!(graph(&manager, "b"), None);
+    }
+
+    fn bracket_exit(id: &str, side: OrderSide, role: OrderRole) -> Order {
+        let mut order = Order::test_new(id, "TEST", side, OrderType::StopMarket, dec!(10));
+        order.parent_order_id = Some("entry".to_string());
+        order.graph_id = Some("bracket-entry".to_string());
+        order.order_role = role;
+        order
+    }
+
+    fn statuses(manager: &OrderManager) -> Vec<(String, OrderStatus)> {
+        manager
+            .active_orders
+            .iter()
+            .map(|order| (order.id.clone(), order.status))
+            .collect()
+    }
+
+    /// 卖出子单(平多)在持仓 <= 0 时撤销, 持仓仍为正时不动; 普通卖单不受影响。
+    #[test]
+    fn sell_bracket_exits_are_cancelled_once_long_position_is_gone() {
+        let mut manager = OrderManager::new();
+        manager.add_active_order(bracket_exit("s", OrderSide::Sell, OrderRole::StopLoss));
+        manager.add_active_order(bracket_exit("t", OrderSide::Sell, OrderRole::TakeProfit));
+        let mut plain = Order::test_new("p", "TEST", OrderSide::Sell, OrderType::Limit, dec!(10));
+        plain.price = Some(dec!(12));
+        manager.add_active_order(plain);
+        let mut other = bracket_exit("o", OrderSide::Sell, OrderRole::StopLoss);
+        other.symbol = "OTHER".to_string();
+        manager.add_active_order(other);
+
+        // 持仓只是减少: 一张都不撤
+        assert!(
+            manager
+                .cancel_bracket_exits_without_position("TEST", dec!(5), 1)
+                .is_empty()
+        );
+
+        let cancelled = manager.cancel_bracket_exits_without_position("TEST", dec!(0), 7);
+        assert_eq!(
+            cancelled.iter().map(|o| o.id.as_str()).collect::<Vec<_>>(),
+            vec!["s", "t"]
+        );
+        for order in &cancelled {
+            assert_eq!(order.status, OrderStatus::Cancelled);
+            assert_eq!(order.updated_at, 7);
+            assert_eq!(order.reject_reason, crate::model::BRACKET_EXIT_POSITION_CLOSED);
+        }
+        assert_eq!(
+            statuses(&manager),
+            vec![
+                ("s".to_string(), OrderStatus::Cancelled),
+                ("t".to_string(), OrderStatus::Cancelled),
+                ("p".to_string(), OrderStatus::New),
+                ("o".to_string(), OrderStatus::New),
+            ]
+        );
+        // 已撤的不再撤第二次
+        assert!(
+            manager
+                .cancel_bracket_exits_without_position("TEST", dec!(-3), 8)
+                .is_empty()
+        );
+    }
+
+    /// 买入子单(平空)在持仓 >= 0 时撤销, 空头仍在时不动。
+    #[test]
+    fn buy_bracket_exits_are_cancelled_once_short_position_is_gone() {
+        let mut manager = OrderManager::new();
+        manager.add_active_order(bracket_exit("s", OrderSide::Buy, OrderRole::StopLoss));
+        assert!(
+            manager
+                .cancel_bracket_exits_without_position("TEST", dec!(-2), 1)
+                .is_empty()
+        );
+        let cancelled = manager.cancel_bracket_exits_without_position("TEST", dec!(4), 2);
+        assert_eq!(cancelled.len(), 1);
+        assert_eq!(statuses(&manager), vec![("s".to_string(), OrderStatus::Cancelled)]);
     }
 }
