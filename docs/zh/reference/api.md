@@ -253,7 +253,7 @@ def run_from_checkpoint(
 *   `catalog_path`: 当 `data` 未显式传入时，可从该目录按 `ParquetDataCatalog` 规则加载数据。
 *   `config`: `BacktestConfig` 配置对象，用于集中管理配置。
 *   `lot_size`: 最小交易单位。如果是 `int`，应用于所有标的；如果是字典，按标的匹配。
-*   `custom_matchers`: 自定义撮合器字典。
+*   `custom_matchers`: 自定义撮合器字典（`AssetType` → 撮合器对象）。撮合器实现 `match(order, event, instrument, bar_index)`：返回 `Trade` 表示成交，返回 `None` 表示本次不成交。订单的已成交量、成交均价和状态由引擎按返回的成交更新，撮合器不必自己改订单；分批成交时订单保持在途（`PartiallyFilled`），之后继续送进 `match`。订单号、品种、方向与订单不符，或数量不为正、超过订单剩余量的成交被忽略（不入账、不改订单），并记一条错误日志。成交的手续费入账时由引擎按费率重算，`Trade` 里填的 `commission` 不被采用。
 *   `risk_config`: 风控配置。支持字典 (e.g., `{"max_position_pct": 0.1}`) 或 `RiskConfig` 对象。如果同时提供了 `config.strategy_config.risk`，此参数将覆盖其中的同名字段。
 *   `strategy_runtime_config` / `runtime_config_override`: 运行时行为注入与冲突处理开关，支持 `StrategyRuntimeConfig` 或 `dict`。
 *   `strategies_by_slot`: 可选多策略映射。键为 slot id，值为策略类/实例/函数式 on_bar 回调；用于启用 slot 迭代执行。
