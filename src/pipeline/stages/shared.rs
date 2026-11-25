@@ -165,25 +165,7 @@ pub(crate) fn apply_execution_report(
     let report_order_id = order.id.clone();
     let report_status = order.status;
     let report_updated_at = order.updated_at;
-    // bracket 出场子单触发时已无持仓可平、被撮合器撤销(不带成交): 同一张进场单的
-    // 另一张子单同样无仓可平, 一并撤掉(无成交的终结不会触发 OCO 联动)。
-    let closed_bracket_graph = (trade.is_none()
-        && report_status == OrderStatus::Cancelled
-        && order.is_bracket_exit()
-        && order.reject_reason == crate::model::BRACKET_EXIT_POSITION_CLOSED)
-        .then(|| order.graph_id.clone())
-        .flatten();
     engine.state.order_manager.on_execution_report(order);
-    if let Some(graph_id) = closed_bracket_graph {
-        let siblings = engine
-            .state
-            .order_manager
-            .cancel_bracket_exit_siblings(&graph_id, &report_order_id, report_updated_at);
-        for sibling in siblings {
-            engine.execution_model.on_cancel(&sibling.id);
-            emit_cancelled_order_event(engine, py, &sibling);
-        }
-    }
     // 性能: 原实现 get_all_orders() 会克隆整张订单表再 find, 每个成交回报做一次 →
     // O(N²) 且是全程头号热点. 改为 find_order(与 get_all_orders 相同的 orders-first
     // 优先级, 历史订单走索引), 只克隆命中的那一个订单.
