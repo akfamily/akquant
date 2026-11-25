@@ -418,7 +418,12 @@ def _submit_buy_side_orders(
     # 只由公开入口按 quantity is None 判定; 拆腿递归时数量已由 sizer 算出,
     # 须显式传下去, 否则缩量能力随拆腿丢失。
     if allow_quantity_auto_resize is None:
-        allow_quantity_auto_resize = quantity is None
+        # 目标金额类入口(order_target_value 等)经 buy() 下单, 数量是按参考价换算的,
+        # 由 _target_to_orders 在调用期间给出缩量开关; 其余按"数量是否由 sizer 算出"。
+        override = getattr(strategy, "_target_buy_auto_resize", None)
+        allow_quantity_auto_resize = (
+            quantity is None if override is None else bool(override)
+        )
     if quantity is None:
         quantity = round_sizer_quantity(
             strategy,
@@ -1244,6 +1249,9 @@ def _target_to_orders(
     """
     if target_qty is None:
         raise ValueError("target requires a target quantity (目标持仓数量)")
+    # 买入方向资金不足时是否缩量(回测与 paper): None 为不缩量(数量由调用方给定);
+    # 按金额换算数量的入口缺省传 True。不是 buy() 的参数, 在这里取走。
+    allow_auto_resize = kwargs.pop("allow_quantity_auto_resize", None)
     symbol = resolve_symbol(strategy, symbol)
     if target_qty == 0:
         _cancel_bracket_exits_before_flatten(strategy, symbol)
@@ -1272,7 +1280,12 @@ def _target_to_orders(
     # 为契约（不属于 Task 7 变更范围），故在此边界取 .primary 落地为字符串。
     # 空回执(前置风控/柜台拒单/状态未知)返回 None。
     if delta_qty > 0:
-        receipt = buy(strategy, symbol, delta_qty, price, **kwargs)
+        previous = getattr(strategy, "_target_buy_auto_resize", None)
+        strategy._target_buy_auto_resize = allow_auto_resize
+        try:
+            receipt = buy(strategy, symbol, delta_qty, price, **kwargs)
+        finally:
+            strategy._target_buy_auto_resize = previous
         return str(getattr(receipt, "primary", receipt)) or None
     elif delta_qty < 0:
         receipt = sell(strategy, symbol, abs(delta_qty), price, **kwargs)
@@ -1313,6 +1326,9 @@ def order_target_value(
             return None
 
     target_qty = target_value / current_price
+    # 数量是按参考价由金额换算出来的: 买入方向资金不足(安全垫、费用、成交价高于
+    # 参考价)时缩到买得起的最大数量, 而不是整单被拒; 调用方显式传值时以其为准。
+    kwargs.setdefault("allow_quantity_auto_resize", True)
     return _target_to_orders(strategy, symbol, target_qty, price, **kwargs)
 
 

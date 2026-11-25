@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> 规则版本 2.6.0 → 2.6.1：修撮合、提交与 bracket 出场的几处口径（见下文）。受影响的有：用 `custom_matchers` 的回测；用 `place_bracket` / `place_oco` 的策略（bracket 子单主要影响 `CurrentClose` 等当根成交模式；OCO 在途量、bracket 止损止盈只减仓、平仓前先撤子单各成交模式都受影响）；在同一个回调里先撤单、再调用 `order_target*` / `close_position` 的策略（已请求撤单的订单不再计入投影持仓）。不用这几样的回测结果不变。
+> 规则版本 2.6.0 → 2.6.1：修撮合、提交与 bracket 出场的几处口径（见下文）。受影响的有：用 `custom_matchers` 的回测；用 `place_bracket` / `place_oco` 的策略（bracket 子单主要影响 `CurrentClose` 等当根成交模式；OCO 在途量、bracket 止损止盈只减仓、平仓前先撤子单各成交模式都受影响）；在同一个回调里先撤单、再调用 `order_target*` / `close_position` 的策略（已请求撤单的订单不再计入投影持仓）；用 `order_target_value` / `order_target_percent` / `rebalance_weights` 买入且此前因资金不足被拒的订单（现在缩量成交）。不用这几样、也没有这类拒单的回测结果不变。
 
 ### Fixed
 - **自定义撮合器返回成交后订单不了结、每根 K 线被重复成交**（#458，规则版本 2.6.0 → 2.6.1）：`custom_matchers` 里的撮合器只返回 `Trade`、不自己改订单时，成交和资金都入了账，订单却一直是 `submitted`、已成交量为 0，下一根 K 线又被送进 `match` 再成交一次（下单 100 股，期末持有 300 股）。现在由引擎按返回的成交更新订单：已成交量累加、成交均价按量加权，成交完记为 `Filled`，没成交完记为 `PartiallyFilled` 并继续撮合。撮合器自己改过订单的旧写法结果不变，不会重复累加。订单号、品种、方向与订单不符，或数量不为正、超过剩余量的成交被忽略（不入账、不改订单）并记一条错误日志。成交手续费照旧由引擎按费率重算，不采用 `Trade.commission`。
@@ -32,6 +32,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - 只撤 `place_bracket` 生成的子单：普通在途单（照旧计入投影持仓）、手工 `place_oco` 的组、其他品种、其他策略槽位的订单都不动。目标不为 0 的 `order_target*` 与手动 `sell` 不会先撤子单。
     - 随之调整：同一个回调里已请求撤单的在途单不再计入投影持仓与可平持仓（与 `get_open_orders` 的口径一致）。此前 `cancel_all_orders()` 之后紧接着调用 `order_target*`，差额仍按包含那些订单的投影持仓计算。
     - 柜台路径（`broker_live`）不变：撤单要等柜台回报，须自行先撤子单、收到撤单回报后再平仓。
+- **按目标金额、比例、权重买入时资金不足整单被拒**（#459）：`rebalance_weights({symbol: 1.0})`、`order_target_percent(symbol, 1.0)` 这类满仓调仓，数量按参考价由金额换算，提交时可用资金要扣安全垫（缺省万分之一）和佣金，成交价还可能高于参考价，于是必然以 `Insufficient margin` 整单被拒，一股都买不到；多标的调仓里后面的腿也会因前面的腿实际占用超出预算而被拒。现在 `order_target_value`、`order_target_percent`、`rebalance_weights` 产生的买入单打开引擎已有的按可用资金缩量：提交时与成交时资金不足，都缩到买得起的最大整手数（10 万元、10 元一股、每手 100 股时满仓买入成交 9900 股）。
+    - 数量由调用方明确给出的入口不变，资金不足仍整单被拒：`order_target`（目标股数）、`rebalance_positions`（目标持仓数量）、`buy(symbol, quantity)`。
+    - 开关：这几个入口都接受 `allow_quantity_auto_resize`——`order_target_value(..., allow_quantity_auto_resize=False)` 恢复整单校验，`order_target(..., allow_quantity_auto_resize=True)` 让按股数下的单也缩量。
+    - 只缩买入的开仓部分；卖出、开空不缩量。缩量后一手都买不起时仍被拒。柜台路径（`broker_live`）不受影响，报单数量不变。
 
 ## [0.4.0] - 2026-11-25
 

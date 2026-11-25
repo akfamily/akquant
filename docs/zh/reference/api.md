@@ -1039,6 +1039,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
     *   `target_weights` 形如 `{symbol: weight}`，默认要求权重和不超过 `1.0`。
     *   `liquidate_unmentioned=True` 时，会将未出现在目标字典中的现有持仓目标设为 `0`。
     *   执行顺序为先卖后买，减少现金约束导致的调仓失败。
+    *   买入方向资金不足时自动缩量（回测与 paper）：数量是按参考价由权重换算的，扣掉安全垫、佣金或成交价高于参考价后买不起时，缩到买得起的最大整手数，而不是整单被拒。`order_target_value`、`order_target_percent` 相同；传 `allow_quantity_auto_resize=False` 恢复整单校验。按数量调仓的 `order_target`、`rebalance_positions` 不缩量，可传 `allow_quantity_auto_resize=True` 打开。
     *   `rebalance_tolerance` 按组合市值比例跳过小偏差，降低无效换手。
 *   `cancel_order(order_id: str | OrderReceipt | Order)`: 撤销指定订单。可传订单号、下单返回的 `OrderReceipt`（取首腿）或订单对象（取其 `id`）；其他类型抛 `TypeError`。
 *   `cancel_group(group_id: str | OrderReceipt)`: 按 `group_id` 撤销一个逻辑委托拆出的全部腿。传订单对象会抛 `TypeError`，撤单笔订单请用 `cancel_order`。
@@ -1620,7 +1621,7 @@ class RiskConfig:
     *   **减仓/平仓**会释放保证金，变化量为负，先抵掉自己的费用——因此**卖单不需要预先持有现金**，与 A 股"卖出费用从成交款净额扣除"的规则一致。满仓后只剩几十元现金时，全量卖单照常成交。
     *   仅当卖出所得连费用都盖不住时（如持 100 股 0.01 元的股票），该值仍为正并照常验资；放过它等于让现金透支，而透支只有 `check_cash=False` 才允许。
 *   `safety_margin`: 提交时闸门的安全垫（默认 `0.0001`），按 `(1 - safety_margin)` 折减可用资金，用于吸收"提交时用预估价、成交时用真实价"的偏差。成交时闸门不留安全垫。
-*   提交时闸门用**参考价**估算：限价单用限价，市价单用最新价。`fill_policy=NextOpen()` 时最新价就是上一根的收盘价，而真实成交价是下一根的开盘价，所以次日低开（开盘价低于前收盘）乃至平开时，按开盘价算好的满仓市价买单会在提交时被拒——参考价高于成交价，可用资金还要扣掉安全垫（拒单原因 `Insufficient margin`，其中 `Required = 数量 × 参考价 + 佣金`，`Available = 可用资金 × (1 − safety_margin)`）。成交时闸门再按真实成交价校验一次，不留安全垫。规避办法：用限价单，限价按你能接受的最高价给；或 `buy(symbol, quantity=None)` 交给仓位管理器按可用资金计算数量，资金不足时引擎会自动缩到买得起的整手数（提交时与成交时都会缩；显式给 `quantity` 的买单不缩量）；或者按 `参考价 × (1 + 预留比例)` 自己计算数量。
+*   提交时闸门用**参考价**估算：限价单用限价，市价单用最新价。`fill_policy=NextOpen()` 时最新价就是上一根的收盘价，而真实成交价是下一根的开盘价，所以次日低开（开盘价低于前收盘）乃至平开时，按开盘价算好的满仓市价买单会在提交时被拒——参考价高于成交价，可用资金还要扣掉安全垫（拒单原因 `Insufficient margin`，其中 `Required = 数量 × 参考价 + 佣金`，`Available = 可用资金 × (1 − safety_margin)`）。成交时闸门再按真实成交价校验一次，不留安全垫。规避办法：用限价单，限价按你能接受的最高价给；或 `buy(symbol, quantity=None)` 交给仓位管理器按可用资金计算数量，资金不足时引擎会自动缩到买得起的整手数（提交时与成交时都会缩；显式给 `quantity` 的买单不缩量）；或用 `order_target_value` / `order_target_percent` / `rebalance_weights`，它们的买入单同样自动缩量，满仓调仓不会被整单拒掉；或者按 `参考价 × (1 + 预留比例)` 自己计算数量。
 
 这些拒单原因会体现在 `orders_df.reject_reason` 字段中。成交时闸门产生的拒单，原因里会带 `at execution` 标记。订单此前已部分成交（如开了 `volume_limit_pct` 跨多根 bar 成交）时，成交时被拒的只是剩余部分：状态为 `cancelled`，`filled_quantity` 与 `avg_price` 保留已成交部分，原因仍写在 `reject_reason`。
 

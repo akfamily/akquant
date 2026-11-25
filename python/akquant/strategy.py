@@ -4068,7 +4068,8 @@ class Strategy:
         :param symbol: 标的代码 (不填默认当前 Bar/Tick 的 symbol)
         :param target: 目标持仓数量 (例如 100, -100)
         :param price: 限价 (可选)
-        :param kwargs: 其他下单参数
+        :param kwargs: 其他下单参数; 另接受 ``allow_quantity_auto_resize``
+            (缺省不缩量): 传 True 时买入方向资金不足缩到买得起的最大整手数
         :return: 本次调仓产生的订单 ID; 若无需交易则返回 None
         """
         return _order_target_impl(self, symbol, target, price, **kwargs)
@@ -4097,7 +4098,9 @@ class Strategy:
         :param symbol: 标的代码 (不填默认当前 Bar/Tick 的 symbol)
         :param target_value: 目标持仓价值
         :param price: 限价 (可选)
-        :param kwargs: 其他下单参数
+        :param kwargs: 其他下单参数; 另接受 ``allow_quantity_auto_resize``
+            (缺省 True): 买入方向资金不足时缩到买得起的最大整手数而不是整单
+            被拒(回测与 paper), 传 False 恢复整单校验
         :return: 本次调仓产生的订单 ID; 若无需交易或无法定价则返回 None
         """
         return _order_target_value_impl(self, symbol, target_value, price, **kwargs)
@@ -4115,7 +4118,9 @@ class Strategy:
         :param symbol: 标的代码 (不填默认当前 Bar/Tick 的 symbol)
         :param target_percent: 目标持仓比例 (0.5 = 50%)
         :param price: 限价 (可选)
-        :param kwargs: 其他下单参数
+        :param kwargs: 其他下单参数; 另接受 ``allow_quantity_auto_resize``
+            (缺省 True): 买入方向资金不足时缩到买得起的最大整手数而不是整单
+            被拒(回测与 paper), 传 False 恢复整单校验
         :return: 本次调仓产生的订单 ID; 若无需交易则返回 None
         """
         return _order_target_percent_impl(self, symbol, target_percent, price, **kwargs)
@@ -4137,7 +4142,9 @@ class Strategy:
         :param liquidate_unmentioned: 是否清仓未出现在目标权重中的现有持仓
         :param allow_leverage: 是否允许目标权重和超过 1.0
         :param rebalance_tolerance: 调仓容忍阈值（按组合市值比例）
-        :param kwargs: 其他下单参数
+        :param kwargs: 其他下单参数; 另接受 ``allow_quantity_auto_resize``
+            (缺省 True): 买入方向资金不足时缩到买得起的最大整手数而不是整单
+            被拒(回测与 paper), 传 False 恢复整单校验
         :return: 本次调仓产生的所有订单 ID 列表 (无交易时为空列表)
         """
         return _rebalance_weights_impl(
@@ -4171,7 +4178,8 @@ class Strategy:
         :param allow_short: 是否允许负目标仓位；默认按执行环境能力自动推断
         :param strict_short_capability: 当执行环境未声明可做空时是否严格拒绝
         :param missing_price_mode: price_map 缺项时的处理方式: ignore / skip / fail
-        :param kwargs: 其他下单参数
+        :param kwargs: 其他下单参数; 另接受 ``allow_quantity_auto_resize``
+            (缺省不缩量): 传 True 时买入方向资金不足缩到买得起的最大整手数
         :return: 本次调仓产生的所有订单 ID 列表 (无交易时为空列表)
         """
         return _rebalance_positions_impl(
