@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-25
+
 > 规则版本 2.5.3 → 2.6.0：新增可选的模拟 tick 撮合语义（`simulate_ticks`）。开关缺省关闭，关闭时回测结果不变。
 
 ### Added
