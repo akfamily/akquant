@@ -273,7 +273,7 @@ With the switch on, the engine emits four simulated ticks before every bar: the 
 
 **Matching rules**
 
-* A market order placed in `on_tick` fills on the simulated tick that triggered it, at the tick price (plus slippage), regardless of `fill_policy`.
+* A market order placed in `on_tick` fills on the simulated tick that triggered it, at the tick price (plus slippage), regardless of `fill_policy`; a fill mode given explicitly on the order does not apply either.
 * A limit order resting from `on_tick` fills at its limit price (no price improvement) when a later simulated tick crosses it; a stop order fills at the price of the tick that crosses the trigger. They are matched by simulated ticks only and are not subject to the volume limit; commission, slippage, T+1, risk checks and cash checks apply as usual.
 * Orders placed in `on_bar` / `on_timer` are still matched by bars only, under `fill_policy`, with exactly the same rules as when the switch is off.
 * With a single strategy whose `on_tick` is a no-op, the fills, equity curve, indicator points and `metrics` are identical with the switch on and off.
@@ -282,7 +282,7 @@ With the switch on, the engine emits four simulated ticks before every bar: the 
 
 * Simulated ticks add no equity points, do not count toward `bar_count` or progress, and are not written to `get_history`: inside `on_tick` you get closed bars only, and no `freq` is needed.
 * Simulated ticks do update the last price: position value in `on_tick` and amount-based order sizing use the current simulated tick price; a bar follows the four ticks, so the last price seen in `on_bar` is the same as with the switch off.
-* With the switch on, all symbols are handled as tick/bar dual streams: base-frequency `self.I()` indicators advance on bars only, while indicators declared with `intrabar=True` emit provisional values on simulated ticks (the provisional value on the fourth tick equals the confirmed value that follows).
+* With the switch on, all symbols are handled as tick/bar dual streams: base-frequency `self.I()` indicators advance on bars only, while indicators declared with `intrabar=True` emit provisional values on simulated ticks (the provisional value on the fourth tick equals the confirmed value that follows). Read in `on_order` / `on_trade` on a bar step, such an indicator gives the previous bar's confirmed value, the same as with the switch off.
 * `on_portfolio_update` also fires on simulated ticks when you hold a position and the price changes.
 
 **Differences to be aware of**
@@ -297,7 +297,6 @@ The items below are differences that can appear between switch-on and switch-off
 * **Fill timestamps**: a fill from `on_tick` is stamped with the simulated tick's instant (a few seconds before the bar ends), which is not the timestamp of any bar; `result.viz.review` draws the marker for such a fill on the previous bar.
 * **Provisional points of `intrabar` indicators**: on daily, hourly and similar periods, the provisional values of `intrabar=True` indicators on simulated ticks are not reported for plotting.
 * **Tick history**: simulated ticks are not written to history, so `get_history(freq="tick")` returns no data.
-* **Fill mode shown on the order**: for an order placed in `on_tick`, the fill mode on the order object is "current bar close, same period", independent of the run-level `fill_policy`.
 * **When no simulated ticks are generated**: none for non-continuous sessions such as call auctions, nor for bars with zero volume. A daily bar stamped at the close (e.g. 15:00) without `freq` is classified as the closing call auction and gets none at all; the backtest then ends with a warning, and passing `freq="1d"` fixes it.
 * **Run time**: every bar adds four `on_tick` calls. Measured with an empty `on_tick`, a single symbol and 50,000 1-minute bars, the backtest takes about 2.5 times as long as with the switch off.
 * **Backtest only**: live trading and checkpoint resume do not support it, and it cannot be combined with real tick data. In live trading, whether `on_tick` fires depends on whether the market gateway pushes ticks.

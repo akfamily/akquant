@@ -176,6 +176,16 @@ def _restore_before_simulated_ticks(strategy: Any, saved: _SimTickSaved) -> None
     strategy._framework_portfolio_dirty = portfolio_dirty
     strategy.current_bar = current_bar
     strategy.current_tick = current_tick
+    # 基础周期 intrabar 指标在模拟 tick 上写的临时值: 要到本标的的 K 线推进指标时才
+    # 清, 而订单回调在那之前派发。这类指标的临时值只可能来自本组模拟 tick, 清掉即
+    # 还原(窗口周期指标的临时值由基础 K 线闭合写入, 关闭开关时同样存在, 不动)。
+    indicators = strategy._incremental_indicators
+    if indicators:
+        for name in indicators:
+            item = strategy._get_incremental_registration(name)
+            if item.intrabar and item.freq is None and not item.precomputed:
+                for symbol in list(item.provisional):
+                    item.clear_provisional(symbol)
 
 
 def on_bar_event(strategy: Any, bar: Bar, ctx: StrategyContext) -> None:

@@ -1835,3 +1835,150 @@ def test_resting_limit_fills_at_limit_price_across_a_gap() -> None:
     # 第一笔是 on_bar 里的买入; 第二笔按限价 11.0 成交, 不按开盘 tick 价 10.5。
     assert len(buys) == 2
     assert buys[1] == ("buy", fourth_open, pytest.approx(11.0))
+
+
+# ---------------------------------------------------------------------------
+# intrabar 基础周期指标: K 线步的订单回调里读到上一根的确认值(S15)
+# ---------------------------------------------------------------------------
+
+
+class _IntrabarStopFromTrade(Strategy):
+    """第 3 根 on_bar 买入; on_trade 里按 ``sma[0] * 0.97`` 挂止损并记下读数."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.bars_seen = 0
+        self.ticks = 0
+        self.stop_set = False
+        self.records: List[Tuple[Any, ...]] = []
+
+    def on_start(self) -> None:
+        self.sma = self.I(aq.SMA(2), name="sma", intrabar=True)
+
+    def on_tick(self, tick: Tick) -> None:
+        self.ticks += 1
+
+    def on_bar(self, bar: Bar) -> None:
+        self.bars_seen += 1
+        if self.bars_seen == 3:
+            self.buy(bar.symbol, 1000)
+
+    def on_trade(self, trade: Any) -> None:
+        assert self.ctx is not None
+        self.records.append(
+            (
+                int(self.ctx.current_time),
+                round(float(self.sma[0]), 6),
+                bool(self.sma.confirmed),
+                round(float(self.close), 6),
+            )
+        )
+        if not self.stop_set and str(trade.side).endswith("Buy"):
+            self.stop_set = True
+            self.sell(
+                trade.symbol, 1000, trigger_price=round(float(self.sma[0]) * 0.97, 2)
+            )
+
+
+@pytest.mark.parametrize("fill_policy", [aq.NextOpen, aq.CurrentClose])
+def test_intrabar_base_indicator_in_order_callbacks_matches_switch_off(
+    fill_policy: Any,
+) -> None:
+    """on_trade 里读 intrabar 基础周期指标: 读数与按它定的止损价与关闭时相同."""
+    frame = _frame(10)
+    # 第 8 根起大幅下跌, 让止损单成交(成交后 _fingerprint 才有成交行可比)。
+    frame.loc[7:, ["open", "high", "low", "close"]] = [5.0, 5.1, 4.9, 5.0]
+    off = _IntrabarStopFromTrade()
+    result_off = _run(off, frame, fill_policy=fill_policy())
+    on = _IntrabarStopFromTrade()
+    result_on = _run(on, frame, fill_policy=fill_policy(), simulate_ticks=True)
+
+    assert on.ticks > 0
+    assert off.stop_set and on.stop_set
+    assert off.records, "基线的 on_trade 应被调用"
+    assert on.records == off.records
+    assert _fingerprint(result_on) == _fingerprint(result_off)
+
+    def stops(result: Any) -> List[float]:
+        orders = result.orders_df.sort_values("created_at")
+        return [float(v) for v in orders["stop_price"].dropna()]
+
+    assert stops(result_off)
+    assert stops(result_on) == stops(result_off)
+
+
+class _TwoSymbolIntrabar(Strategy):
+    """标的 A 的 on_bar 里读标的 B 的 intrabar 指标: B 的 K 线此刻还没处理."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ticks = 0
+        self.records: List[Tuple[Any, ...]] = []
+
+    def on_start(self) -> None:
+        self.sma = self.I(factory=lambda: aq.SMA(2), name="sma", intrabar=True)
+
+    def on_tick(self, tick: Tick) -> None:
+        self.ticks += 1
+
+    def on_bar(self, bar: Bar) -> None:
+        if str(bar.symbol) != _SYMBOL:
+            return
+        other = self.sma.of(_OTHER)
+        value = other[0]
+        self.records.append(
+            (
+                int(bar.timestamp),
+                None if value is None else round(float(value), 6),
+                bool(other.confirmed),
+            )
+        )
+
+
+def test_intrabar_other_symbol_value_in_on_bar_matches_switch_off() -> None:
+    """多标的: A 的 on_bar 里读 B 的指标, 读到 B 上一根的确认值, 与关闭时相同."""
+    frame = pd.concat([_frame(8), _frame(8, symbol=_OTHER, base=20.0)])
+    symbols = [_SYMBOL, _OTHER]
+    off = _TwoSymbolIntrabar()
+    _run(off, frame, symbols=symbols)
+    on = _TwoSymbolIntrabar()
+    _run(on, frame, symbols=symbols, simulate_ticks=True)
+
+    assert on.ticks > 0
+    assert any(entry[1] is not None for entry in off.records)
+    assert all(entry[2] for entry in off.records)
+    assert on.records == off.records
+
+
+class _WindowIntrabar(Strategy):
+    """窗口周期 intrabar 指标: 在 on_bar 里记 ``[0]`` 与 confirmed."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.subscribe_bars("5min")
+        self.ticks = 0
+        self.records: List[Tuple[Any, ...]] = []
+
+    def on_start(self) -> None:
+        self.sma5 = self.I(aq.SMA(2), name="sma5", freq="5min", intrabar=True)
+
+    def on_tick(self, tick: Tick) -> None:
+        self.ticks += 1
+
+    def on_bar(self, bar: Bar) -> None:
+        self.records.append(
+            (int(bar.timestamp), self.sma5[0], bool(self.sma5.confirmed))
+        )
+
+
+def test_window_intrabar_indicator_in_on_bar_matches_switch_off() -> None:
+    """窗口周期指标的临时值不受影响: 读数与关闭开关时相同, 且确有临时值."""
+    frame = _frame(24)
+    off = _WindowIntrabar()
+    _run(off, frame)
+    on = _WindowIntrabar()
+    _run(on, frame, simulate_ticks=True)
+
+    assert on.ticks > 0
+    assert any(not entry[2] for entry in off.records), "基线应读到窗口临时值"
+    assert on.records == off.records
