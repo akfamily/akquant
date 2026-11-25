@@ -1043,8 +1043,8 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `cancel_order(order_id: str | OrderReceipt | Order)`: 撤销指定订单。可传订单号、下单返回的 `OrderReceipt`（取首腿）或订单对象（取其 `id`）；其他类型抛 `TypeError`。
 *   `cancel_group(group_id: str | OrderReceipt)`: 按 `group_id` 撤销一个逻辑委托拆出的全部腿。传订单对象会抛 `TypeError`，撤单笔订单请用 `cancel_order`。
 *   `cancel_all_orders(symbol)`: 取消指定标的的所有挂单。如果不指定 `symbol`，则取消所有挂单。
-*   `place_oco(first_order_id, second_order_id, group_id=None) -> str`: 创建 OCO 订单组。组内任一订单成交后，另一订单会被自动撤单。组内只会成交一张，所以提交时的可用持仓校验、投影持仓与可平持仓（`order_target*`、`close_position` 据此算差额）、买入力、冻结资金等在途量统计里，同一组同品种同方向的两张单按一组算一次，取剩余量较大的那张。回测登记后，两张单的 `graph_id` 写为 `oco:<组号>`（此前为空）；单子本身已有 `graph_id` 时不改写，这样的组在统计里各算一次。
-*   `place_bracket(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...) -> str`: 创建 Bracket 订单。先提交进场单，进场成交后自动提交止损/止盈；当止损与止盈同时存在时会自动绑定 OCO，在途量统计里按一组算一次（同 `place_oco`）。子单挂着时，它们已占着进场的那部分持仓：`close_position` / `order_target(symbol, 0)` 不会再下单（与挂着一张等量普通卖单时相同），`CurrentClose` 等提交时校验可用持仓的模式下手动卖出同样数量会被拒；要手动离场，先撤掉子单。
+*   `place_oco(first_order_id, second_order_id, group_id=None) -> str`: 创建 OCO 订单组。组内任一订单成交后，另一订单会被自动撤单。组内只会成交一张，所以提交时的可用持仓校验、投影持仓（`order_target*`、`close_position` 据此算差额）、买入力、冻结资金等在途量统计里，同一组同品种同方向的两张单按一组算一次，取剩余量较大的那张；可平持仓只计平仓单，组内两张都是平仓单时同样只算一次。回测登记后，两张单的 `graph_id` 写为 `oco:<组号>`（此前为空），多策略槽位下写为 `oco:<槽位>:<组号>`，不同槽位用同一个组号（含默认的 `oco-1`）也是不同的组；单子本身已有 `graph_id` 时不改写，这样的组在统计里各算一次。组在下一次进入引擎时才登记：同一个回调里先 `place_oco`、紧接着调用 `close_position` / `order_target*`，这两张单还按两张计算：持仓 100、两张卖单各 100 时投影持仓是 −100，平到 0 会下一张买入 100。
+*   `place_bracket(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...) -> str`: 创建 Bracket 订单。先提交进场单，进场成交后自动提交止损/止盈；当止损与止盈同时存在时会自动绑定 OCO，在途量统计里按一组算一次（同 `place_oco`；子单的开平标志沿用进场单，是开仓，本来就不计入可平持仓）。子单挂着时，它们已占着进场的那部分持仓：`close_position` / `order_target(symbol, 0)` 只卖出超出子单数量的部分，子单覆盖全部持仓时不下单、返回 `None`（与挂着一张等量普通卖单时相同），`CurrentClose` 等提交时校验可用持仓的模式下手动卖出同样数量会被拒；要手动离场，先撤掉子单。
 
 **数据与工具:**
 

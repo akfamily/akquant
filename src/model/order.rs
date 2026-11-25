@@ -131,8 +131,9 @@ pub const OCO_GRAPH_PREFIX: &str = "oco:";
 ///
 /// 组内只会成交一条腿, 逐张累加会把同一份持仓或资金重复计入。`orders` 是调用方
 /// 按自己的口径(状态、品种等)筛过的在途订单; 同一组(见 [`Order::oco_group_key`])
-/// 里同品种、同方向的腿只保留一条, 由 `prefer(候选, 当前保留)` 决定是否替换,
-/// 先出现的优先; 其余订单原样保留, 顺序不变。不同品种或方向相反的腿不合并。
+/// 里同所属策略、同品种、同方向的腿只保留一条, 由 `prefer(候选, 当前保留)` 决定是否
+/// 替换, 先出现的优先; 其余订单原样保留, 顺序不变。不同品种、方向相反或属于不同
+/// 策略的腿不合并(组号在登记时已按策略槽位区分, 这里再按所属策略兜一道)。
 pub fn dedup_oco_legs<'a>(
     orders: Vec<&'a Order>,
     prefer: impl Fn(&Order, &Order) -> bool,
@@ -140,13 +141,22 @@ pub fn dedup_oco_legs<'a>(
     if !orders.iter().any(|order| order.oco_group_key().is_some()) {
         return orders;
     }
-    let mut kept: std::collections::HashMap<(&str, &str, OrderSide), usize> =
+    type LegKey<'k> = (&'k str, Option<&'k str>, &'k str, OrderSide);
+    let leg_key = |group: &'a str, order: &'a Order| -> LegKey<'a> {
+        (
+            group,
+            order.owner_strategy_id.as_deref(),
+            order.symbol.as_str(),
+            order.side,
+        )
+    };
+    let mut kept: std::collections::HashMap<LegKey<'a>, usize> =
         std::collections::HashMap::new();
     for (index, order) in orders.iter().enumerate() {
         let Some(group) = order.oco_group_key() else {
             continue;
         };
-        let key = (group, order.symbol.as_str(), order.side);
+        let key = leg_key(group, order);
         match kept.get(&key) {
             Some(&current) if !prefer(order, orders[current]) => {}
             _ => {
@@ -158,9 +168,9 @@ pub fn dedup_oco_legs<'a>(
         .iter()
         .enumerate()
         .filter(|(index, order)| {
-            order.oco_group_key().is_none_or(|group| {
-                kept.get(&(group, order.symbol.as_str(), order.side)) == Some(index)
-            })
+            order
+                .oco_group_key()
+                .is_none_or(|group| kept.get(&leg_key(group, order)) == Some(index))
         })
         .map(|(_, order)| *order)
         .collect()
@@ -914,6 +924,12 @@ mod tests {
         let first = pending_leg("p1", "X", OrderSide::Sell, Some("plan-1"));
         let second = pending_leg("p2", "X", OrderSide::Sell, Some("plan-1"));
         assert_eq!(kept_ids(&[first, second]), ["p1", "p2"]);
+
+        let mut mine = pending_leg("m", "X", OrderSide::Sell, Some("oco:g"));
+        mine.owner_strategy_id = Some("a".to_string());
+        let mut theirs = pending_leg("t", "X", OrderSide::Sell, Some("oco:g"));
+        theirs.owner_strategy_id = Some("b".to_string());
+        assert_eq!(kept_ids(&[mine, theirs]), ["m", "t"]);
 
         let buy = pending_leg("b", "X", OrderSide::Buy, Some("oco:g"));
         let sell = pending_leg("s", "X", OrderSide::Sell, Some("oco:g"));

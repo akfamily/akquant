@@ -628,3 +628,129 @@ def test_frozen_cash_counts_a_buy_side_oco_group_once() -> None:
     result = _run_script(script, aq.NextOpen(), probes={1: ["frozen_cash"]})
 
     assert result.strategy.seen["frozen_cash"] == pytest.approx(900.0)
+
+
+# ---------------------------------------------------------------------------
+# 多策略槽位: 各自 place_oco 的组互不合并、互不误撤
+# ---------------------------------------------------------------------------
+
+
+class _SlotOco(Strategy):
+    """第 1 根买 100; 第 2 根挂限价卖 + 止损卖并 place_oco; 第 3 根可选再卖 100."""
+
+    limit_price = 13.0
+    stop_price = 9.0
+    group_id: Optional[str] = None
+    sell_again = False
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.n = 0
+        self.legs: List[str] = []
+        self.seen: Dict[str, float] = {}
+
+    def on_bar(self, bar: Bar) -> None:
+        """按序号下单."""
+        if self.n == 0:
+            self.buy(_SYMBOL, 100)
+        elif self.n == 1:
+            first = self.sell(_SYMBOL, 100, price=self.limit_price)
+            second = self.sell(_SYMBOL, 100, trigger_price=self.stop_price)
+            self.legs = [str(getattr(r, "primary", r)) for r in (first, second)]
+            self.place_oco(first, second, group_id=self.group_id)
+        elif self.n == 2:
+            ctx = self.ctx
+            assert ctx is not None
+            self.seen["projected"] = ctx.get_projected_position(_SYMBOL)
+            if self.sell_again:
+                self.sell(_SYMBOL, 100)
+        self.n += 1
+
+
+def _run_slots(
+    first: _SlotOco, second: _SlotOco, prices: List[float], policy: Any
+) -> Any:
+    return aq.run_backtest(
+        data={_SYMBOL: _daily(prices)},
+        strategy=first,
+        strategies_by_slot={"slot_b": second},
+        symbols=_SYMBOL,
+        initial_cash=100000.0,
+        freq="1d",
+        fill_policy=policy,
+        t_plus_one=False,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        show_progress=False,
+    )
+
+
+def _status_by_id(result: Any) -> Dict[str, Tuple[str, str]]:
+    return {
+        str(row["id"]): (str(row["status"]), str(row["reject_reason"]))
+        for row in result.orders_df.to_dict("records")
+    }
+
+
+@pytest.mark.parametrize("group_id", [None, "g"], ids=["default_id", "same_id"])
+def test_slot_oco_groups_are_counted_separately(group_id: Optional[str]) -> None:
+    """两个槽位各挂一组 OCO(默认组号都是 oco-1, 或都传 "g"): 按两组计算.
+
+    持仓 200、两组各在途 100: 投影持仓 0; CurrentClose 下主槽位再卖 100 被拒,
+    在途卖出 200。
+    """
+    a = type("_A", (_SlotOco,), {"group_id": group_id, "sell_again": True})()
+    b = type("_B", (_SlotOco,), {"group_id": group_id})()
+
+    result = _run_slots(a, b, [10.0] * 5, aq.CurrentClose())
+
+    assert a.seen["projected"] == 0.0
+    assert b.seen["projected"] == 0.0
+    manual = [
+        row
+        for row in result.orders_df.to_dict("records")
+        if str(row["order_type"]) == "market" and str(row["side"]) == "sell"
+    ]
+    assert len(manual) == 1
+    assert str(manual[0]["status"]) == "rejected"
+    assert "Available: 200, Pending Sell: 200, Required: 100" in str(
+        manual[0]["reject_reason"]
+    )
+    assert _position(result) == 200.0
+
+
+@pytest.mark.parametrize("group_id", [None, "g"], ids=["default_id", "same_id"])
+def test_slot_oco_fill_cancels_only_its_own_peer(group_id: Optional[str]) -> None:
+    """主槽位的限价腿成交: 只撤它自己的止损腿, slot_b 的两张单照旧挂着."""
+    a = type("_A", (_SlotOco,), {"group_id": group_id})()
+    b = type("_B", (_SlotOco,), {"group_id": group_id, "limit_price": 15.0})()
+
+    result = _run_slots(a, b, [10.0, 10.0, 10.0, 13.5, 13.5], aq.NextOpen())
+
+    status = _status_by_id(result)
+    assert status[a.legs[0]][0] == "filled"
+    assert status[a.legs[1]][0] == "cancelled"
+    assert status[b.legs[0]][0] == "new"
+    assert status[b.legs[1]][0] == "new"
+    assert _position(result) == 100.0
+
+
+def test_single_strategy_oco_graph_id_is_unchanged() -> None:
+    """单策略(所属 _default)下组员的 graph_id 仍是 oco:<组号>."""
+    a = _SlotOco()
+    result = aq.run_backtest(
+        data={_SYMBOL: _daily([10.0] * 4)},
+        strategy=a,
+        symbols=_SYMBOL,
+        initial_cash=100000.0,
+        freq="1d",
+        fill_policy=aq.NextOpen(),
+        t_plus_one=False,
+        commission_rate=0.0,
+        show_progress=False,
+    )
+
+    graph = {order.id: order.graph_id for order in result.orders}
+    assert [graph[leg] for leg in a.legs] == ["oco:oco-1", "oco:oco-1"]

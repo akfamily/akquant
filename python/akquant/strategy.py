@@ -3448,6 +3448,13 @@ class Strategy:
         """
         _cancel_all_orders_impl(self, symbol)
 
+    def _engine_oco_group_key(self, group_key: str) -> str:
+        """引擎 OCO 组表里的组号: 多策略槽位下加上所属策略, 形如 ``<槽位>:<组号>``."""
+        owner = str(getattr(self, "_owner_strategy_id", "") or "").strip()
+        if not owner or owner == "_default":
+            return group_key
+        return f"{owner}:{group_key}"
+
     def place_oco(
         self,
         first_order_id: Union[str, OrderReceipt],
@@ -3486,12 +3493,18 @@ class Strategy:
             engine = getattr(self, "_engine", None)
             register_oco = getattr(engine, "register_oco_group", None)
             if callable(register_oco):
+                # 引擎里所有策略槽位共用一张 OCO 组表, 组号按槽位各自计数(每个槽位
+                # 第一组都叫 oco-1), 用户也可能给两个槽位传同一个组号: 登记时带上
+                # 所属策略, 不同槽位的同名组才是不同的组(不互相覆盖、不误撤对方
+                # 的单、在途量不合并)。单策略(所属为空或 _default)照旧用原组号。
+                # 返回值与 cancel_group 用的仍是原组号。
+                engine_key = self._engine_oco_group_key(group_key)
                 try:
-                    register_oco(group_key, first, second)
+                    register_oco(engine_key, first, second)
                     self._use_engine_oco = True
                     return group_key
                 except Exception:
-                    self._pending_engine_oco_groups.append((group_key, first, second))
+                    self._pending_engine_oco_groups.append((engine_key, first, second))
                     self._use_engine_oco = True
                     return group_key
 
