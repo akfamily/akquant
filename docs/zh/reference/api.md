@@ -92,9 +92,14 @@ def run_backtest(
     broker_profile: Optional[str] = None,
     fill_policy: Optional[FillMode] = None,
     strict_strategy_params: bool = True,
+    simulate_ticks: bool = False,
     **kwargs: Any,
 ) -> BacktestResult
 ```
+
+**关键参数补充:**
+
+*   `simulate_ticks`: 回测数据只有 K 线时，把每根 K 线拆成四个模拟 tick（开盘价、两个极值、收盘价）驱动 `on_tick`，缺省 `False`。`on_tick` 里下的单按模拟 tick 撮合：市价单在该 tick 上按 tick 价成交；挂着的限价单被越过时按限价成交，止损单按触发时的 tick 价成交。`on_bar`、`on_timer` 里下的单仍按 K 线撮合，结果与关闭时相同。数据里已有真实 tick 时不能使用，也只用于回测；`run_from_checkpoint` 不接受这个参数。见[策略指南](../guide/strategy.md#simulate-ticks)“只有 K 线时回测 `on_tick`”。
 
 ### `akquant.run_grid_search`
 
@@ -203,6 +208,8 @@ def run_from_checkpoint(
 对这些字段，优先级为：显式函数参数 > `config.strategy_config` > checkpoint 恢复值 / 默认值。
 
 `sessions` / `trading_calendar` 与 `run_backtest` 同义。存档保存这两项，续跑不传就沿用存档里的配置；传入且与存档不一致时以传入为准并告警。
+
+`run_from_checkpoint` 不接受 `simulate_ticks`：模拟 tick 不支持存档续跑。传入这个参数（无论真假），或存档来自 `simulate_ticks=True` 的回测时，报 `ValueError`。
 
 **通用行为说明（主要对应 `run_backtest`，`run_from_checkpoint` 共享其中的成交/风控/策略映射规则）:**
 

@@ -38,6 +38,13 @@ pub trait ExecutionClient: Send + Sync {
     /// 不在本地撮合的客户端(实盘)无需处理。
     fn mark_created_off_bar(&mut self, _order_id: &str) {}
 
+    /// 回测用 K 线模拟 tick 的开关(见 `Engine.simulate_ticks`)。
+    fn set_simulated_ticks(&mut self, _enabled: bool) {}
+
+    /// 该订单是在模拟 tick 上创建的: 只由模拟 tick 撮合, 不由 K 线撮合。
+    /// 须在 `on_order` 之后调用。
+    fn mark_created_on_sim_tick(&mut self, _order_id: &str) {}
+
     /// 取消订单请求
     fn on_cancel(&mut self, order_id: &str);
 

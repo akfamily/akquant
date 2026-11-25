@@ -111,6 +111,10 @@ pub struct SimulatedExecutionClient {
     last_interval_bar_ts: HashMap<String, i64>,
     /// 品种 -> 当日集合竞价状态。
     auctions: HashMap<String, AuctionState>,
+    /// 回测用 K 线模拟 tick 是否打开。
+    simulated_ticks: bool,
+    /// 在模拟 tick 上创建的订单: 只由 tick 事件撮合(spec S8)。
+    sim_tick_order_ids: HashSet<String>,
     /// 已提示过"竞价期成交量为 0"的品种。
     zero_volume_auction_warned: HashSet<String>,
 }
@@ -247,6 +251,8 @@ impl SimulatedExecutionClient {
             deferred_same_cycle_total: 0,
             auctions: HashMap::new(),
             zero_volume_auction_warned: HashSet::new(),
+            simulated_ticks: false,
+            sim_tick_order_ids: HashSet::new(),
         }
     }
 
@@ -426,6 +432,14 @@ impl SimulatedExecutionClient {
         ) && self.created_off_bar_ids.contains(&order.id)
     }
 
+    /// 两条互不相交的撮合通道(simulate_ticks): 模拟 tick 上创建的订单只由 tick
+    /// 事件撮合, 其余订单只由非 tick 事件(K 线、定时器、集合竞价统一撮合的合成
+    /// 事件)撮合。返回 true 表示该事件不得撮合该订单。开关关闭时恒为 false。
+    fn in_other_lane(&self, order: &Order, event: &Event) -> bool {
+        self.simulated_ticks
+            && (matches!(event, Event::Tick(_)) != self.sim_tick_order_ids.contains(&order.id))
+    }
+
     fn event_timestamp(event: &Event) -> Option<i64> {
         match event {
             Event::Bar(bar) => Some(bar.timestamp),
@@ -561,6 +575,10 @@ impl SimulatedExecutionClient {
         for id in finished_ids {
             self.orders.remove(&id);
             self.created_off_bar_ids.remove(&id);
+            // 只有打开 simulate_ticks 时才登记过(关闭时不多做一次集合删除)
+            if self.simulated_ticks {
+                self.sim_tick_order_ids.remove(&id);
+            }
         }
         self.order_queue.retain(|id| self.orders.contains_key(id));
     }
@@ -622,6 +640,10 @@ impl SimulatedExecutionClient {
                 }
 
                 if uncross.is_none() && self.skips_same_time_interval_bar(order_ref, event) {
+                    continue;
+                }
+                // 统一撮合的合成事件也要查通道: 它属于 K 线通道, 不撮合 tick 通道的单。
+                if self.in_other_lane(order_ref, event) {
                     continue;
                 }
                 let order_snapshot = order_ref.clone();
@@ -712,6 +734,8 @@ impl SimulatedExecutionClient {
                             ignore_volume: uncross.is_some_and(|u| u.ignore_volume),
                             bar_index: ctx.bar_index,
                             last_price: ctx.last_prices.get(&order.symbol).copied(),
+                            simulated_ticks: self.simulated_ticks
+                                && matches!(event, Event::Tick(_)),
                         };
                         let report_opt = matcher.match_order(order, &match_ctx);
                         if let Some(mut report) = report_opt {
@@ -1183,6 +1207,14 @@ impl ExecutionClient for SimulatedExecutionClient {
         self.created_off_bar_ids.insert(order_id.to_string());
     }
 
+    fn set_simulated_ticks(&mut self, enabled: bool) {
+        self.simulated_ticks = enabled;
+    }
+
+    fn mark_created_on_sim_tick(&mut self, order_id: &str) {
+        self.sim_tick_order_ids.insert(order_id.to_string());
+    }
+
     fn on_cancel(&mut self, order_id: &str) {
         match self.orders.get_mut(order_id) {
             Some(order)
@@ -1218,8 +1250,14 @@ impl ExecutionClient for SimulatedExecutionClient {
         }
         // 集合竞价: 竞价时段只记价; 开盘竞价在首个连续竞价事件上、收盘竞价在结束它的
         // 事件上按竞价价统一撮合(与本事件的常规撮合同一次调用, 排在它之前)。
+        // 模拟 tick 只在连续竞价时段生成, 不参与竞价: 结束开盘竞价的仍是随后的
+        // K 线(与关闭开关时同一时刻), 否则 K 线通道的竞价单会在模拟 tick 的时刻成交。
+        // 这一行为 S15 不变量而设: golden 场景 stock_minute_auction 在"开关打开、
+        // on_tick 为空"下, 09:25 竞价价的统一撮合须落在 09:31 的 K 线上(而不是其前
+        // 4 秒的模拟 tick 上)。
         let quote = match event {
             Event::Bar(b) => Some((b.symbol.as_str(), b.timestamp, b.close, b.volume, false)),
+            Event::Tick(_) if self.simulated_ticks => None,
             Event::Tick(t) => Some((t.symbol.as_str(), t.timestamp, t.price, t.volume, true)),
             _ => None,
         };
@@ -2577,6 +2615,113 @@ mod tests {
         });
         // (30 x 10.0 + 70 x 10.5) / 100
         assert_eq!(avg, Some(Decimal::new(1035, 2)));
+    }
+
+    /// 两个同品种市价单, 第一个登记为在模拟 tick 上创建; 返回 (登记的, 未登记的) 订单号。
+    fn two_lane_orders(sim: &mut SimulatedExecutionClient) -> (String, String) {
+        let on_tick = market_buy_at(500);
+        let on_bar = market_buy_at(500);
+        let ids = (on_tick.id.clone(), on_bar.id.clone());
+        sim.on_order(on_tick);
+        sim.on_order(on_bar);
+        sim.mark_created_on_sim_tick(&ids.0);
+        ids
+    }
+
+    fn sim_tick_at(ts: i64) -> Event {
+        Event::Tick(crate::model::Tick {
+            timestamp: ts,
+            price: Decimal::new(105, 1),
+            volume: Decimal::from(1000),
+            symbol: "AAPL".to_string(),
+        })
+    }
+
+    fn filled_ids(events: &[Event]) -> Vec<String> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                Event::ExecutionReport(o, Some(_)) => Some(o.id.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn simulated_tick_lane_only_matches_orders_created_on_ticks() {
+        let mut sim = SimulatedExecutionClient::new();
+        sim.set_simulated_ticks(true);
+        let (on_tick, on_bar) = two_lane_orders(&mut sim);
+
+        let tick = sim_tick_at(1000);
+        let events = run_auction_step(&mut sim, &tick, TradingSession::Continuous, day(2), false);
+        assert_eq!(filled_ids(&events), vec![on_tick.clone()]);
+
+        let bar = auction_bar(2000, 10, 10);
+        let events = run_auction_step(&mut sim, &bar, TradingSession::Continuous, day(2), false);
+        assert_eq!(filled_ids(&events), vec![on_bar]);
+        // 已结束的订单连同通道登记一并清理
+        assert!(!sim.sim_tick_order_ids.contains(&on_tick));
+    }
+
+    #[test]
+    fn lanes_are_inactive_when_switch_is_off() {
+        let mut sim = SimulatedExecutionClient::new();
+        let (on_tick, on_bar) = two_lane_orders(&mut sim);
+
+        let tick = sim_tick_at(1000);
+        let events = run_auction_step(&mut sim, &tick, TradingSession::Continuous, day(2), false);
+        let mut ids = filled_ids(&events);
+        ids.sort();
+        let mut expected = vec![on_tick, on_bar];
+        expected.sort();
+        assert_eq!(ids, expected);
+    }
+
+    #[test]
+    fn simulated_tick_does_not_end_opening_auction() {
+        let mut sim = SimulatedExecutionClient::new();
+        sim.set_simulated_ticks(true);
+        sim.on_order(market_buy_at(500));
+        run_auction_step(
+            &mut sim,
+            &auction_bar(1000, 48, 50),
+            TradingSession::OpeningAuction,
+            day(2),
+            false,
+        );
+        // 首根连续竞价 K 线之前的模拟 tick: 不结束开盘竞价, K 线通道的单不成交
+        let tick = sim_tick_at(1996);
+        let events = run_auction_step(&mut sim, &tick, TradingSession::Continuous, day(2), false);
+        assert!(events.is_empty(), "模拟 tick 不做统一撮合: {events:?}");
+        // 与关闭开关时相同: 在 K 线上按竞价价 50 统一成交, 时间戳为 K 线
+        let events = run_auction_step(
+            &mut sim,
+            &auction_bar(2000, 100, 101),
+            TradingSession::Continuous,
+            day(2),
+            false,
+        );
+        assert_eq!(fill_points(&events), vec![(2000, Decimal::from(50))]);
+    }
+
+    #[test]
+    fn closing_uncross_skips_orders_created_on_simulated_ticks() {
+        let mut sim = SimulatedExecutionClient::new();
+        sim.set_simulated_ticks(true);
+        let (on_tick, on_bar) = two_lane_orders(&mut sim);
+        run_auction_step(
+            &mut sim,
+            &auction_bar(1000, 69, 70),
+            TradingSession::ClosingAuction,
+            day(2),
+            false,
+        );
+        let close = auction_bar(1500, 0, 0);
+        let events = run_auction_step(&mut sim, &close, TradingSession::Closed, day(2), true);
+        // 统一撮合属于 K 线通道: 只成交 K 线通道的单
+        assert_eq!(filled_ids(&events), vec![on_bar]);
+        assert!(sim.orders.contains_key(&on_tick));
     }
 
     #[test]

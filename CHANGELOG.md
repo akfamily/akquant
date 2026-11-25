@@ -7,7 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-25
+
+> 规则版本 2.5.3 → 2.6.0：新增可选的模拟 tick 撮合语义（`simulate_ticks`）。开关缺省关闭，关闭时回测结果不变。
+
 ### Added
+- **`run_backtest(simulate_ticks=True)`：只有 K 线时回测 `on_tick`**。引擎在每根 K 线之前给出四个模拟 tick（开盘价、两个极值、收盘价）驱动 `on_tick`；`on_tick` 里的市价单在该 tick 上按 tick 价成交，挂着的限价单按限价、止损单按触发时的 tick 价成交。`on_bar`、`on_timer` 里下的单仍按 K 线撮合；只对单策略保证 `on_tick` 为空时开关开与关的结果完全相同，定时器、订单回调时点、多策略等差别见策略指南“只有 K 线时回测 `on_tick`”一节。模拟 tick 不记权益点、不进 `get_history`。`on_tick` 里的成交时间戳是模拟 tick 的时刻，不对齐 K 线，下游按成交时间画标记的需要自行对齐到所属 K 线。存档续跑不支持模拟 tick：`run_from_checkpoint` 传入 `simulate_ticks`、或续跑 `simulate_ticks=True` 回测的存档时报错。精度上限同见该节。
+- **回测里 `on_tick` 从未触发时告警**：策略覆写了 `on_tick` 而整场回测没有收到任何 tick 时，回测结束给出一条告警并提示 `simulate_ticks`。此前这种情况没有任何提示。
 - **`DataFeed.add_forming_bar(bar)`：行情源可推送未收盘的 K 线**（仅实盘）。引擎只用它给声明了 `intrabar=True` 的基础周期 `self.I()` 指标试算临时值，发出 `confirmed=false` 的指标点（时间戳等于这一桶将来收盘 bar 的时间戳，收盘后被确认值覆盖）；不触发 `on_bar`、不撮合、不进历史、不推进时钟。bar 驱动的会话里此前给基础周期指标写 `intrabar=True` 不起作用；行情网关开始推送后，这类指标在收盘 bar 到达前的 `[0]` 是临时值（`.confirmed` 为 `False`）。未声明 `intrabar` 的指标、回测与 `replay` 行情不受影响；规则版本与指标流协议版本不变。行情网关作者见 `docs/zh/guide/custom_indicator.md` 的“实时值”一节。
 
 ## [0.3.99] - 2026-11-24

@@ -146,6 +146,7 @@ mod tests {
             ignore_volume: false,
             bar_index: 0,
             last_price: None,
+            simulated_ticks: false,
         }
     }
 

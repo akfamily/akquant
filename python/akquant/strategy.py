@@ -424,6 +424,12 @@ class Strategy:
     _framework_history_cutoff_ns: Optional[int]
     _framework_freq: Optional[str]
     _framework_dual_stream: Union[bool, frozenset[str]]
+    #: simulate_ticks 是否打开(回测入口每次写实例属性); 其余入口(实盘、续跑)取这里的
+    #: 缺省值, 热路径只读一个布尔属性
+    _framework_simulated_ticks: bool = False
+    #: 本次运行是否收到过 tick(真实与模拟都算), 供回测结束时判断 on_tick 是否从未
+    #: 触发; 收到第一个 tick 时写一次 True, 每次回测开始时复位
+    _framework_tick_seen: bool = False
     _framework_use_previous_account_snapshot: bool
     _framework_previous_account_details: Optional[Dict[str, float]]
     # 开跑前的账户视图: on_start / on_resume 早于第一个行情事件, ctx 还没绑定,
@@ -752,6 +758,8 @@ class Strategy:
         # (optimize.py 多进程会 pickle 策略), 且属于会话级运行时状态。
         if "_live_subscription_forwarder" in state:
             del state["_live_subscription_forwarder"]
+        # 模拟 tick 标记随存档保存: run_from_checkpoint 据此拒绝续跑 simulate_ticks
+        # 回测的存档(检查之后复位为 False), run_live 开始前同样复位。
         # 已确保过的历史容量绑着上下文对象(见 strategy_history), 是会话级运行时状态;
         # 续跑时缓冲区按存档恢复、开跑前还会重配容量, 须重新确认。
         if "_history_capacity_ensured" in state:

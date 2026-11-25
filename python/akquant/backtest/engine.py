@@ -93,6 +93,7 @@ from ..strategy import (
     _legacy_init_arg_names as _legacy_init_arg_names_impl,
 )
 from ..strategy_framework_hooks import (
+    _strategy_overrides_callback,
     collect_cross_section_timer_entries,
     configure_engine_lifecycle_dispatch,
     normalize_dual_stream_declaration,
@@ -3280,6 +3281,47 @@ def _normalize_slippage_policy(
     )
 
 
+def _warn_on_tick_never_fired(
+    strategies: Sequence[Any], logger: logging.Logger
+) -> None:
+    """回测结束时: 覆写了 on_tick 却一个 tick 都没收到的策略, 各告警一次.
+
+    只有 K 线的回测里 on_tick 不会触发, 且此前没有任何提示(写在 on_tick 里的
+    逻辑整段不执行)。放在回测结束时判断, 对所有输入形态都成立。
+    """
+    for strategy in strategies:
+        # 函数式策略的包装类无条件定义了全部回调转发方法, 按类比较恒为"已覆写";
+        # 这里按用户是否真的提供了 on_tick 判断。
+        if not _strategy_overrides_callback(strategy, "on_tick"):
+            continue
+        if strategy._framework_tick_seen:
+            continue
+        logger.warning(
+            "策略 %s 覆写了 on_tick, 但整场回测没有收到任何 tick, on_tick 一次都没有"
+            "执行。数据只有 K 线时可传 run_backtest(simulate_ticks=True), 用每根 K 线"
+            "模拟四个 tick 驱动 on_tick",
+            type(strategy).__name__,
+        )
+
+
+def _reject_simulated_tick_checkpoint(strategy_instance: Any) -> None:
+    """存档来自 simulate_ticks=True 的回测时拒绝续跑.
+
+    续跑段不生成模拟 tick: on_tick 不再触发, 第一段在模拟 tick 上挂的单会被
+    K 线撮合, 结果与一次跑完不同, 所以直接报错而不是静默改变语义。
+    """
+    restored = [strategy_instance]
+    slot_strategies = getattr(strategy_instance, "_slot_strategies", None)
+    if isinstance(slot_strategies, dict):
+        restored.extend(slot_strategies.values())
+    if any(getattr(s, "_framework_simulated_ticks", False) for s in restored):
+        raise ValueError(
+            "这份存档来自 simulate_ticks=True 的回测, 不支持续跑: 续跑段不生成模拟"
+            " tick, on_tick 不再触发, 模拟 tick 上挂的单会被 K 线撮合。请用 "
+            "run_backtest(simulate_ticks=True) 从头重跑"
+        )
+
+
 def run_backtest(
     data: Optional[BacktestDataInput] = None,
     freq: Optional[str] = None,
@@ -3359,6 +3401,7 @@ def run_backtest(
     broker_profile: Optional[str] = None,
     fill_policy: Optional[Union[FillMode, FillPolicy]] = None,
     strict_strategy_params: bool = True,
+    simulate_ticks: bool = False,
     **kwargs: Any,
 ) -> BacktestResult:
     """
@@ -3417,6 +3460,10 @@ def run_backtest(
     :param strict_strategy_params: 是否严格校验策略构造参数。True 时若参数不匹配将抛错；
                                    False 时保持兼容行为（忽略未知参数并在失败时
                                    回退无参构造）。
+    :param simulate_ticks: 回测数据只有 K 线时, 把每根 K 线拆成四个模拟 tick
+        (开盘价、两个极值、收盘价)驱动 ``on_tick``。``on_tick`` 里下的单按模拟
+        tick 撮合; ``on_bar`` 等处下的单仍按 K 线撮合, 结果与关闭时相同。数据里
+        已有真实 tick 时不能使用。精度上限见文档。
     :param timezone: 时区名称 (默认 "Asia/Shanghai")
     :param sessions: 代码前缀 → 时段模板名或自定义时段表（"default" 为全局默认）；
                      不传时中国时区按资产类型取默认（股票 CN_STOCK、
@@ -4295,6 +4342,15 @@ def run_backtest(
     # freq 对含 Tick 的列表是聚合周期(合成 bar 的区间由聚合器填);
     # 对 bar 数据(含 data=None 时从 catalog 加载的)是声明的 bar 周期: 区间起点
     # = 时间戳 - 周期。DataFeed 输入已由调用方建好, 只注入 self.freq。
+    if (
+        simulate_ticks
+        and isinstance(data, list)
+        and any(isinstance(item, Tick) for item in data)
+    ):
+        raise ValueError(
+            "simulate_ticks=True 时数据里不能有真实 tick: 模拟 tick 由引擎按 K 线生成。"
+            "已有 tick 数据时去掉 simulate_ticks"
+        )
     bar_period_ns: Optional[int] = None
     if freq is not None and not (
         isinstance(data, list) and any(isinstance(item, Tick) for item in data)
@@ -5092,6 +5148,22 @@ def run_backtest(
         cast(Any, engine).set_strategy_risk_cooldown_bars(normalized_cooldown_bars)
     if history_depth > 0:
         engine.set_history_depth(history_depth)
+    if simulate_ticks:
+        engine.set_simulate_ticks(True)
+        logger.info(
+            "simulate_ticks=True: 每根 K 线模拟四个 tick(开、两个极值、收)"
+            "驱动 on_tick; 同一根 K 线内的先后顺序是假设的, 不含盘口信息"
+        )
+    for current_strategy in all_strategy_instances:
+        if simulate_ticks:
+            # 所有标的按 tick/bar 双流处理: 基础周期指标只由 K 线推进(spec S16)。
+            setattr(current_strategy, "_framework_dual_stream", True)
+        # 每次回测都写: 策略实例复用时, 关闭开关的后一次要把上一次的 True 复位。
+        setattr(current_strategy, "_framework_simulated_ticks", simulate_ticks)
+        # "收到过 tick"每次回测复位(实例复用时不带上一次的); 上一次中途失败
+        # 留下的待还原最新价一并丢掉。
+        current_strategy._framework_tick_seen = False
+        current_strategy.__dict__.pop("_sim_tick_saved_state", None)
     if stream_on_event is not None:
         cast(Any, engine).set_stream_callback(stream_on_event)
         cast(Any, engine).set_stream_options(
@@ -5963,6 +6035,16 @@ def run_backtest(
                         ),
                     )
 
+    if not simulate_ticks:
+        _warn_on_tick_never_fired(all_strategy_instances, logger)
+    elif not any(s._framework_tick_seen for s in all_strategy_instances):
+        logger.warning(
+            "simulate_ticks=True, 但整场回测没有生成任何模拟 tick, on_tick 没有执行。"
+            "只有连续竞价时段、成交量大于 0 的 K 线才生成; K 线没有区间起点时按时间戳"
+            "判断时段, 收盘时刻打戳的日线会落在收盘集合竞价。请传 freq=(如 freq='1d')"
+            "声明 K 线周期"
+        )
+
     result = BacktestResult(
         engine.get_results(),
         timezone=timezone,
@@ -6080,11 +6162,19 @@ def run_from_checkpoint(
         传 ``RiskConfig`` 对象时整体替换存档，传 dict 时按键叠加在存档上。返回结果的
         ``resolved_config`` 为本段实际生效的配置，可再存档后链式续跑。
         ``t_plus_one`` 不传时沿用存档的已解析配置；存档未带配置时，快照中有
-        T+1 冻结持仓即视为开启。已冻结的持仓无论本段开关如何都在日终解冻
+        T+1 冻结持仓即视为开启。已冻结的持仓无论本段开关如何都在日终解冻。
+        不接受 ``simulate_ticks``：模拟 tick 不支持存档续跑，传入（无论真假）
+        或存档来自 ``simulate_ticks=True`` 的回测时报 ``ValueError``
     """
     import os
 
     from ..checkpoint import load_checkpoint
+
+    if "simulate_ticks" in kwargs:
+        raise ValueError(
+            "run_from_checkpoint 不接受 simulate_ticks: 模拟 tick 不支持存档续跑"
+            "(只用于 run_backtest)"
+        )
 
     logger = get_logger("backtest")
     if not has_configured_handler(logger.name, namespace_only=True):
@@ -6229,6 +6319,7 @@ def run_from_checkpoint(
     # 先载入存档、后接数据源: 只有日期数据的改写要用存档里已有的合约算会话级收盘
     logger.info(f"Resuming from checkpoint: {checkpoint_path}")
     engine, strategy_instance = load_checkpoint(checkpoint_path, None)
+    _reject_simulated_tick_checkpoint(strategy_instance)
     # 快照持久化的运行时配置 (issue #282)；旧快照为 None，走逐项推导降级路径
     restored_backtest_config = getattr(
         strategy_instance, "_warm_start_backtest_config", None
@@ -6602,6 +6693,10 @@ def run_from_checkpoint(
     # None` 的判据等价(两者都是"无覆盖"), 且 None 与该属性未被设置过时的
     # getattr 默认值一致, 不引入第三种状态。
     for current_strategy in [strategy_instance, *slot_strategy_instances.values()]:
+        # 续跑不支持模拟 tick(存档来源已在载入后检查): 标记复位; "收到过 tick"
+        # 每段续跑重新判断。
+        setattr(current_strategy, "_framework_simulated_ticks", False)
+        current_strategy._framework_tick_seen = False
         setattr(
             current_strategy,
             "_strategy_fill_policy_map",
@@ -7767,6 +7862,10 @@ def run_from_checkpoint(
                             strategy=slot_strategy,
                         ),
                     )
+
+    _warn_on_tick_never_fired(
+        [strategy_instance, *slot_strategy_instances.values()], logger
+    )
 
     result = BacktestResult(
         engine.get_results(),

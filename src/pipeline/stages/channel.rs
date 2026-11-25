@@ -4,7 +4,7 @@ use super::shared::{
 use crate::context::{EngineContext, SessionView};
 use crate::engine::Engine;
 use crate::event::Event;
-use crate::model::{Order, OrderStatus};
+use crate::model::{ExecutionPolicyCore, Order, OrderStatus, PriceBasis, TemporalPolicy};
 use crate::pipeline::processor::{Processor, ProcessorResult};
 use pyo3::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -222,10 +222,30 @@ impl Processor for ChannelProcessor {
             while let Some(event) = engine.event_manager.try_recv() {
                 drained_event = true;
                 match event {
-                    Event::OrderRequest(order) => pending_order_requests.push(order),
+                    Event::OrderRequest(mut order) => {
+                        // 模拟 tick 上创建的订单(spec S8/S9): 进 tick 通道, 并按
+                        // "当根、同周期"成交——策略回调之后在这个 tick 上立即撮合,
+                        // 不看运行级成交模式。显式给了成交模式的订单同样改写: tick
+                        // 通道里没有"下一根 K 线"。在风控之前改写, 提交时的风控按
+                        // 改写后的成交模式检查(如 T+1 可用持仓不延后到成交时)。
+                        // 同时登记为 tick 通道里未了结的单(含随后被风控拒掉的)。
+                        if engine.on_simulated_tick() {
+                            order.fill_policy_override = Some(ExecutionPolicyCore {
+                                price_basis: PriceBasis::Close,
+                                bar_offset: 0,
+                                temporal: TemporalPolicy::SameCycle,
+                            });
+                            engine.sim_tick_open_orders.insert(order.id.clone());
+                        }
+                        pending_order_requests.push(order)
+                    }
                     Event::OrderValidated(order) => {
                         record_creation_session(engine, &order);
                         engine.execution_model.on_order(order.clone());
+                        // 与上面 OrderRequest 同一次 ChannelProcessor, 当前事件不变
+                        if engine.on_simulated_tick() {
+                            engine.execution_model.mark_created_on_sim_tick(&order.id);
+                        }
                         // tick/定时器回调里下的单: 同刻、同品种的带区间 bar 不撮合它
                         if matches!(
                             engine.current_event,
@@ -263,6 +283,12 @@ impl Processor for ChannelProcessor {
             }
 
             if !pending_order_requests.is_empty() {
+                // 模拟 tick 步: 订单在该 tick 上当场成交, 成交触发的子单(如
+                // place_bracket 的止损止盈)随即提交; 先把已累积的成交入账, 子单
+                // 的风控才看得到刚成交的持仓。
+                if engine.on_simulated_tick() {
+                    flush_accumulated_trades(engine, &mut trades_to_process);
+                }
                 if settle_reductions_before_increases {
                     flush_accumulated_trades(engine, &mut trades_to_process);
                     settle_reductions_before_increases = false;

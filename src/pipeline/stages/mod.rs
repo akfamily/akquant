@@ -3,6 +3,7 @@ mod cleanup;
 mod data;
 mod execution;
 mod shared;
+mod sim_ticks;
 mod statistics;
 pub(crate) mod strategy;
 

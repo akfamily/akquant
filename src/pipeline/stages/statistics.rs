@@ -15,6 +15,8 @@ impl Processor for StatisticsProcessor {
         _strategy: &crate::engine::strategy_handler::StrategyHandle,
     ) -> PyResult<ProcessorResult> {
         if let Some(Event::Bar(_) | Event::Tick(_)) = engine.current_event.clone()
+            // 模拟 tick 不记权益点: 权益曲线与关闭开关时逐点相同(spec S13)。
+            && !engine.on_simulated_tick()
             && let Some(timestamp) = engine.clock.timestamp()
             && engine.is_active_timestamp(timestamp)
             // 实盘收盘宽限期内的行情不记权益点: 闭市不撮合, 当日权益以收盘结算为准,

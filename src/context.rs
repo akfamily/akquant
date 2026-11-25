@@ -467,6 +467,8 @@ impl StrategyContext {
         self.stats_state = update.stats_state;
         self.stats_equity = update.stats_equity;
 
+        self.hold_order_events = false;
+
         // Reset accumulators
         self.orders.clear();
         self.canceled_order_ids.clear();
@@ -597,6 +599,9 @@ pub struct StrategyContext {
     /// 本槽订单账本(与引擎共享), 见 [`StrategyContext::order_events`]。
     pub(crate) order_ledger: Arc<Mutex<crate::order_ledger::OrderLedger>>,
     pub(crate) slot_ownership: Option<crate::order_ledger::SlotOwnership>,
+    /// simulate_ticks: 本步是模拟 tick 且 tick 通道没有未了结的订单, 订单回调留到
+    /// 下一步(spec S8)。本步回调里下了单时照常派发。每次 `update_state` 复位为 false。
+    pub(crate) hold_order_events: bool,
 }
 
 impl StrategyContext {
@@ -654,6 +659,7 @@ impl StrategyContext {
             stats_equity: init.stats_equity,
             order_ledger: init.order_ledger.unwrap_or_default(),
             slot_ownership: init.slot_ownership,
+            hold_order_events: false,
         }
     }
 
@@ -902,6 +908,7 @@ impl StrategyContext {
             stats_equity: Decimal::ZERO,
             order_ledger: Arc::default(),
             slot_ownership: None,
+            hold_order_events: false,
         })
     }
 
@@ -923,6 +930,10 @@ impl StrategyContext {
         trade_limit: usize,
     ) -> PyResult<Option<(Vec<(Order, bool)>, Vec<Trade>, bool)>> {
         use crate::order_ledger::{LedgerLimits, StageAInput, StageBInput};
+        // simulate_ticks 的模拟 tick 步: 待派发的内容原样留到下一步(引擎不清空每步列表)。
+        if self.hold_order_events && self.orders.is_empty() {
+            return Ok(None);
+        }
         let limits = LedgerLimits {
             finalized: finalized_limit,
             trade: trade_limit,

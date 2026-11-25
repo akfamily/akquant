@@ -254,6 +254,65 @@ Live notes:
 * Live sessions without `trading_calendar=` use the built-in exchange calendar, so holidays are neither opened nor settled. The built-in calendar is updated with each release; if it expires within 30 days (or has expired) a warning is logged once at startup — upgrade AKQuant or pass `trading_calendar=`. Custom session tables outside China time zones have no built-in calendar: long-running sessions must pass one, otherwise trading days are inferred from weekdays and holidays are opened and settled (a warning is logged once at startup). Since live_server 0.12.0, klinedata sessions also fetch the SSE/SZSE trading calendar from the market-data service and pass it in automatically.
 * `run_live(timezone=)` must match the exchange; the end-of-day settlement time and the default session tables are computed in it.
 
+### 2.3 Backtesting `on_tick` with Bars Only {: #simulate-ticks }
+
+When the backtest data has bars only, `on_tick` never fires, so any stop-loss or take-profit logic written there silently does not run. The backtest ends with a warning in that case. To make the same strategy code run its `on_tick` in a backtest, turn on simulated ticks:
+
+```python
+import akquant as aq
+
+result = aq.run_backtest(
+    data=df,
+    strategy=MyStrategy,
+    freq="1min",
+    simulate_ticks=True,
+)
+```
+
+With the switch on, the engine emits four simulated ticks before every bar: the open, the two extremes, and the close. If the open is no farther from the low than from the high, the path goes to the low first; otherwise to the high first. All four ticks fall within the last few seconds before the bar ends; each carries a quarter of the bar's volume and there are no order-book fields. `tick.timestamp` is that simulated instant.
+
+**Matching rules**
+
+* A market order placed in `on_tick` fills on the simulated tick that triggered it, at the tick price (plus slippage), regardless of `fill_policy`; a fill mode given explicitly on the order does not apply either.
+* A limit order resting from `on_tick` fills at its limit price (no price improvement) when a later simulated tick crosses it; a stop order fills at the price of the tick that crosses the trigger. They are matched by simulated ticks only and are not subject to the volume limit; commission, slippage, T+1, risk checks and cash checks apply as usual.
+* Orders placed in `on_bar` / `on_timer` are still matched by bars only, under `fill_policy`, with exactly the same rules as when the switch is off.
+* With a single strategy whose `on_tick` is a no-op, the fills, equity curve, indicator points and `metrics` are identical with the switch on and off.
+
+**What stays the same**
+
+* Simulated ticks add no equity points, do not count toward `bar_count` or progress, and are not written to `get_history`: inside `on_tick` you get closed bars only, and no `freq` is needed.
+* Simulated ticks do update the last price: position value in `on_tick` and amount-based order sizing use the current simulated tick price; a bar follows the four ticks, so the last price seen in `on_bar` is the same as with the switch off.
+* With the switch on, all symbols are handled as tick/bar dual streams: base-frequency `self.I()` indicators advance on bars only, while indicators declared with `intrabar=True` emit provisional values on simulated ticks (the provisional value on the fourth tick equals the confirmed value that follows). Read in `on_order` / `on_trade` on a bar step, such an indicator gives the previous bar's confirmed value, the same as with the switch off.
+* `on_portfolio_update` also fires on simulated ticks when you hold a position and the price changes.
+
+**Differences to be aware of**
+
+The items below are differences that can appear between switch-on and switch-off runs; some of them appear even when `on_tick` is empty:
+
+* **Timers**: for a timer that falls in the last few seconds before a bar ends (between the four simulated ticks, including exactly on the bar's timestamp), the last price and equity read in `on_timer` are the ones updated by the simulated ticks. Exactly on the bar's timestamp that is this bar's close, whereas with the switch off you read the previous bar's; `self.current_bar` is empty then. A whole-minute daily timer on minute bars is such a case. When the fill mode is the current bar's close (`CurrentClose`), the fill price of a market order placed in such a timer changes accordingly.
+* **Order-callback timing**: when `on_tick` places no orders, `on_order` / `on_trade` fire at the same moments as with the switch off. When `on_tick` has placed orders and some of them are still open, the order callbacks may be dispatched on a simulated tick, and orders placed inside those callbacks are matched by simulated ticks as well.
+* **Multiple strategies**: the guarantee of unchanged results holds for a single strategy only. In a multi-strategy portfolio, one strategy trading in `on_tick` affects the timing of the other strategies' order callbacks.
+* **Orders resting from `on_tick`**: they do not take part in the opening or closing call auction; across a gap between bars, a resting limit order still fills at its limit price; a stop-limit order fills at the tick price on the tick that triggers it (when the limit is satisfied), otherwise it turns into a resting limit order; with a custom matcher, the limit-price convention is up to the matcher.
+* **Stop-loss and take-profit placed together in `on_tick`**: when you place both a stop-loss and a take-profit sell order for the same position, the second one is rejected for insufficient available position (the available position is checked at submission, and the first order has taken it). `place_bracket` with an entry plus stop-loss and take-profit works: once the entry fills on that tick, both exit orders are placed as usual.
+* **Fill timestamps**: a fill from `on_tick` is stamped with the simulated tick's instant (a few seconds before the bar ends), which is not the timestamp of any bar; `result.viz.review` draws the marker for such a fill on the previous bar.
+* **Provisional points of `intrabar` indicators**: on daily, hourly and similar periods, the provisional values of `intrabar=True` indicators on simulated ticks are not reported for plotting.
+* **Tick history**: simulated ticks are not written to history, so `get_history(freq="tick")` returns no data.
+* **When no simulated ticks are generated**: none for non-continuous sessions such as call auctions, nor for bars with zero volume. A daily bar stamped at the close (e.g. 15:00) without `freq` is classified as the closing call auction and gets none at all; the backtest then ends with a warning, and passing `freq="1d"` fixes it.
+* **Run time**: every bar adds four `on_tick` calls. Measured with an empty `on_tick`, a single symbol and 50,000 1-minute bars, the backtest takes about 2.5 times as long as with the switch off.
+* **Backtest only**: live trading and checkpoint resume do not support it, and it cannot be combined with real tick data. In live trading, whether `on_tick` fires depends on whether the market gateway pushes ticks.
+
+**Accuracy limits**
+
+| Type of logic | Reliable? |
+| :--- | :--- |
+| Stop-loss, take-profit, enter on price breakout | Mostly reliable; trigger points are coarser than live; fill prices are one of the bar's four price points |
+| Both take-profit and stop-loss touched within one bar | The order is an assumption and may be the reverse of live |
+| Order-book sizes, queue position, order racing | Not reliable; bars carry no such information |
+| Counting ticks, intervals, per-trade volume | Not reliable; every bar has exactly four |
+| Decisions based on the tick instant | Only accurate to the bar: all four ticks fall in the last seconds before the bar ends |
+
+The coarser the bar period, the larger the distortion; 1-minute bars are recommended as the underlying data.
+
 ## 3. Utilities
 
 AKQuant provides a set of utilities to simplify strategy development.

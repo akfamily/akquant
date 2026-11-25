@@ -692,6 +692,8 @@ impl Engine {
             current_event: None,
             bar_count: 0,
             symbol_whitelist: None,
+            simulate_ticks: false,
+            sim_tick_open_orders: HashSet::new(),
             whitelist_filtered_event_count: 0,
             progress_total_steps: 0,
             progress_bar: None,
@@ -1108,6 +1110,24 @@ impl Engine {
         };
     }
 
+    /// 回测用 K 线模拟 tick 的开关.
+    ///
+    /// 打开后, 数据阶段在每根 K 线之前排出四个模拟 tick(开、两个极值、收)驱动
+    /// ``on_tick``。只用于回测, 行情源里不得有真实 tick。
+    ///
+    /// :param enabled: 是否打开
+    /// :raises RuntimeError: 行情源是实盘数据源
+    fn set_simulate_ticks(&mut self, enabled: bool) -> PyResult<()> {
+        if enabled && self.state.feed.is_live() {
+            return Err(pyo3::exceptions::PyRuntimeError::new_err(
+                "simulate_ticks 只用于回测: 行情源是实盘数据源时不能打开",
+            ));
+        }
+        self.simulate_ticks = enabled;
+        self.execution_model.set_simulated_ticks(enabled);
+        Ok(())
+    }
+
     /// 设置时区偏移 (秒)
     ///
     /// :param offset: 偏移秒数 (例如 UTC+8 为 28800)
@@ -1263,6 +1283,9 @@ impl Engine {
     /// 默认模式。在内存中撮合订单。
     fn use_simulated_execution(&mut self) {
         self.execution_model = Box::new(SimulatedExecutionClient::new());
+        // 换撮合器不丢 simulate_ticks 开关
+        self.execution_model
+            .set_simulated_ticks(self.simulate_ticks);
     }
 
     /// 启用实盘执行 (CTP/Broker 模式)
@@ -1271,6 +1294,8 @@ impl Engine {
     /// 在此模式下，订单会被标记为 Submitted 并等待回调 (目前仅模拟发送)。
     fn use_realtime_execution(&mut self) {
         self.execution_model = Box::new(RealtimeExecutionClient::new());
+        self.execution_model
+            .set_simulated_ticks(self.simulate_ticks);
     }
 
     /// 注册自定义撮合器 (Python)

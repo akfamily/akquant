@@ -18,6 +18,9 @@ pub struct MatchContext<'a> {
     pub ignore_volume: bool,
     pub bar_index: usize,
     pub last_price: Option<Decimal>,
+    /// 当前事件是模拟 tick(simulate_ticks): 挂着的限价单被越过时按限价成交,
+    /// 不按 tick 价给价格改善(相邻模拟 tick 之间的价格路径视为连续)。
+    pub simulated_ticks: bool,
 }
 
 /// 撮合器接口

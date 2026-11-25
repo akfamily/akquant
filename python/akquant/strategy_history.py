@@ -58,6 +58,9 @@ def _infer_freq(strategy: Any, freq: Optional[str]) -> Optional[str]:
     与 ``freq`` 已显式传入时不做任何干预(显式优先), 单流场景也完全不受影响
     (单流下 ``freq=None`` 本就直接命中唯一存在的那条序列, 推断出的值与它一致)。
 
+    ``simulate_ticks`` 打开时 ``on_tick`` 里不按回调定档为 tick 序列, 因为模拟 tick
+    不写历史。
+
     窗口回调(``on_window_bar`` 或 ``subscribe_bars(callback=)``)内省略 ``freq``
     时取该窗口的周期(``_framework_current_callback`` 形如 ``"window:5min"``)。
 
@@ -76,6 +79,12 @@ def _infer_freq(strategy: Any, freq: Optional[str]) -> Optional[str]:
                 resolved = callback[len("window:") :]
             else:
                 resolved = _CALLBACK_FREQ.get(callback, None)
+            # 模拟 tick(run_backtest(simulate_ticks=True))不写历史: on_tick 里不按
+            # 回调定档为 tick, 交给引擎取唯一存在的 K 线序列。
+            if resolved == "tick" and getattr(
+                strategy, "_framework_simulated_ticks", False
+            ):
+                resolved = None
     if resolved is not None and resolved not in ("bar", "tick"):
         from .strategy_window import window_freqs
 

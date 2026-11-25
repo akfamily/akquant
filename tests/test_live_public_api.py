@@ -10,7 +10,7 @@ def test_streaming_indicator_sink_is_public() -> None:
 
 
 def test_engine_rule_version_is_2_3_1() -> None:
-    """on_start 里读得到账户资金与持仓, 规则版本为 2.5.3."""
+    """on_start 里读得到账户资金与持仓, 规则版本为 2.6.0."""
     import akquant
 
-    assert akquant.__engine_rule_version__ == "2.5.3"
+    assert akquant.__engine_rule_version__ == "2.6.0"
