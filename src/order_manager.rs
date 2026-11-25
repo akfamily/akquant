@@ -253,6 +253,40 @@ impl OrderManager {
         cancelled
     }
 
+    /// 撤掉与 `except_id` 同属一张进场单(`graph_id` 相同)的其余在途 bracket 出场
+    /// 子单, 原因同样记为持仓已了结; 返回被撤订单的快照。
+    pub fn cancel_bracket_exit_siblings(
+        &mut self,
+        graph_id: &str,
+        except_id: &str,
+        updated_at: i64,
+    ) -> Vec<Order> {
+        let ids: Vec<String> = self
+            .active_orders
+            .iter()
+            .filter(|order| {
+                order.id != except_id
+                    && order.is_bracket_exit()
+                    && order.graph_id.as_deref() == Some(graph_id)
+                    && matches!(
+                        order.status,
+                        OrderStatus::New | OrderStatus::Submitted | OrderStatus::PartiallyFilled
+                    )
+            })
+            .map(|order| order.id.clone())
+            .collect();
+        let mut cancelled = Vec::with_capacity(ids.len());
+        for id in ids {
+            if let Some(order) = self.active_orders.iter_mut().find(|o| o.id == id) {
+                order.reject_reason = crate::model::BRACKET_EXIT_POSITION_CLOSED.to_string();
+            }
+            if let Some(snapshot) = self.cancel_active_order(&id, updated_at) {
+                cancelled.push(snapshot);
+            }
+        }
+        cancelled
+    }
+
     pub fn register_bracket_plan(
         &mut self,
         entry_order_id: String,
@@ -1079,6 +1113,33 @@ mod tests {
             manager
                 .cancel_bracket_exits_without_position("TEST", dec!(-3), 8)
                 .is_empty()
+        );
+    }
+
+    /// 同一张进场单的另一张子单被一并撤掉; 别的进场单的子单与普通单不动。
+    #[test]
+    fn bracket_exit_siblings_are_cancelled_together() {
+        let mut manager = OrderManager::new();
+        manager.add_active_order(bracket_exit("s", OrderSide::Sell, OrderRole::StopLoss));
+        manager.add_active_order(bracket_exit("t", OrderSide::Sell, OrderRole::TakeProfit));
+        let mut other = bracket_exit("o", OrderSide::Sell, OrderRole::TakeProfit);
+        other.graph_id = Some("bracket-other".to_string());
+        manager.add_active_order(other);
+
+        let cancelled = manager.cancel_bracket_exit_siblings("bracket-entry", "s", 9);
+
+        assert_eq!(
+            cancelled.iter().map(|o| o.id.as_str()).collect::<Vec<_>>(),
+            vec!["t"]
+        );
+        assert_eq!(cancelled[0].reject_reason, crate::model::BRACKET_EXIT_POSITION_CLOSED);
+        assert_eq!(
+            statuses(&manager),
+            vec![
+                ("s".to_string(), OrderStatus::New),
+                ("t".to_string(), OrderStatus::Cancelled),
+                ("o".to_string(), OrderStatus::New),
+            ]
         );
     }
 

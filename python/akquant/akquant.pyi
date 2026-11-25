@@ -3277,6 +3277,15 @@ class StrategyContext:
         """
         ...
 
+    def note_oco_group(self, first_order_id: str, second_order_id: str) -> None:
+        r"""
+        记下一组刚登记的 OCO 订单, 让本次回调里的投影持仓立即按一组计算.
+
+        :param first_order_id: 第一张订单 ID
+        :param second_order_id: 第二张订单 ID
+        """
+        ...
+
     def cancel_order(self, order_id: str) -> None:
         r"""
         取消订单.
@@ -3376,6 +3385,15 @@ class StrategyContext:
 
         :param symbol: 标的代码
         :return: 投影后的持仓数量 (Long为正, Short为负)
+        """
+        ...
+
+    def get_target_base_position(self, symbol: str) -> float:
+        r"""
+        目标仓位(目标不为 0)算差额用的持仓: 投影持仓, 但不计 bracket 止损止盈子单.
+
+        :param symbol: 标的代码
+        :return: 不计 bracket 出场子单的投影持仓 (Long为正, Short为负)
         """
         ...
 

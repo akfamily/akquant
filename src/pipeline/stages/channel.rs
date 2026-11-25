@@ -1,5 +1,6 @@
 use super::shared::{
-    ExecutionPhase, apply_execution_report, flush_accumulated_trades, has_orders_matching_phase,
+    ExecutionPhase, apply_execution_report, cancel_bracket_exits_without_position,
+    flush_accumulated_trades, has_orders_matching_phase,
 };
 use crate::context::{EngineContext, SessionView};
 use crate::engine::Engine;
@@ -256,9 +257,20 @@ impl Processor for ChannelProcessor {
                             engine.execution_model.mark_created_off_bar(&order.id);
                         }
                         let order_id = order.id.clone();
+                        let bracket_exit = order
+                            .is_bracket_exit()
+                            .then(|| (order.symbol.clone(), order.updated_at));
                         engine.state.order_manager.add_active_order(order);
                         // 同一次回调里下单又撤单(issue #440): 撮合之前立即撤掉。
                         engine.apply_deferred_cancel(&order_id);
+                        // bracket 子单挂出时持仓可能已经为 0 或反向(进场单只是平掉了
+                        // 原有的反向持仓): 成交入账后的那次检查发生在子单登记之前,
+                        // 这里补一次, 否则它们会一直挂着、作用到之后的新持仓上。
+                        if let Some((symbol, updated_at)) = bracket_exit {
+                            cancel_bracket_exits_without_position(
+                                engine, py, &symbol, updated_at,
+                            );
+                        }
                     }
                     Event::ExecutionReport(order, trade) => {
                         // 风控拒单等已结束的单: 同回调里的撤单不必再做, 也不告警。

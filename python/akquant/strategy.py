@@ -3499,6 +3499,11 @@ class Strategy:
                 # 的单、在途量不合并)。单策略(所属为空或 _default)照旧用原组号。
                 # 返回值与 cancel_group 用的仍是原组号。
                 engine_key = self._engine_oco_group_key(group_key)
+                # 引擎在回调返回后才登记: 先让本回调里的持仓投影按一组计算, 否则
+                # 紧接着的 close_position / order_target* 会把两张单各算一次。
+                note_oco = getattr(getattr(self, "ctx", None), "note_oco_group", None)
+                if callable(note_oco):
+                    note_oco(first, second)
                 try:
                     register_oco(engine_key, first, second)
                     self._use_engine_oco = True

@@ -753,6 +753,7 @@ impl SimulatedExecutionClient {
                         let report_opt = matcher.match_order(order, &match_ctx);
                         if let Some(mut report) = report_opt {
                             let mut replacement_report: Option<Event> = None;
+                            let mut hold_until_sellable = false;
                             if let Event::ExecutionReport(
                                 ref mut report_order,
                                 Some(ref mut trade),
@@ -1030,7 +1031,13 @@ impl SimulatedExecutionClient {
                                     .get(&trade.symbol)
                                     .copied()
                                     .unwrap_or(Decimal::ZERO);
-                                if available < trade.quantity {
+                                if available < trade.quantity && order_snapshot.is_bracket_exit() {
+                                    // bracket 止损止盈保护的是当日买入、当日还不能卖的持仓
+                                    // (T+1): 不拒单, 订单恢复到撮合前的状态继续挂着, 之后
+                                    // 每次撮合按价格重新判断, 可卖时成交。拒掉的话当日
+                                    // 触及止损后持仓就只剩止盈一侧。
+                                    hold_until_sellable = true;
+                                } else if available < trade.quantity {
                                     let rejected_order = Self::execution_time_rejection(
                                         &order_snapshot,
                                         format!(
@@ -1055,6 +1062,11 @@ impl SimulatedExecutionClient {
                                     replacement_report =
                                         Some(Event::ExecutionReport(rejected_order, None));
                                 }
+                            }
+
+                            if hold_until_sellable {
+                                *order = order_snapshot.clone();
+                                continue;
                             }
 
                             if let Some(new_report) = replacement_report {
@@ -3206,10 +3218,23 @@ mod tests {
     }
 
     #[test]
-    fn test_bracket_exit_t1_unavailable_position_is_still_rejected() {
-        // 总持仓 1000 但当日可卖 0(T+1): 不缩量、不撤销, 仍按可用持仓拒单。
-        let (_, events) = run_stock_order_at_100(
+    fn test_bracket_exit_t1_unavailable_position_stays_working() {
+        // 总持仓 1000 但当日可卖 0(T+1): 不成交、不拒单, 订单按撮合前的状态继续挂着;
+        // 普通卖单照旧被拒。
+        let (sim, events) = run_stock_order_at_100(
             sell_1000(true),
+            Decimal::from(50000),
+            Decimal::from(1000),
+            Decimal::ZERO,
+        );
+        assert!(events.is_empty());
+        assert_eq!(sim.orders.len(), 1);
+        let order = sim.orders.values().next().expect("订单仍在簿上");
+        assert_eq!(order.status, OrderStatus::Submitted);
+        assert_eq!(order.filled_quantity, Decimal::ZERO);
+
+        let (_, events) = run_stock_order_at_100(
+            sell_1000(false),
             Decimal::from(50000),
             Decimal::from(1000),
             Decimal::ZERO,

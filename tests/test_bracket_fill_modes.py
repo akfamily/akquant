@@ -221,12 +221,23 @@ def test_current_close_t1_bracket_exits_wait_for_next_day() -> None:
     assert _position(result) == 0.0
 
 
-@pytest.mark.parametrize("policy", _POLICIES, ids=["next_open", "current_close"])
-def test_t1_bracket_stop_hit_same_day_is_rejected_at_execution(policy: Any) -> None:
-    """T+1 分钟线, 当日触及止损: 两种成交模式都在成交时因当日不可卖拒掉止损.
+def _two_days(first: List[float], second: List[float]) -> pd.DataFrame:
+    """连续两个交易日的 1 分钟线(2024-01-02、2024-01-03, 各从 09:31 起)."""
+    frames = []
+    for day, prices in (("2024-01-02", first), ("2024-01-03", second)):
+        frame = _minutes(prices)
+        frame.index = pd.date_range(
+            f"{day} 09:31", periods=len(prices), freq="1min"
+        ).tz_localize(_TZ)
+        frames.append(frame)
+    return pd.concat(frames)
 
-    子单在提交时被接受(不在提交时因当日不可卖被拒); 触发时按成交时的可用持仓
-    校验拒掉止损, 止盈仍挂着(这是所有卖单共用的成交时规则, 本修复不改)。
+
+@pytest.mark.parametrize("policy", _POLICIES, ids=["next_open", "current_close"])
+def test_t1_bracket_stop_hit_same_day_stays_working(policy: Any) -> None:
+    """T+1 分钟线, 进场当日触及止损: 当日不可卖, 止损保持挂着、不被拒.
+
+    此前止损在成交时以“可用持仓不足”被拒且不补挂, 持仓只剩止盈一侧。
     """
     result = _run(
         _minutes([10.0, 10.0, 8.5, 8.0, 8.0]), policy(), t_plus_one=True, freq="1min"
@@ -234,13 +245,99 @@ def test_t1_bracket_stop_hit_same_day_is_rejected_at_execution(policy: Any) -> N
 
     assert _orders(result) == [
         ("buy", "market", "filled", 100.0),
-        ("sell", "stopmarket", "rejected", 0.0),
+        ("sell", "stopmarket", "new", 0.0),
         ("sell", "limit", "new", 0.0),
     ]
-    reasons = _reject_reasons(result)
-    assert len(reasons) == 1
-    assert "Insufficient available position" in reasons[0]
-    assert "at execution" in reasons[0]
+    assert _reject_reasons(result) == []
+    assert _position(result) == 100.0
+
+
+@pytest.mark.parametrize("policy", _POLICIES, ids=["next_open", "current_close"])
+def test_t1_bracket_stop_fills_next_day_when_still_triggered(policy: Any) -> None:
+    """T+1: 进场当日触及的止损挂到次日, 次日可卖且价格仍在止损价下方时成交."""
+    result = _run(
+        _two_days([10.0, 10.0, 8.5, 8.0, 8.0], [8.2, 8.2, 8.2]),
+        policy(),
+        t_plus_one=True,
+        freq="1min",
+    )
+
+    assert _orders(result) == [
+        ("buy", "market", "filled", 100.0),
+        ("sell", "stopmarket", "filled", 100.0),
+        ("sell", "limit", "cancelled", 0.0),
+    ]
+    assert _reject_reasons(result) == []
+    assert _fills(result)[-1] == ("sell", 100.0, 8.2)
+    assert str(result.executions_df.iloc[-1]["timestamp"]).startswith("2024-01-03")
+    assert _position(result) == 0.0
+
+
+@pytest.mark.parametrize("policy", _POLICIES, ids=["next_open", "current_close"])
+def test_t1_bracket_stop_not_refired_when_price_recovers_next_day(policy: Any) -> None:
+    """T+1: 次日价格回到止损价上方, 止损不成交(按价格重新判断), 保护仍在."""
+    result = _run(
+        _two_days([10.0, 10.0, 8.5, 8.0, 8.0], [10.0, 10.0, 10.0]),
+        policy(),
+        t_plus_one=True,
+        freq="1min",
+    )
+
+    assert _orders(result) == [
+        ("buy", "market", "filled", 100.0),
+        ("sell", "stopmarket", "new", 0.0),
+        ("sell", "limit", "new", 0.0),
+    ]
+    assert _reject_reasons(result) == []
+    assert _position(result) == 100.0
+
+
+class _BracketThenFlatten(_Bracket):
+    """第一根 place_bracket, 第三根 close_position."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.n = 0
+        self.returned: List[Any] = []
+
+    def on_bar(self, bar: Bar) -> None:
+        """第三根平仓."""
+        super().on_bar(bar)
+        if self.n == 2:
+            self.returned.append(self.close_position(bar.symbol))
+        self.n += 1
+
+
+@pytest.mark.parametrize("policy", _POLICIES, ids=["next_open", "current_close"])
+def test_t1_close_position_on_entry_day_keeps_bracket_exits(policy: Any) -> None:
+    """T+1 进场当日 close_position: 当日卖不掉, 不撤止损止盈、不下会被拒的平仓单.
+
+    此前子单先被撤掉、平仓单随后因当日不可卖被拒, 持仓隔夜没有任何保护。
+    """
+    result = aq.run_backtest(
+        data={_SYMBOL: _minutes([10.0] * 6)},
+        strategy=_BracketThenFlatten,
+        symbols=_SYMBOL,
+        initial_cash=100000.0,
+        freq="1min",
+        fill_policy=policy(),
+        t_plus_one=True,
+        commission_rate=0.0,
+        stamp_tax_rate=0.0,
+        transfer_fee_rate=0.0,
+        min_commission=0.0,
+        show_progress=False,
+    )
+
+    strategy = result.strategy
+    assert strategy is not None
+    assert strategy.returned == [None]
+    assert _orders(result) == [
+        ("buy", "market", "filled", 100.0),
+        ("sell", "stopmarket", "new", 0.0),
+        ("sell", "limit", "new", 0.0),
+    ]
+    assert _reject_reasons(result) == []
     assert _position(result) == 100.0
 
 
@@ -465,33 +562,41 @@ _BRACKET_100 = (
 
 
 @pytest.mark.parametrize("policy", _POLICIES, ids=["next_open", "current_close"])
-def test_manual_sell_with_bracket_exits_counts_the_group_once(policy: Any) -> None:
-    """挂着 bracket 子单时 sell(100): 与挂一张 100 股普通卖单时相同.
+def test_manual_sell_all_with_bracket_exits_fills_and_cancels_them(
+    policy: Any,
+) -> None:
+    """挂着 bracket 子单时 sell(100): 两种成交模式都成交, 持仓归零后子单自动撤销.
 
-    NextOpen 提交时不校验可用持仓, 卖单成交, 持仓归零后两张子单自动撤销;
-    CurrentClose 提交时按可用 100、在途 100 被拒(此前在途算成 200), 子单照旧
-    挂着(手动 sell 不会先撤子单)。持仓始终不为负。
+    子单只减仓, 不占用可卖数量。此前 CurrentClose 下卖单在提交时被拒
+    (最早在途卖出算成 200, 后来算成 100)。持仓始终不为负。
     """
     result = _run_script(
         {0: [_BRACKET_100], 2: [("sell", (_SYMBOL, 100), {})]}, policy()
     )
 
     rows = _order_rows(result)
-    exit_status = "cancelled" if policy is aq.NextOpen else "new"
-    assert [row[:4] for row in rows[:3]] == [
+    assert [row[:4] for row in rows] == [
         ("buy", "market", "filled", 100.0),
-        ("sell", "stopmarket", exit_status, 0.0),
-        ("sell", "limit", exit_status, 0.0),
+        ("sell", "stopmarket", "cancelled", 0.0),
+        ("sell", "limit", "cancelled", 0.0),
+        ("sell", "market", "filled", 100.0),
     ]
-    manual = rows[3]
-    if policy is aq.NextOpen:
-        assert manual[:4] == ("sell", "market", "filled", 100.0)
-        assert _position(result) == 0.0
-    else:
-        assert manual[:4] == ("sell", "market", "rejected", 0.0)
-        assert "Available: 100, Pending Sell: 100, Required: 100" in manual[4]
-        assert _position(result) == 100.0
+    assert _position(result) == 0.0
     assert result.strategy.min_position >= 0.0
+
+
+def test_plain_resting_sell_still_reserves_available_position() -> None:
+    """不变性: 普通在途卖单照旧占用可卖数量(CurrentClose 下再卖同样数量被拒)."""
+    script: Dict[int, List[Any]] = {
+        0: [("buy", (_SYMBOL, 100), {})],
+        1: [("sell", (_SYMBOL, 100), {"price": 13.0})],
+        2: [("sell", (_SYMBOL, 100), {})],
+    }
+    result = _run_script(script, aq.CurrentClose())
+
+    last = _order_rows(result)[-1]
+    assert last[:4] == ("sell", "market", "rejected", 0.0)
+    assert "Available: 100, Pending Sell: 100, Required: 100" in last[4]
 
 
 _FLATTEN_ACTIONS: List[Tuple[str, Tuple[Any, ...], Dict[str, Any]]] = [
@@ -1102,13 +1207,34 @@ def test_slot_b_sell_flattening_the_account_cancels_slot_a_exits() -> None:
 
 
 @pytest.mark.parametrize("policy", _POLICIES, ids=["next_open", "current_close"])
-def test_order_target_nonzero_keeps_bracket_exits(policy: Any) -> None:
-    """目标不为 0(order_target(S, 50)): 子单不撤, 行为与起点相同.
+def test_order_target_nonzero_ignores_bracket_exits(policy: Any) -> None:
+    """目标不为 0: 子单不撤、也不计作“将要卖出”, 持仓 100、目标 50 → 卖出 50.
 
-    投影持仓按子单在途算是 0, 于是买入 50(起点上实跑记下的行为)。
+    此前按含子单的投影持仓(0)算差额, 买入 50, 持仓变成 150。之后止损触发时
+    按剩下的 50 成交, 止盈撤销。
     """
     result = _run_script(
-        {0: [_BRACKET_100], 2: [("order_target", (_SYMBOL, 50), {})]}, policy()
+        {0: [_BRACKET_100], 2: [("order_target", (_SYMBOL, 50), {})]},
+        policy(),
+        prices=_STOP_LATER,
+    )
+
+    assert [row[:4] for row in _order_rows(result)] == [
+        ("buy", "market", "filled", 100.0),
+        ("sell", "stopmarket", "filled", 50.0),
+        ("sell", "limit", "cancelled", 0.0),
+        ("sell", "market", "filled", 50.0),
+    ]
+    assert not [row for row in _order_rows(result) if row[2] == "rejected"]
+    assert _position(result) == 0.0
+    assert result.strategy.min_position >= 0.0
+
+
+@pytest.mark.parametrize("policy", _POLICIES, ids=["next_open", "current_close"])
+def test_order_target_above_position_buys_only_the_difference(policy: Any) -> None:
+    """持仓 100、子单各 100、目标 150: 买入 50(此前按投影持仓 0 买入 150)."""
+    result = _run_script(
+        {0: [_BRACKET_100], 2: [("order_target", (_SYMBOL, 150), {})]}, policy()
     )
 
     assert [row[:4] for row in _order_rows(result)] == [
@@ -1118,6 +1244,18 @@ def test_order_target_nonzero_keeps_bracket_exits(policy: Any) -> None:
         ("buy", "market", "filled", 50.0),
     ]
     assert _position(result) == 150.0
+
+
+@pytest.mark.parametrize("policy", _POLICIES, ids=["next_open", "current_close"])
+def test_order_target_same_as_position_places_no_order(policy: Any) -> None:
+    """持仓 100、子单各 100、目标 100: 不下单(此前买入 100)."""
+    result = _run_script(
+        {0: [_BRACKET_100], 2: [("order_target", (_SYMBOL, 100), {})]}, policy()
+    )
+
+    assert result.strategy.returns[-1] is None
+    assert len(_order_rows(result)) == 3
+    assert _position(result) == 100.0
 
 
 @pytest.mark.parametrize("policy", _POLICIES, ids=["next_open", "current_close"])
@@ -1278,4 +1416,135 @@ def test_slot_close_position_cancels_only_its_own_bracket_exits(policy: Any) -> 
         ("stopmarket", "new"),
         ("limit", "new"),
     ]
+    assert _position(result) == 100.0
+
+
+@pytest.mark.parametrize("policy", _POLICIES, ids=["next_open", "current_close"])
+def test_bracket_entry_that_only_covers_a_short_leaves_no_exits(policy: Any) -> None:
+    """A1 子单生成时已无持仓可平: 先开空 100, 再用 bracket 买入 100 把持仓平掉.
+
+    两张子单随即撤销; 之后再买入 100, 旧止损价被触及时新持仓不受影响
+    (此前子单一直挂着, 按旧止损价把新持仓卖掉)。
+    """
+    script: Dict[int, List[Any]] = {
+        0: [("sell", (_FUT, 100), {})],
+        2: [_bracket(_FUT)],
+        4: [("buy", (_FUT, 100), {})],
+    }
+    prices = [10.0, 10.0, 10.0, 10.0, 10.0, 10.0, 8.5, 8.0, 8.0]
+    result = _run_futures_script(script, policy(), prices=prices)
+
+    exits = _bracket_exit_rows(result)
+    assert [row[:3] for row in exits] == [
+        ("stopmarket", "cancelled", 0.0),
+        ("limit", "cancelled", 0.0),
+    ]
+    assert all(_POSITION_CLOSED in row[3] for row in exits)
+    assert _fill_rows(result) == [
+        ("sell", 100.0, 10.0),
+        ("buy", 100.0, 10.0),
+        ("buy", 100.0, 10.0),
+    ]
+    assert _position(result, _FUT) == 100.0
+
+
+# ---------------------------------------------------------------------------
+# paper 实盘(run_live 模拟成交)与回测同一口径
+# ---------------------------------------------------------------------------
+
+
+def _run_paper(script: Dict[int, List[Any]], prices: List[float]) -> Any:
+    """Replay 行情 + paper 成交, 期货 RB2310(不受 T+1 影响); 返回策略实例."""
+    index = pd.date_range(
+        "2024-01-02 09:31:00", periods=len(prices), freq="1min", tz="Asia/Shanghai"
+    )
+    bars = [Bar(int(ts.value), p, p, p, p, 1e6, _FUT) for ts, p in zip(index, prices)]
+    strategy = type(
+        "_PaperRun", (_FuturesScripted,), {"script": script, "probes": {}}
+    )()
+    strategy.seen_positions = []
+    on_bar = strategy.on_bar
+
+    def recording_on_bar(bar: Bar) -> None:
+        strategy.seen_positions.append(strategy.get_position(_FUT))
+        on_bar(bar)
+
+    strategy.on_bar = recording_on_bar  # type: ignore[method-assign]
+    aq.run_live(
+        strategy_cls=strategy,
+        instruments=[
+            aq.Instrument(
+                symbol=_FUT,
+                asset_type=aq.AssetType.Futures,
+                multiplier=10.0,
+                margin_ratio=0.1,
+                tick_size=0.01,
+                lot_size=1,
+                option_type=None,
+                strike_price=None,
+                expiry_date=None,
+            )
+        ],
+        broker="replay",
+        trading_mode="paper",
+        gateway_options={"bars": bars, "freq": "1min"},
+        cash=1_000_000.0,
+        show_progress=False,
+        duration="60s",
+    )
+    return strategy
+
+
+_PAPER_PRICES = [10.0, 10.0, 10.0, 10.0, 10.0, 8.5, 8.0, 8.0, 8.0]
+
+
+def test_paper_manual_close_does_not_open_short_on_old_stop() -> None:
+    """paper: 进场 2 手、手动平仓后触及止损价, 不开空仓(此前 -2)."""
+    strategy = _run_paper(
+        {0: [_bracket(_FUT, 2)], 3: [("sell", (_FUT, 2), {})]}, _PAPER_PRICES
+    )
+
+    assert max(strategy.seen_positions) == 2.0
+    assert strategy.seen_positions[-1] == 0.0
+    assert min(strategy.seen_positions) >= 0.0
+    assert strategy.get_open_orders(_FUT) == []
+
+
+def test_paper_close_position_cancels_bracket_exits() -> None:
+    """paper: 挂着子单时 close_position 平掉持仓(此前买入 2 手, 持仓变 4)."""
+    strategy = _run_paper(
+        {0: [_bracket(_FUT, 2)], 3: [("close_position", (_FUT,), {})]},
+        _PAPER_PRICES,
+    )
+
+    assert max(strategy.seen_positions) == 2.0
+    assert strategy.seen_positions[-1] == 0.0
+    assert min(strategy.seen_positions) >= 0.0
+    assert strategy.get_open_orders(_FUT) == []
+
+
+def test_place_oco_then_close_position_in_same_callback_does_not_buy_back() -> None:
+    """同一回调里先 place_oco 再 close_position: 两张卖单按一组算, 不反向买入.
+
+    此前组要等回调返回后才登记, 投影持仓算成 100 - 200 = -100, close_position
+    下出买入 100, 持仓变成 200。手工 OCO 组不会被平仓调用撤掉, 所以这里不下单。
+    """
+    script: Dict[int, List[Any]] = {
+        0: [("buy", (_SYMBOL, 100), {})],
+        2: [
+            ("sell", (_SYMBOL, 100), {"price": 13.0}),
+            ("sell", (_SYMBOL, 100), {"trigger_price": 9.0}),
+            ("oco", (), {}),
+            ("close_position", (_SYMBOL,), {}),
+        ],
+    }
+    result = _run_script(script, aq.NextOpen(), probes={3: ["projected"]})
+
+    assert result.strategy.returns[-1] is None
+    assert [row[:3] for row in _order_rows(result)] == [
+        ("buy", "market", "filled"),
+        ("sell", "limit", "new"),
+        ("sell", "stopmarket", "new"),
+    ]
+    assert result.strategy.seen["projected"] == 0.0
     assert _position(result) == 100.0

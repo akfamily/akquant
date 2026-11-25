@@ -1220,6 +1220,14 @@ def _cancel_bracket_exits_before_flatten(strategy: Any, symbol: str) -> None:
         return
     if capabilities_method().get("broker_live"):
         return
+    # 多头持仓当日还不能全部卖出(T+1 当日买入): 平仓单会被拒, 这时撤掉子单只会让
+    # 持仓失去保护, 所以不撤——子单照旧占着这部分持仓, 可卖之后再平。
+    get_position_method = getattr(execution, "get_position", None)
+    get_available_method = getattr(execution, "get_available_position", None)
+    if callable(get_position_method) and callable(get_available_method):
+        position = float(get_position_method(symbol))
+        if position > 0 and float(get_available_method(symbol)) < position:
+            return
     owner = str(getattr(strategy, "_owner_strategy_id", "") or "_default")
     for order in get_open_orders_method(symbol=symbol):
         if getattr(order, "parent_order_id", None) is None:
@@ -1260,6 +1268,15 @@ def _target_to_orders(
     # close_position 再 order_target_percent，会在全平单之外再补一笔卖单造成
     # 超卖（与 #361 同源，均是"结算仓不含在途单"）。
     current_qty = _position_from_execution(strategy, symbol, "get_projected_position")
+    if target_qty != 0:
+        # 目标不为 0 时子单不撤: 它们只减仓, 是对持仓的保护而不是"将要卖出"的量,
+        # 差额按不含它们的持仓算(持仓 100、子单各 100、目标 50 → 卖出 50)。
+        ctx = getattr(strategy, "ctx", None)
+        base_getter = getattr(ctx, "get_target_base_position", None)
+        if callable(base_getter) and not get_execution_capabilities(strategy).get(
+            "broker_live"
+        ):
+            current_qty = float(base_getter(symbol))
     delta_qty = target_qty - current_qty
 
     if round_to_lot:

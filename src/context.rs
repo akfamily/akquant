@@ -472,6 +472,7 @@ impl StrategyContext {
         // Reset accumulators
         self.orders.clear();
         self.canceled_order_ids.clear();
+        self.noted_oco_pairs.clear();
         self.timers.clear();
 
         // Reset Arc accumulators (internal mutability)
@@ -501,6 +502,8 @@ pub struct StrategyContext {
     pub orders: Vec<Order>, // Accumulated orders (new)
     #[pyo3(get)]
     pub canceled_order_ids: Vec<String>, // Accumulated cancellations
+    /// 本次回调里刚登记、引擎还没写组号的 OCO 订单对(见 `note_oco_group`)
+    pub noted_oco_pairs: Vec<(String, String)>,
     #[pyo3(get)]
     pub active_orders: Vec<Order>, // Existing pending orders
     #[pyo3(get)]
@@ -610,6 +613,7 @@ impl StrategyContext {
         StrategyContext {
             orders: Vec::new(),
             canceled_order_ids: Vec::new(),
+            noted_oco_pairs: Vec::new(),
             active_orders: init.active_orders.as_ref().clone(),
             timers: Vec::new(),
             orders_arc: Arc::new(RwLock::new(Vec::new())),
@@ -695,7 +699,12 @@ impl StrategyContext {
     /// `reducing_only=true` 只投影**减仓**方向的在途单(平仓/`reduce_only`),
     /// 用于 auto 拆腿判定"还能平多少";`false` 投影全部在途单(按各自
     /// `position_effect`),用于目标仓位算 delta 判定"仓位将落在哪"。
-    fn project_pending_position(&self, symbol: &str, reducing_only: bool) -> Decimal {
+    fn project_pending_position(
+        &self,
+        symbol: &str,
+        reducing_only: bool,
+        skip_bracket_exits: bool,
+    ) -> Decimal {
         let mut projected = self.positions.get(symbol).copied().unwrap_or(Decimal::ZERO);
         let pending: Vec<&Order> = self
             .active_orders
@@ -715,8 +724,30 @@ impl StrategyContext {
                     // 撤单在回调返回后、新订单过风控之前生效, 先撤后下才能按撤单后的
                     // 仓位算差额。
                     && !self.canceled_order_ids.contains(&order.id)
+                    && !(skip_bracket_exits && order.is_bracket_exit())
             })
             .collect();
+        // 本回调里刚登记的 OCO 对(引擎尚未写组号): 同品种同方向时只留剩余量大的一张。
+        // 只用于投影持仓; 可平持仓(auto 拆腿)保持原口径。
+        let mut pending = pending;
+        if !reducing_only {
+            for (first, second) in &self.noted_oco_pairs {
+                let a = pending.iter().position(|order| &order.id == first);
+                let b = pending.iter().position(|order| &order.id == second);
+                if let (Some(a), Some(b)) = (a, b)
+                    && pending[a].side == pending[b].side
+                    && pending[a].oco_group_key().is_none()
+                    && pending[b].oco_group_key().is_none()
+                {
+                    let drop = if crate::model::larger_remaining(pending[b], pending[a]) {
+                        a
+                    } else {
+                        b
+                    };
+                    pending.remove(drop);
+                }
+            }
+        }
         // 同一 OCO 组(如 bracket 的止损止盈)只会成交一条腿, 按一组投影一次
         for order in crate::model::dedup_oco_legs(pending, crate::model::larger_remaining) {
             let reducing = crate::model::is_position_reducing_order(order);
@@ -863,6 +894,7 @@ impl StrategyContext {
         Ok(StrategyContext {
             orders: Vec::new(),
             canceled_order_ids: Vec::new(),
+            noted_oco_pairs: Vec::new(),
             active_orders: active_orders.clone().unwrap_or_default(),
             timers: Vec::new(),
             orders_arc: Arc::new(RwLock::new(Vec::new())),
@@ -1360,6 +1392,19 @@ impl StrategyContext {
         Ok(())
     }
 
+    /// 记下一组刚登记的 OCO 订单, 让本次回调里的投影持仓立即按一组计算.
+    ///
+    /// 引擎要等回调返回后才登记 OCO 组并给成员写组号; 在那之前同一回调里接着调用
+    /// ``close_position`` / ``order_target*`` 会把两张互斥的单各算一次。只记在本
+    /// 上下文里、只影响投影持仓(可平持仓与 auto 拆腿不变), 下一次回调起以引擎
+    /// 写入的组号为准。
+    ///
+    /// :param first_order_id: 第一张订单 ID
+    /// :param second_order_id: 第二张订单 ID
+    fn note_oco_group(&mut self, first_order_id: String, second_order_id: String) {
+        self.noted_oco_pairs.push((first_order_id, second_order_id));
+    }
+
     /// 取消订单.
     ///
     /// :param order_id: 订单 ID
@@ -1609,7 +1654,7 @@ impl StrategyContext {
     /// :param symbol: 标的代码
     /// :return: 可平方向的剩余持仓 (Long为正, Short为负)
     fn get_closable_position(&self, symbol: String) -> f64 {
-        self.project_pending_position(&symbol, true)
+        self.project_pending_position(&symbol, true, false)
             .to_f64()
             .unwrap_or_default()
     }
@@ -1627,7 +1672,21 @@ impl StrategyContext {
     /// :param symbol: 标的代码
     /// :return: 投影后的持仓数量 (Long为正, Short为负)
     fn get_projected_position(&self, symbol: String) -> f64 {
-        self.project_pending_position(&symbol, false)
+        self.project_pending_position(&symbol, false, false)
+            .to_f64()
+            .unwrap_or_default()
+    }
+
+    /// 目标仓位(目标不为 0)算差额用的持仓: 投影持仓, 但不计 bracket 止损止盈子单.
+    ///
+    /// bracket 出场子单只减仓、随持仓了结自动撤销, 它们是对现有持仓的保护, 不是
+    /// "已经决定要卖出"的量。按含它们的投影持仓算差额, 持仓 100、子单各 100 时
+    /// ``order_target(symbol, 50)`` 会得出"还差 50"而去买入。
+    ///
+    /// :param symbol: 标的代码
+    /// :return: 不计 bracket 出场子单的投影持仓 (Long为正, Short为负)
+    fn get_target_base_position(&self, symbol: String) -> f64 {
+        self.project_pending_position(&symbol, false, true)
             .to_f64()
             .unwrap_or_default()
     }

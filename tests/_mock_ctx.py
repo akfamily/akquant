@@ -16,6 +16,11 @@ def mock_strategy_context() -> MagicMock:
     ctx = MagicMock(spec=StrategyContext)
     ctx.order_events.return_value = None
     ctx.find_order.return_value = None
+    # 目标不为 0 的目标仓位按“不含 bracket 出场子单的投影持仓”算差额; 假上下文里没有
+    # 这类子单, 与投影持仓相同, 沿用各用例给 get_projected_position 配的返回值。
+    ctx.get_target_base_position.side_effect = lambda symbol: (
+        ctx.get_projected_position(symbol)
+    )
     return ctx
 
 

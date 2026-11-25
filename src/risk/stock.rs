@@ -33,6 +33,9 @@ impl RiskRule for StockAvailablePositionRule {
                 .active_orders
                 .iter()
                 .filter(|o| o.symbol == order.symbol && o.side == OrderSide::Sell)
+                // bracket 止损止盈只减仓: 成交量以当时的持仓为上限、持仓了结即撤销,
+                // 不占用可卖数量(否则挂着它们时手动减仓、平仓在提交时就被拒)
+                .filter(|o| !o.is_bracket_exit())
                 .filter(|o| {
                     o.status == OrderStatus::New
                         || o.status == OrderStatus::Submitted
