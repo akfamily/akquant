@@ -480,6 +480,13 @@ impl Order {
 }
 
 impl Order {
+    /// 进场单成交时由引擎按 bracket 计划生成的止损/止盈子单
+    /// (见 `OrderManager::consume_bracket_activation_on_fill`)。
+    pub fn is_bracket_exit(&self) -> bool {
+        self.parent_order_id.is_some()
+            && matches!(self.order_role, OrderRole::StopLoss | OrderRole::TakeProfit)
+    }
+
     #[cfg(test)]
     pub fn test_new(
         id: &str,

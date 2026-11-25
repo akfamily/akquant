@@ -1646,6 +1646,30 @@ def test_bracket_from_on_tick_places_its_exit_orders() -> None:
     assert strategy.get_position(_SYMBOL) == 0
 
 
+def test_bracket_from_on_tick_under_t1_rejects_exits_at_submission() -> None:
+    """T+1: 模拟 tick 上的子单照旧在提交时按可用持仓校验, 当日买入不可卖而被拒."""
+    strategy = _BracketOnTick()
+
+    result = _run(strategy, _frame(4), simulate_ticks=True, t_plus_one=True)
+
+    rows = _order_table(result)
+    assert rows == [
+        ("buy", "market", "filled", 1000.0, 10.0),
+        ("sell", "limit", "rejected", 0.0, None),
+        ("sell", "stopmarket", "rejected", 0.0, None),
+    ]
+    reasons = [
+        str(row["reject_reason"])
+        for row in result.orders_df.to_dict("records")
+        if str(row["status"]) == "rejected"
+    ]
+    assert all(
+        "Insufficient available position" in reason and "at execution" not in reason
+        for reason in reasons
+    )
+    assert strategy.get_position(_SYMBOL) == 1000
+
+
 class _BracketOnBar(Strategy):
     """关闭开关: 第 1 根 on_bar 里 place_bracket(止损 10.3, 止盈 11.5)."""
 
@@ -1666,10 +1690,11 @@ class _BracketOnBar(Strategy):
             self.rejects.append(str(order.reject_reason))
 
 
-def test_bracket_on_bar_under_current_close_is_unchanged_with_switch_off() -> None:
-    """锁住关闭开关时的现状: CurrentClose 下进场当根成交, 两张子单因可用持仓为 0 被拒.
+def test_bracket_on_bar_under_current_close_exits_from_next_bar() -> None:
+    """关闭开关、CurrentClose: 进场当根成交后两张子单被接受, 从下一根 K 线起撮合.
 
-    关闭开关时同周期成交路径的这一行为不在本功能范围内。
+    第 1 根最低价 9.8 低于止损 10.3, 但那是进场(收盘 10.4)之前的价格, 不触发;
+    第 2 根最高价 11.6 触及止盈 11.5, 止盈成交、止损被撤。
     """
     strategy = _BracketOnBar()
 
@@ -1677,15 +1702,18 @@ def test_bracket_on_bar_under_current_close_is_unchanged_with_switch_off() -> No
 
     assert _order_table(result) == [
         ("buy", "market", "filled", 1000.0, 10.4),
-        ("sell", "limit", "rejected", 0.0, None),
-        ("sell", "stopmarket", "rejected", 0.0, None),
+        ("sell", "limit", "filled", 1000.0, 11.5),
+        ("sell", "stopmarket", "cancelled", 0.0, None),
     ]
-    assert len(strategy.rejects) == 2
-    assert all(
-        "Insufficient available position" in reason and "Available: 0" in reason
-        for reason in strategy.rejects
+    assert strategy.rejects == []
+    fills = result.executions_df.to_dict("records")
+    assert [str(row["side"]) for row in fills] == ["buy", "sell"]
+    assert (
+        int(pd.Timestamp(fills[1]["timestamp"]).value)
+        - int(pd.Timestamp(fills[0]["timestamp"]).value)
+        == 60 * _SEC
     )
-    assert strategy.get_position(_SYMBOL) == 1000
+    assert strategy.get_position(_SYMBOL) == 0
 
 
 # ---------------------------------------------------------------------------

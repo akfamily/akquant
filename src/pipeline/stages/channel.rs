@@ -74,12 +74,14 @@ fn process_order_request(engine: &mut Engine, py: Python<'_>, mut order: Order) 
         };
         // 回测撮合器会在成交时点重跑可用持仓校验(execution/simulated.rs),
         // 因此这里允许把该规则延后;实盘由柜台在报单时校验,不能延后。
+        // 模拟 tick 步上的单按"当根、同周期"在提交时校验(含 bracket 子单),
+        // 不延后。
         engine
             .risk_manager
             .check_and_adjust_with_delayed_position_check(
                 &mut order,
                 &ctx,
-                !engine.execution_model.is_live(),
+                !engine.execution_model.is_live() && !engine.on_simulated_tick(),
             )
     };
     if let Err(err) = check_result {
@@ -283,10 +285,15 @@ impl Processor for ChannelProcessor {
             }
 
             if !pending_order_requests.is_empty() {
-                // 模拟 tick 步: 订单在该 tick 上当场成交, 成交触发的子单(如
-                // place_bracket 的止损止盈)随即提交; 先把已累积的成交入账, 子单
-                // 的风控才看得到刚成交的持仓。
-                if engine.on_simulated_tick() {
+                // 成交触发的子单(place_bracket 的止损止盈)随进场成交回报提交,
+                // 这时进场成交还在待入账列表里; 先把已累积的成交入账, 子单的
+                // 风控才看得到刚成交的持仓。当根成交模式下进场单与子单在同一步
+                // 里成交、提交; 模拟 tick 步上的单都在该 tick 当场成交, 同理。
+                // 只由策略下的普通订单请求不提前入账: 它们看到的状态与处理顺序
+                // 不变(如同一根 K 线里先卖后买的两阶段撮合)。
+                if engine.on_simulated_tick()
+                    || pending_order_requests.iter().any(Order::is_bracket_exit)
+                {
                     flush_accumulated_trades(engine, &mut trades_to_process);
                 }
                 if settle_reductions_before_increases {

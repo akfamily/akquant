@@ -217,6 +217,14 @@ impl RiskManager {
             return false;
         }
 
+        // bracket 止损止盈子单: 进场成交后立即提交、之后才可能触发成交, 与成交
+        // 模式无关地延后到成交时校验。否则 T+1 下当根成交模式里当日买入的持仓
+        // 在提交时不可卖, 子单被直接拒掉, 持仓永远没有保护; 下一根成交的模式本就
+        // 延后, 两种模式由此口径一致。触发时仍按成交时的可用持仓校验。
+        if order.is_bracket_exit() {
+            return true;
+        }
+
         order
             .fill_policy_override
             .unwrap_or(ctx.execution_policy_core)
@@ -550,6 +558,50 @@ mod tests {
         let err = manager
             .check_and_adjust_with_delayed_position_check(&mut order, &ctx, true)
             .expect_err("same-cycle sell must be checked at submission");
+        assert!(err.to_string().contains("Insufficient available position"));
+    }
+
+    /// bracket 止损止盈子单: 当根成交模式下同样延后到成交时校验(允许延后时),
+    /// 不允许延后(实盘、公开接口)时仍在提交时拒掉。
+    #[test]
+    fn same_cycle_bracket_exit_defers_only_when_allowed() {
+        let (instruments, portfolio, mut order) = locked_stock_sell_fixture();
+        let same_cycle = ExecutionPolicyCore {
+            price_basis: crate::model::PriceBasis::Close,
+            bar_offset: 0,
+            temporal: crate::model::TemporalPolicy::SameCycle,
+        };
+        order.fill_policy_override = Some(same_cycle);
+        order.parent_order_id = Some("entry".to_string());
+        order.order_role = crate::model::OrderRole::StopLoss;
+        let market_model = SimpleMarket::from_config(SimpleMarketConfig::default());
+        let trade_tracker = crate::analysis::TradeTracker::new();
+        let manager = RiskManager::new();
+        let prices = HashMap::from([("AAPL".to_string(), Decimal::from(10))]);
+        let ctx = crate::context::EngineContext {
+            instruments: &instruments,
+            portfolio: &portfolio,
+            last_prices: &prices,
+            trade_tracker: &trade_tracker,
+            market_model: &market_model,
+            execution_policy_core: same_cycle,
+            bar_index: 0,
+            current_time: 0,
+            session: TradingSession::Continuous,
+            active_orders: &[],
+            risk_config: &manager.config,
+            timezone_name: None,
+            timezone_offset: 0,
+            trading_day: None,
+            sessions: crate::context::SessionView::continuous(),
+        };
+
+        manager
+            .check_and_adjust_with_delayed_position_check(&mut order.clone(), &ctx, true)
+            .expect("bracket exit must pass submission when deferral is allowed");
+        let err = manager
+            .check_and_adjust_with_delayed_position_check(&mut order, &ctx, false)
+            .expect_err("bracket exit must be checked at submission when deferral is not allowed");
         assert!(err.to_string().contains("Insufficient available position"));
     }
 

@@ -526,9 +526,13 @@ impl SimulatedExecutionClient {
     }
 
     fn should_finalize_order(&self, order: &Order, ctx: &crate::context::EngineContext) -> bool {
+        // bracket 止损止盈子单在进场单按收盘价成交之后才生成, 这根 K 线的区间
+        // 已经走完, 不能再拿它撮合子单(否则进场前出现过的最低价会当场触发止损)。
+        // 子单从下一根 K 线开始撮合, 与下一根成交的模式一致。
         Self::is_order_active(order)
             && (self.deferred_same_cycle_order_ids.contains(&order.id)
                 || (order.created_at == ctx.current_time
+                    && !order.is_bracket_exit()
                     && self.is_same_cycle_close_order(order, ctx)
                     && !self.attempted_same_cycle_order_ids.contains(&order.id)))
     }
