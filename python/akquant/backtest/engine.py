@@ -1160,7 +1160,8 @@ def _parse_bar_period(freq: Optional[str]) -> Optional[_BarPeriod]:
         raise ValueError(
             f"freq={freq!r} 无法解析为 bar 周期。bar 数据的 freq 写成“正整数 + 单位”，"
             "单位为 min（分钟）、h（小时）、d 或 day（日）、w（周）、mon（月）、"
-            "q（季）、y（年），大小写不敏感，省略数字视为 1，如 '1min'、'5min'、"
+            "q（季）、y（年），周月季年也可写全称 week / month / quarter / year，"
+            "大小写不敏感，省略数字视为 1，如 '1min'、'5min'、"
             "'1h'、'1d'、'D'、'1w'、'1mon'、'1q'、'1y'；月不能写成 m 或 M（与分钟"
             "混淆）。秒级周期请先用 akquant.feed_adapter 的 resample() 重采样"
         )
