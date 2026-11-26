@@ -37,9 +37,11 @@ pub struct OrderManager {
     /// 且它只在结算到下一个策略事件之间非空, 存档时恒为空。
     #[serde(skip)]
     pub current_step_expired_orders: Vec<Order>,
-    /// 本步移出在途账本、未成交终结的订单(撤单/过期/拒单)的终态快照。
+    /// 本步移出在途账本的订单(撤单/过期/拒单/成交完)的终态快照。
     /// 多槽位下订单可能被别的槽位撤掉, 所属槽位的 ctx 里没有撤单 id, 靠它回调
-    /// on_order(Cancelled)。不入存档(同上, 存档时恒为空)。
+    /// on_order(Cancelled); 当根成交的订单下单与成交完在同一步, 策略从没在在途列表
+    /// 里见过它成交后的样子, on_order(Filled) 靠它拿到已成交量、均价与成交时缩过的
+    /// 数量。不入存档(同上, 存档时恒为空)。
     #[serde(skip)]
     pub current_step_finalized_orders: Vec<Order>,
     /// 交易追踪器 (用于计算 PnL 和统计)
@@ -449,8 +451,8 @@ impl OrderManager {
                 self.partial_fill_brokerage.remove(&order.id);
                 self.handle_oco_terminal_without_fill(&order.id);
                 self.pending_bracket_plans.remove(&order.id);
-                self.current_step_finalized_orders.push(order.clone());
             }
+            self.current_step_finalized_orders.push(order.clone());
         }
         self.orders.extend(finished);
         self.active_orders = active;
