@@ -3448,6 +3448,13 @@ class Strategy:
         """
         _cancel_all_orders_impl(self, symbol)
 
+    def _engine_oco_group_key(self, group_key: str) -> str:
+        """引擎 OCO 组表里的组号: 多策略槽位下加上所属策略, 形如 ``<槽位>:<组号>``."""
+        owner = str(getattr(self, "_owner_strategy_id", "") or "").strip()
+        if not owner or owner == "_default":
+            return group_key
+        return f"{owner}:{group_key}"
+
     def place_oco(
         self,
         first_order_id: Union[str, OrderReceipt],
@@ -3486,12 +3493,23 @@ class Strategy:
             engine = getattr(self, "_engine", None)
             register_oco = getattr(engine, "register_oco_group", None)
             if callable(register_oco):
+                # 引擎里所有策略槽位共用一张 OCO 组表, 组号按槽位各自计数(每个槽位
+                # 第一组都叫 oco-1), 用户也可能给两个槽位传同一个组号: 登记时带上
+                # 所属策略, 不同槽位的同名组才是不同的组(不互相覆盖、不误撤对方
+                # 的单、在途量不合并)。单策略(所属为空或 _default)照旧用原组号。
+                # 返回值与 cancel_group 用的仍是原组号。
+                engine_key = self._engine_oco_group_key(group_key)
+                # 引擎在回调返回后才登记: 先让本回调里的持仓投影按一组计算, 否则
+                # 紧接着的 close_position / order_target* 会把两张单各算一次。
+                note_oco = getattr(getattr(self, "ctx", None), "note_oco_group", None)
+                if callable(note_oco):
+                    note_oco(first, second)
                 try:
-                    register_oco(group_key, first, second)
+                    register_oco(engine_key, first, second)
                     self._use_engine_oco = True
                     return group_key
                 except Exception:
-                    self._pending_engine_oco_groups.append((group_key, first, second))
+                    self._pending_engine_oco_groups.append((engine_key, first, second))
                     self._use_engine_oco = True
                     return group_key
 
@@ -4055,7 +4073,8 @@ class Strategy:
         :param symbol: 标的代码 (不填默认当前 Bar/Tick 的 symbol)
         :param target: 目标持仓数量 (例如 100, -100)
         :param price: 限价 (可选)
-        :param kwargs: 其他下单参数
+        :param kwargs: 其他下单参数; 另接受 ``allow_quantity_auto_resize``
+            (缺省不缩量): 传 True 时买入方向资金不足缩到买得起的最大整手数
         :return: 本次调仓产生的订单 ID; 若无需交易则返回 None
         """
         return _order_target_impl(self, symbol, target, price, **kwargs)
@@ -4084,7 +4103,9 @@ class Strategy:
         :param symbol: 标的代码 (不填默认当前 Bar/Tick 的 symbol)
         :param target_value: 目标持仓价值
         :param price: 限价 (可选)
-        :param kwargs: 其他下单参数
+        :param kwargs: 其他下单参数; 另接受 ``allow_quantity_auto_resize``
+            (缺省 True): 买入方向资金不足时缩到买得起的最大整手数而不是整单
+            被拒(回测与 paper), 传 False 恢复整单校验
         :return: 本次调仓产生的订单 ID; 若无需交易或无法定价则返回 None
         """
         return _order_target_value_impl(self, symbol, target_value, price, **kwargs)
@@ -4102,7 +4123,9 @@ class Strategy:
         :param symbol: 标的代码 (不填默认当前 Bar/Tick 的 symbol)
         :param target_percent: 目标持仓比例 (0.5 = 50%)
         :param price: 限价 (可选)
-        :param kwargs: 其他下单参数
+        :param kwargs: 其他下单参数; 另接受 ``allow_quantity_auto_resize``
+            (缺省 True): 买入方向资金不足时缩到买得起的最大整手数而不是整单
+            被拒(回测与 paper), 传 False 恢复整单校验
         :return: 本次调仓产生的订单 ID; 若无需交易则返回 None
         """
         return _order_target_percent_impl(self, symbol, target_percent, price, **kwargs)
@@ -4124,7 +4147,9 @@ class Strategy:
         :param liquidate_unmentioned: 是否清仓未出现在目标权重中的现有持仓
         :param allow_leverage: 是否允许目标权重和超过 1.0
         :param rebalance_tolerance: 调仓容忍阈值（按组合市值比例）
-        :param kwargs: 其他下单参数
+        :param kwargs: 其他下单参数; 另接受 ``allow_quantity_auto_resize``
+            (缺省 True): 买入方向资金不足时缩到买得起的最大整手数而不是整单
+            被拒(回测与 paper), 传 False 恢复整单校验
         :return: 本次调仓产生的所有订单 ID 列表 (无交易时为空列表)
         """
         return _rebalance_weights_impl(
@@ -4158,7 +4183,8 @@ class Strategy:
         :param allow_short: 是否允许负目标仓位；默认按执行环境能力自动推断
         :param strict_short_capability: 当执行环境未声明可做空时是否严格拒绝
         :param missing_price_mode: price_map 缺项时的处理方式: ignore / skip / fail
-        :param kwargs: 其他下单参数
+        :param kwargs: 其他下单参数; 另接受 ``allow_quantity_auto_resize``
+            (缺省不缩量): 传 True 时买入方向资金不足缩到买得起的最大整手数
         :return: 本次调仓产生的所有订单 ID 列表 (无交易时为空列表)
         """
         return _rebalance_positions_impl(

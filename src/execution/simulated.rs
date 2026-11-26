@@ -157,6 +157,15 @@ impl SimulatedExecutionClient {
         order
     }
 
+    /// bracket 出场子单触发时已无持仓可平: 撤销剩余部分, 不成交(之前的成交量保留)。
+    fn bracket_exit_cancellation(order_snapshot: &Order, now: i64) -> Order {
+        let mut order = order_snapshot.clone();
+        order.status = OrderStatus::Cancelled;
+        order.updated_at = now;
+        order.reject_reason = crate::model::BRACKET_EXIT_POSITION_CLOSED.to_string();
+        order
+    }
+
     fn ignored_unknown_cancel_warning(order_id: &str) -> String {
         render_log_message(
             "Ignored cancel request for unknown order",
@@ -526,9 +535,13 @@ impl SimulatedExecutionClient {
     }
 
     fn should_finalize_order(&self, order: &Order, ctx: &crate::context::EngineContext) -> bool {
+        // bracket 止损止盈子单在进场单按收盘价成交之后才生成, 这根 K 线的区间
+        // 已经走完, 不能再拿它撮合子单(否则进场前出现过的最低价会当场触发止损)。
+        // 子单从下一根 K 线开始撮合, 与下一根成交的模式一致。
         Self::is_order_active(order)
             && (self.deferred_same_cycle_order_ids.contains(&order.id)
                 || (order.created_at == ctx.current_time
+                    && !order.is_bracket_exit()
                     && self.is_same_cycle_close_order(order, ctx)
                     && !self.attempted_same_cycle_order_ids.contains(&order.id)))
     }
@@ -610,6 +623,10 @@ impl SimulatedExecutionClient {
         // 出现时再建(见 `funds_projection_ready`)。在那之前 `projected_portfolio`
         // 没被改过, 建出来的值与进函数时就建完全相同。
         let mut projected_available_positions: HashMap<String, Decimal> = HashMap::new();
+        // 本次撮合里各品种、各方向已由减仓单(bracket 出场子单、平仓单、reduce_only)
+        // 平掉的数量; 只用于给同一次撮合里排在后面的平仓单封顶。
+        let mut closed_in_match: HashMap<(String, crate::model::OrderSide), Decimal> =
+            HashMap::new();
         let stock_margin_ratio_override = stock_margin_ratio_override(ctx.risk_config);
         let mut current_free_margin = Decimal::ZERO;
         let mut funds_projection_ready = false;
@@ -740,6 +757,7 @@ impl SimulatedExecutionClient {
                         let report_opt = matcher.match_order(order, &match_ctx);
                         if let Some(mut report) = report_opt {
                             let mut replacement_report: Option<Event> = None;
+                            let mut hold_until_sellable = false;
                             if let Event::ExecutionReport(
                                 ref mut report_order,
                                 Some(ref mut trade),
@@ -757,6 +775,89 @@ impl SimulatedExecutionClient {
                                     );
                                     funds_projection_ready = true;
                                 }
+
+                                // bracket 出场子单只减仓(股票、期货同一口径): 成交量不超过
+                                // 本次撮合推演到此刻的总持仓里它能平的那部分, 余量随订单
+                                // 了结; 已无持仓可平(为 0 或已反向)时撤销、不成交。看的是
+                                // 总持仓而非当日可卖数量: T+1 当日可卖为 0 的仍由下面的
+                                // 可用持仓校验拒掉。
+                                //
+                                // 普通的平仓单(开平标志为平仓, 或 reduce_only): 同一次撮合里
+                                // 排在前面的减仓单(如止损)已经平掉一部分时, 它只能平撮合
+                                // 开始时的持仓里还没被平掉的那部分, 无仓可平则拒掉——否则
+                                // 同一份持仓被平两次, 开出反向仓位。只在本次撮合里前面确有
+                                // 减仓成交时才封顶: 开仓方向的成交(如反手的开仓腿先成交)
+                                // 不扣减可平量, 其余情形与以前相同。股票类按可用持仓校验的
+                                // 品种不走这里, 仍由下面的校验整单拒绝。
+                                let stock_available_checked = matches!(
+                                    instrument.asset_type,
+                                    AssetType::Stock | AssetType::Fund
+                                ) && ctx.risk_config.active
+                                    && !(ctx.risk_config.is_margin_account()
+                                        && ctx.risk_config.enable_short_sell);
+                                let is_bracket_exit = order_snapshot.is_bracket_exit();
+                                let closed_before = closed_in_match
+                                    .get(&(trade.symbol.clone(), trade.side))
+                                    .copied();
+                                let capped_plain_close = !is_bracket_exit
+                                    && !stock_available_checked
+                                    && closed_before.is_some()
+                                    && crate::model::is_position_reducing_order(&order_snapshot);
+                                if is_bracket_exit || capped_plain_close {
+                                    let closable = if is_bracket_exit {
+                                        order_snapshot.closable_quantity(
+                                            projected_portfolio
+                                                .positions
+                                                .get(&trade.symbol)
+                                                .copied()
+                                                .unwrap_or(Decimal::ZERO),
+                                        )
+                                    } else {
+                                        order_snapshot.closable_quantity(
+                                            ctx.portfolio
+                                                .positions
+                                                .get(&trade.symbol)
+                                                .copied()
+                                                .unwrap_or(Decimal::ZERO),
+                                        ) - closed_before.unwrap_or(Decimal::ZERO)
+                                    };
+                                    if closable <= Decimal::ZERO {
+                                        let closed = if is_bracket_exit {
+                                            Self::bracket_exit_cancellation(
+                                                &order_snapshot,
+                                                ctx.current_time,
+                                            )
+                                        } else {
+                                            Self::execution_time_rejection(
+                                                &order_snapshot,
+                                                format!(
+                                                    "Risk: No position left to close for {} at execution",
+                                                    trade.symbol
+                                                ),
+                                                ctx.current_time,
+                                            )
+                                        };
+                                        replacement_report =
+                                            Some(Event::ExecutionReport(closed, None));
+                                    } else if trade.quantity > closable {
+                                        // 与成交时按资金缩量同样按快照重算回报, 订单数量
+                                        // 收为实际成交总量
+                                        trade.quantity = closable;
+                                        let prev_filled = order_snapshot.filled_quantity;
+                                        let filled = prev_filled + closable;
+                                        let prev_avg = order_snapshot
+                                            .average_filled_price
+                                            .unwrap_or(Decimal::ZERO);
+                                        report_order.quantity = filled;
+                                        report_order.filled_quantity = filled;
+                                        report_order.average_filled_price = Some(
+                                            (prev_avg * prev_filled + trade.price * closable)
+                                                / filled,
+                                        );
+                                        report_order.status = crate::model::OrderStatus::Filled;
+                                    }
+                                }
+
                                 let mut prices_for_margin = ctx.last_prices.clone();
                                 prices_for_margin.insert(trade.symbol.clone(), trade.price);
 
@@ -835,7 +936,8 @@ impl SimulatedExecutionClient {
                                 // account's only way out — is rejected with the
                                 // nonsensical `Required: 0, Available: -20007`
                                 // and the account stays frozen forever (#400).
-                                if ctx.risk_config.check_cash
+                                if replacement_report.is_none()
+                                    && ctx.risk_config.check_cash
                                     && total_required > Decimal::ZERO
                                     && total_required > current_free_margin
                                 {
@@ -975,7 +1077,13 @@ impl SimulatedExecutionClient {
                                     .get(&trade.symbol)
                                     .copied()
                                     .unwrap_or(Decimal::ZERO);
-                                if available < trade.quantity {
+                                if available < trade.quantity && order_snapshot.is_bracket_exit() {
+                                    // bracket 止损止盈保护的是当日买入、当日还不能卖的持仓
+                                    // (T+1): 不拒单, 订单恢复到撮合前的状态继续挂着, 之后
+                                    // 每次撮合按价格重新判断, 可卖时成交。拒掉的话当日
+                                    // 触及止损后持仓就只剩止盈一侧。
+                                    hold_until_sellable = true;
+                                } else if available < trade.quantity {
                                     let rejected_order = Self::execution_time_rejection(
                                         &order_snapshot,
                                         format!(
@@ -1002,6 +1110,11 @@ impl SimulatedExecutionClient {
                                 }
                             }
 
+                            if hold_until_sellable {
+                                *order = order_snapshot.clone();
+                                continue;
+                            }
+
                             if let Some(new_report) = replacement_report {
                                 report = new_report;
                             }
@@ -1013,6 +1126,13 @@ impl SimulatedExecutionClient {
                                     funds_projection_ready,
                                     "带成交的回报必先经过上面的资金检查分支"
                                 );
+                                if order_snapshot.is_bracket_exit()
+                                    || crate::model::is_position_reducing_order(&order_snapshot)
+                                {
+                                    *closed_in_match
+                                        .entry((trade.symbol.clone(), trade.side))
+                                        .or_insert(Decimal::ZERO) += trade.quantity;
+                                }
                                 // 记入这根 bar 的已成交量(成交时缩量后的实际成交量)
                                 if let Event::Bar(bar) = event {
                                     let used = self
@@ -3085,5 +3205,100 @@ mod tests {
                 .contains("Insufficient margin at execution")
         );
         assert!(sim.orders.is_empty());
+    }
+
+    /// 1000 股的卖出单, 标成 bracket 止损子单或普通卖单。
+    fn sell_1000(bracket_exit: bool) -> Order {
+        let mut order = create_test_order(
+            "AAPL",
+            crate::model::OrderSide::Sell,
+            crate::model::OrderType::Market,
+            Decimal::from(1000),
+            None,
+        );
+        if bracket_exit {
+            order.parent_order_id = Some("entry".to_string());
+            order.graph_id = Some("bracket-entry".to_string());
+            order.order_role = crate::model::OrderRole::StopLoss;
+        }
+        order
+    }
+
+    #[test]
+    fn test_bracket_exit_fill_is_capped_at_position() {
+        // 持仓 400(可卖 400)、子单 1000: 按持仓成交 400, 订单数量收为 400; 普通卖单
+        // 照旧整单被拒。
+        let (sim, events) = run_stock_order_at_100(
+            sell_1000(true),
+            Decimal::from(50000),
+            Decimal::from(400),
+            Decimal::from(400),
+        );
+        let (order, trade) = single_report(&events);
+        assert_eq!(trade.map(|t| t.quantity), Some(Decimal::from(400)));
+        assert_eq!(order.status, OrderStatus::Filled);
+        assert_eq!(order.quantity, Decimal::from(400));
+        assert_eq!(order.filled_quantity, Decimal::from(400));
+        assert_eq!(order.average_filled_price, Some(Decimal::from(100)));
+        assert!(sim.orders.is_empty());
+
+        let (_, events) = run_stock_order_at_100(
+            sell_1000(false),
+            Decimal::from(50000),
+            Decimal::from(400),
+            Decimal::from(400),
+        );
+        let (order, trade) = single_report(&events);
+        assert!(trade.is_none());
+        assert_eq!(order.status, OrderStatus::Rejected);
+    }
+
+    #[test]
+    fn test_bracket_exit_without_position_is_cancelled_not_filled() {
+        // 已无持仓可平: 撤销、不成交, 原因写明持仓已了结。
+        let (sim, events) = run_stock_order_at_100(
+            sell_1000(true),
+            Decimal::from(50000),
+            Decimal::ZERO,
+            Decimal::ZERO,
+        );
+        let (order, trade) = single_report(&events);
+        assert!(trade.is_none());
+        assert_eq!(order.status, OrderStatus::Cancelled);
+        assert_eq!(order.filled_quantity, Decimal::ZERO);
+        assert_eq!(order.reject_reason, crate::model::BRACKET_EXIT_POSITION_CLOSED);
+        assert!(sim.orders.is_empty());
+    }
+
+    #[test]
+    fn test_bracket_exit_t1_unavailable_position_stays_working() {
+        // 总持仓 1000 但当日可卖 0(T+1): 不成交、不拒单, 订单按撮合前的状态继续挂着;
+        // 普通卖单照旧被拒。
+        let (sim, events) = run_stock_order_at_100(
+            sell_1000(true),
+            Decimal::from(50000),
+            Decimal::from(1000),
+            Decimal::ZERO,
+        );
+        assert!(events.is_empty());
+        assert_eq!(sim.orders.len(), 1);
+        let order = sim.orders.values().next().expect("订单仍在簿上");
+        assert_eq!(order.status, OrderStatus::Submitted);
+        assert_eq!(order.filled_quantity, Decimal::ZERO);
+
+        let (_, events) = run_stock_order_at_100(
+            sell_1000(false),
+            Decimal::from(50000),
+            Decimal::from(1000),
+            Decimal::ZERO,
+        );
+        let (order, trade) = single_report(&events);
+        assert!(trade.is_none());
+        assert_eq!(order.status, OrderStatus::Rejected);
+        assert!(
+            order
+                .reject_reason
+                .contains("Insufficient available position")
+        );
     }
 }

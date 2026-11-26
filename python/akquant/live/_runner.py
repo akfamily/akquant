@@ -1358,6 +1358,17 @@ class LiveRunner:
         default_ready = getattr(self, "trading_mode", "paper") != "broker_live"
         for target in [strategy_instance, *slot_strategy_instances.values()]:
             setattr(target, "broker_ready", default_ready)
+            # paper 由引擎撮合: 与回测一样把引擎交给策略, place_bracket / place_oco
+            # 因此登记为引擎计划(子单带角色、只减仓、OCO 由引擎联动)。柜台路径
+            # 的订单在柜台, 仍走策略侧的本地联动。
+            # 同一个实例此前跑过回测或 paper 时带着旧引擎: 柜台模式下清掉, 否则
+            # 分组会登记到已经结束的引擎上, 柜台侧的子单不激活、同伴不撤。
+            if default_ready:
+                setattr(target, "_engine", getattr(self, "engine", None))
+            else:
+                setattr(target, "_engine", None)
+                setattr(target, "_use_engine_oco", False)
+                setattr(target, "_use_engine_bracket", False)
             # 标记实盘: 让 Strategy.subscribe() 能告知用户它在实盘不生效
             # (实盘订阅集来自 run_live(instruments=...))。
             mark_live = getattr(target, "_set_live_market_data_owner", None)

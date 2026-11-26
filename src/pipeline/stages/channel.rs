@@ -1,5 +1,6 @@
 use super::shared::{
-    ExecutionPhase, apply_execution_report, flush_accumulated_trades, has_orders_matching_phase,
+    ExecutionPhase, apply_execution_report, cancel_bracket_exits_without_position,
+    flush_accumulated_trades, has_orders_matching_phase,
 };
 use crate::context::{EngineContext, SessionView};
 use crate::engine::Engine;
@@ -74,12 +75,14 @@ fn process_order_request(engine: &mut Engine, py: Python<'_>, mut order: Order) 
         };
         // 回测撮合器会在成交时点重跑可用持仓校验(execution/simulated.rs),
         // 因此这里允许把该规则延后;实盘由柜台在报单时校验,不能延后。
+        // 模拟 tick 步上的单按"当根、同周期"在提交时校验(含 bracket 子单),
+        // 不延后。
         engine
             .risk_manager
             .check_and_adjust_with_delayed_position_check(
                 &mut order,
                 &ctx,
-                !engine.execution_model.is_live(),
+                !engine.execution_model.is_live() && !engine.on_simulated_tick(),
             )
     };
     if let Err(err) = check_result {
@@ -254,9 +257,20 @@ impl Processor for ChannelProcessor {
                             engine.execution_model.mark_created_off_bar(&order.id);
                         }
                         let order_id = order.id.clone();
+                        let bracket_exit = order
+                            .is_bracket_exit()
+                            .then(|| (order.symbol.clone(), order.updated_at));
                         engine.state.order_manager.add_active_order(order);
                         // 同一次回调里下单又撤单(issue #440): 撮合之前立即撤掉。
                         engine.apply_deferred_cancel(&order_id);
+                        // bracket 子单挂出时持仓可能已经为 0 或反向(进场单只是平掉了
+                        // 原有的反向持仓): 成交入账后的那次检查发生在子单登记之前,
+                        // 这里补一次, 否则它们会一直挂着、作用到之后的新持仓上。
+                        if let Some((symbol, updated_at)) = bracket_exit {
+                            cancel_bracket_exits_without_position(
+                                engine, py, &symbol, updated_at,
+                            );
+                        }
                     }
                     Event::ExecutionReport(order, trade) => {
                         // 风控拒单等已结束的单: 同回调里的撤单不必再做, 也不告警。
@@ -283,14 +297,19 @@ impl Processor for ChannelProcessor {
             }
 
             if !pending_order_requests.is_empty() {
-                // 模拟 tick 步: 订单在该 tick 上当场成交, 成交触发的子单(如
-                // place_bracket 的止损止盈)随即提交; 先把已累积的成交入账, 子单
-                // 的风控才看得到刚成交的持仓。
-                if engine.on_simulated_tick() {
-                    flush_accumulated_trades(engine, &mut trades_to_process);
+                // 成交触发的子单(place_bracket 的止损止盈)随进场成交回报提交,
+                // 这时进场成交还在待入账列表里; 先把已累积的成交入账, 子单的
+                // 风控才看得到刚成交的持仓。当根成交模式下进场单与子单在同一步
+                // 里成交、提交; 模拟 tick 步上的单都在该 tick 当场成交, 同理。
+                // 只由策略下的普通订单请求不提前入账: 它们看到的状态与处理顺序
+                // 不变(如同一根 K 线里先卖后买的两阶段撮合)。
+                if engine.on_simulated_tick()
+                    || pending_order_requests.iter().any(Order::is_bracket_exit)
+                {
+                    flush_accumulated_trades(engine, py, &mut trades_to_process);
                 }
                 if settle_reductions_before_increases {
-                    flush_accumulated_trades(engine, &mut trades_to_process);
+                    flush_accumulated_trades(engine, py, &mut trades_to_process);
                     settle_reductions_before_increases = false;
                 }
                 if run_intermediate_reduce_match {
@@ -387,7 +406,7 @@ impl Processor for ChannelProcessor {
         // 事件全部处理完仍不认识的撤单订单号: 按原样告警并清空。
         engine.flush_deferred_cancels();
 
-        flush_accumulated_trades(engine, &mut trades_to_process);
+        flush_accumulated_trades(engine, py, &mut trades_to_process);
 
         Ok(ProcessorResult::Next)
     }

@@ -9,8 +9,8 @@ def test_streaming_indicator_sink_is_public() -> None:
     assert StreamingIndicatorSink is Private
 
 
-def test_engine_rule_version_is_2_3_1() -> None:
-    """on_start 里读得到账户资金与持仓, 规则版本为 2.6.0."""
+def test_engine_rule_version_is_current() -> None:
+    """规则版本为 2.6.1(自定义撮合器了结订单, 当根成交模式下 bracket 子单)."""
     import akquant
 
-    assert akquant.__engine_rule_version__ == "2.6.0"
+    assert akquant.__engine_rule_version__ == "2.6.1"

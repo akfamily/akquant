@@ -124,6 +124,67 @@ pub fn is_reduce_first_order(side: OrderSide, position_effect: PositionEffect) -
     reduction_priority_rank(side, position_effect) == 0
 }
 
+/// `place_oco` 登记的组写进成员 `graph_id` 时用的前缀。
+pub const OCO_GRAPH_PREFIX: &str = "oco:";
+
+/// bracket 出场子单因所保护的持仓已了结(为 0 或已反向)而撤销时写入的原因。
+pub const BRACKET_EXIT_POSITION_CLOSED: &str =
+    "Bracket exit cancelled: position closed (flat or reversed)";
+
+/// 在途量统计里同一 OCO 组只算一次。
+///
+/// 组内只会成交一条腿, 逐张累加会把同一份持仓或资金重复计入。`orders` 是调用方
+/// 按自己的口径(状态、品种等)筛过的在途订单; 同一组(见 [`Order::oco_group_key`])
+/// 里同所属策略、同品种、同方向的腿只保留一条, 由 `prefer(候选, 当前保留)` 决定是否
+/// 替换, 先出现的优先; 其余订单原样保留, 顺序不变。不同品种、方向相反或属于不同
+/// 策略的腿不合并(组号在登记时已按策略槽位区分, 这里再按所属策略兜一道)。
+pub fn dedup_oco_legs<'a>(
+    orders: Vec<&'a Order>,
+    prefer: impl Fn(&Order, &Order) -> bool,
+) -> Vec<&'a Order> {
+    if !orders.iter().any(|order| order.oco_group_key().is_some()) {
+        return orders;
+    }
+    type LegKey<'k> = (&'k str, Option<&'k str>, &'k str, OrderSide);
+    let leg_key = |group: &'a str, order: &'a Order| -> LegKey<'a> {
+        (
+            group,
+            order.owner_strategy_id.as_deref(),
+            order.symbol.as_str(),
+            order.side,
+        )
+    };
+    let mut kept: std::collections::HashMap<LegKey<'a>, usize> =
+        std::collections::HashMap::new();
+    for (index, order) in orders.iter().enumerate() {
+        let Some(group) = order.oco_group_key() else {
+            continue;
+        };
+        let key = leg_key(group, order);
+        match kept.get(&key) {
+            Some(&current) if !prefer(order, orders[current]) => {}
+            _ => {
+                kept.insert(key, index);
+            }
+        }
+    }
+    orders
+        .iter()
+        .enumerate()
+        .filter(|(index, order)| {
+            order
+                .oco_group_key()
+                .is_none_or(|group| kept.get(&leg_key(group, order)) == Some(index))
+        })
+        .map(|(_, order)| *order)
+        .collect()
+}
+
+/// [`dedup_oco_legs`] 的缺省取舍: 保留剩余量最大的一条腿。
+pub fn larger_remaining(candidate: &Order, current: &Order) -> bool {
+    candidate.quantity - candidate.filled_quantity > current.quantity - current.filled_quantity
+}
+
 /// 在途订单是否会减少持仓敞口(用于可平仓投影)。
 ///
 /// 与 [`is_reduce_first_order`] 的区别:后者判定撮合排序优先级,把
@@ -480,6 +541,35 @@ impl Order {
 }
 
 impl Order {
+    /// 进场单成交时由引擎按 bracket 计划生成的止损/止盈子单
+    /// (见 `OrderManager::consume_bracket_activation_on_fill`)。
+    pub fn is_bracket_exit(&self) -> bool {
+        self.parent_order_id.is_some()
+            && matches!(self.order_role, OrderRole::StopLoss | OrderRole::TakeProfit)
+    }
+
+    /// 持仓为 `position` 时这张单最多能平掉的数量: 卖单平多头、买单平空头,
+    /// 持仓为 0 或与之同向时为 0。bracket 出场子单只减仓, 成交量以此为上限。
+    pub fn closable_quantity(&self, position: Decimal) -> Decimal {
+        match self.side {
+            OrderSide::Sell => position.max(Decimal::ZERO),
+            OrderSide::Buy => (-position).max(Decimal::ZERO),
+        }
+    }
+
+    /// 在途量统计用的 OCO 组号; 只认登记为 OCO 同伴的两类订单:
+    ///
+    /// - bracket 止损止盈子单: 同一张进场单生成的子单带同一个
+    ///   `graph_id`(`bracket-<进场单号>`), 两张都有时由引擎登记为 OCO 组。
+    /// - `place_oco` 登记的组: 订单管理器给 `graph_id` 为空的成员写入
+    ///   [`OCO_GRAPH_PREFIX`] 加组号(见 `OrderManager::register_oco_group`)。
+    ///
+    /// 其余带 `graph_id` 的订单不合并, 各算一次。
+    pub fn oco_group_key(&self) -> Option<&str> {
+        let graph = self.graph_id.as_deref()?;
+        (self.is_bracket_exit() || graph.starts_with(OCO_GRAPH_PREFIX)).then_some(graph)
+    }
+
     #[cfg(test)]
     pub fn test_new(
         id: &str,
@@ -805,5 +895,58 @@ mod tests {
         };
 
         assert_eq!(trade.timestamp_iso(), "2025-01-02T07:00:00Z");
+    }
+
+    fn pending_leg(id: &str, symbol: &str, side: OrderSide, graph: Option<&str>) -> Order {
+        let mut order = Order::test_new(id, symbol, side, OrderType::Limit, Decimal::from(1000));
+        order.graph_id = graph.map(str::to_string);
+        order
+    }
+
+    fn kept_ids(orders: &[Order]) -> Vec<String> {
+        dedup_oco_legs(orders.iter().collect(), larger_remaining)
+            .into_iter()
+            .map(|order| order.id.clone())
+            .collect()
+    }
+
+    /// 同一 OCO 组同品种同方向的腿只留一条, 部分成交后取剩余量最大的那条。
+    #[test]
+    fn dedup_oco_legs_keeps_the_leg_with_the_largest_remaining() {
+        let mut partly = pending_leg("a", "X", OrderSide::Sell, Some("oco:g"));
+        partly.filled_quantity = Decimal::from(400);
+        let whole = pending_leg("b", "X", OrderSide::Sell, Some("oco:g"));
+        let plain = pending_leg("c", "X", OrderSide::Sell, None);
+
+        assert_eq!(kept_ids(&[partly.clone(), whole.clone(), plain.clone()]), ["b", "c"]);
+        assert_eq!(kept_ids(&[whole, partly, plain]), ["b", "c"]);
+    }
+
+    /// bracket 子单按进场单生成的 graph_id 合并; 同图但不是 OCO 组员(没有
+    /// oco: 前缀、也不是 bracket 子单)的订单各算一次; 方向或品种不同不合并。
+    #[test]
+    fn dedup_oco_legs_only_merges_registered_oco_peers() {
+        let mut stop = pending_leg("s", "X", OrderSide::Sell, Some("bracket-e"));
+        stop.parent_order_id = Some("e".to_string());
+        stop.order_role = OrderRole::StopLoss;
+        let mut take = pending_leg("t", "X", OrderSide::Sell, Some("bracket-e"));
+        take.parent_order_id = Some("e".to_string());
+        take.order_role = OrderRole::TakeProfit;
+        assert_eq!(kept_ids(&[stop, take]), ["s"]);
+
+        let first = pending_leg("p1", "X", OrderSide::Sell, Some("plan-1"));
+        let second = pending_leg("p2", "X", OrderSide::Sell, Some("plan-1"));
+        assert_eq!(kept_ids(&[first, second]), ["p1", "p2"]);
+
+        let mut mine = pending_leg("m", "X", OrderSide::Sell, Some("oco:g"));
+        mine.owner_strategy_id = Some("a".to_string());
+        let mut theirs = pending_leg("t", "X", OrderSide::Sell, Some("oco:g"));
+        theirs.owner_strategy_id = Some("b".to_string());
+        assert_eq!(kept_ids(&[mine, theirs]), ["m", "t"]);
+
+        let buy = pending_leg("b", "X", OrderSide::Buy, Some("oco:g"));
+        let sell = pending_leg("s", "X", OrderSide::Sell, Some("oco:g"));
+        let other = pending_leg("o", "Y", OrderSide::Sell, Some("oco:g"));
+        assert_eq!(kept_ids(&[buy, sell, other]), ["b", "s", "o"]);
     }
 }

@@ -1,7 +1,14 @@
 from collections import deque
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union, cast
 
-from .akquant import Order, OrderStatus, OrderType, PositionEffect, TimeInForce
+from .akquant import (
+    Order,
+    OrderRole,
+    OrderStatus,
+    OrderType,
+    PositionEffect,
+    TimeInForce,
+)
 from .config import bare_slippage_error
 
 if TYPE_CHECKING:
@@ -411,7 +418,12 @@ def _submit_buy_side_orders(
     # 只由公开入口按 quantity is None 判定; 拆腿递归时数量已由 sizer 算出,
     # 须显式传下去, 否则缩量能力随拆腿丢失。
     if allow_quantity_auto_resize is None:
-        allow_quantity_auto_resize = quantity is None
+        # 目标金额类入口(order_target_value 等)经 buy() 下单, 数量是按参考价换算的,
+        # 由 _target_to_orders 在调用期间给出缩量开关; 其余按"数量是否由 sizer 算出"。
+        override = getattr(strategy, "_target_buy_auto_resize", None)
+        allow_quantity_auto_resize = (
+            quantity is None if override is None else bool(override)
+        )
     if quantity is None:
         quantity = round_sizer_quantity(
             strategy,
@@ -1187,6 +1199,49 @@ def _position_from_execution(strategy: Any, symbol: str, method: str) -> float:
     return float(execution.get_position(symbol))
 
 
+def _cancel_bracket_exits_before_flatten(strategy: Any, symbol: str) -> None:
+    """把仓位平到 0 之前，撤掉该品种上本策略挂着的 bracket 止损止盈子单.
+
+    子单覆盖着持仓时投影持仓为 0，不先撤就不会下平仓单。撤单在本次回调返回后、
+    平仓单过提交时的风控之前生效，投影持仓也不再计入已请求撤单的订单。只撤
+    ``place_bracket`` 生成的子单：普通在途单、手工 ``place_oco`` 的组、其他品种、
+    其他策略槽位的订单都不动。柜台路径（broker_live）撤单要等回报，不在此处理。
+    """
+    execution = getattr(strategy, "execution", None)
+    get_open_orders_method = getattr(execution, "get_open_orders", None)
+    capabilities_method = getattr(execution, "capabilities", None)
+    cancel_order_method = getattr(execution, "cancel_order", None)
+    # 不提供这几个方法的精简后端没有 bracket 子单可撤
+    if not (
+        callable(get_open_orders_method)
+        and callable(capabilities_method)
+        and callable(cancel_order_method)
+    ):
+        return
+    if capabilities_method().get("broker_live"):
+        return
+    # 多头持仓当日还不能全部卖出(T+1 当日买入): 平仓单会被拒, 这时撤掉子单只会让
+    # 持仓失去保护, 所以不撤——子单照旧占着这部分持仓, 可卖之后再平。
+    get_position_method = getattr(execution, "get_position", None)
+    get_available_method = getattr(execution, "get_available_position", None)
+    if callable(get_position_method) and callable(get_available_method):
+        position = float(get_position_method(symbol))
+        if position > 0 and float(get_available_method(symbol)) < position:
+            return
+    owner = str(getattr(strategy, "_owner_strategy_id", "") or "_default")
+    for order in get_open_orders_method(symbol=symbol):
+        if getattr(order, "parent_order_id", None) is None:
+            continue
+        if getattr(order, "order_role", None) not in (
+            OrderRole.StopLoss,
+            OrderRole.TakeProfit,
+        ):
+            continue
+        if str(getattr(order, "owner_strategy_id", None) or "_default") != owner:
+            continue
+        cancel_order_method(order.id)
+
+
 def _target_to_orders(
     strategy: Any,
     symbol: Optional[str] = None,
@@ -1195,15 +1250,33 @@ def _target_to_orders(
     round_to_lot: bool = True,
     **kwargs: Any,
 ) -> Optional[str]:
-    """目标持仓 → 下单的共享核心：按 lot_size 取整 delta（可关闭），不撤单."""
+    """目标持仓 → 下单的共享核心：按 lot_size 取整 delta（可关闭）.
+
+    不撤普通在途单；目标为 0 时先撤该品种上本策略挂着的 bracket 止损止盈
+    （见 ``_cancel_bracket_exits_before_flatten``）。
+    """
     if target_qty is None:
         raise ValueError("target requires a target quantity (目标持仓数量)")
+    # 买入方向资金不足时是否缩量(回测与 paper): None 为不缩量(数量由调用方给定);
+    # 按金额换算数量的入口缺省传 True。不是 buy() 的参数, 在这里取走。
+    allow_auto_resize = kwargs.pop("allow_quantity_auto_resize", None)
     symbol = resolve_symbol(strategy, symbol)
+    if target_qty == 0:
+        _cancel_bracket_exits_before_flatten(strategy, symbol)
     # 目标仓位问的是"仓位最终会落在哪"，故按投影持仓（含全部在途单）算 delta。
     # 用结算仓会让同一 on_bar 内的连续调用按同一基准重复下单——例如先
     # close_position 再 order_target_percent，会在全平单之外再补一笔卖单造成
     # 超卖（与 #361 同源，均是"结算仓不含在途单"）。
     current_qty = _position_from_execution(strategy, symbol, "get_projected_position")
+    if target_qty != 0:
+        # 目标不为 0 时子单不撤: 它们只减仓, 是对持仓的保护而不是"将要卖出"的量,
+        # 差额按不含它们的持仓算(持仓 100、子单各 100、目标 50 → 卖出 50)。
+        ctx = getattr(strategy, "ctx", None)
+        base_getter = getattr(ctx, "get_target_base_position", None)
+        if callable(base_getter) and not get_execution_capabilities(strategy).get(
+            "broker_live"
+        ):
+            current_qty = float(base_getter(symbol))
     delta_qty = target_qty - current_qty
 
     if round_to_lot:
@@ -1224,12 +1297,27 @@ def _target_to_orders(
     # 为契约（不属于 Task 7 变更范围），故在此边界取 .primary 落地为字符串。
     # 空回执(前置风控/柜台拒单/状态未知)返回 None。
     if delta_qty > 0:
-        receipt = buy(strategy, symbol, delta_qty, price, **kwargs)
+        previous = getattr(strategy, "_target_buy_auto_resize", None)
+        strategy._target_buy_auto_resize = allow_auto_resize
+        try:
+            receipt = buy(strategy, symbol, delta_qty, price, **kwargs)
+        finally:
+            strategy._target_buy_auto_resize = previous
         return str(getattr(receipt, "primary", receipt)) or None
     elif delta_qty < 0:
         receipt = sell(strategy, symbol, abs(delta_qty), price, **kwargs)
         return str(getattr(receipt, "primary", receipt)) or None
     return None
+
+
+def _contract_multiplier(strategy: Any, symbol: str) -> float:
+    """标的的合约乘数(未登记或非正时为 1): 市值 = 数量 × 价格 × 合约乘数."""
+    snapshot = (getattr(strategy, "_instrument_snapshots", None) or {}).get(symbol)
+    try:
+        multiplier = float(getattr(snapshot, "multiplier", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        return 1.0
+    return multiplier if multiplier > 0 else 1.0
 
 
 def order_target_value(
@@ -1264,7 +1352,12 @@ def order_target_value(
             )
             return None
 
-    target_qty = target_value / current_price
+    # 目标价值是名义市值(数量 × 价格 × 合约乘数): 期货等乘数不为 1 的品种要除以乘数,
+    # 否则下出的手数是目标的"乘数"倍。
+    target_qty = target_value / (current_price * _contract_multiplier(strategy, symbol))
+    # 数量是按参考价由金额换算出来的: 买入方向资金不足(安全垫、费用、成交价高于
+    # 参考价)时缩到买得起的最大数量, 而不是整单被拒; 调用方显式传值时以其为准。
+    kwargs.setdefault("allow_quantity_auto_resize", True)
     return _target_to_orders(strategy, symbol, target_qty, price, **kwargs)
 
 
@@ -1346,7 +1439,9 @@ def rebalance_weights(
             elif strategy.current_tick and strategy.current_tick.symbol == symbol:
                 current_price = strategy.current_tick.price
 
-        current_value = current_qty * float(current_price)
+        current_value = (
+            current_qty * float(current_price) * _contract_multiplier(strategy, symbol)
+        )
         delta_value = target_value - current_value
         if abs(delta_value) <= abs_tolerance_value:
             continue

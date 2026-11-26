@@ -1097,6 +1097,9 @@ strategy_params = {
     *   `self.order_target(target=100, symbol="AAPL")`: 调整持仓数量至 100 股。
     *   `self.order_target_percent(target_percent=0.5, symbol="AAPL")`: 调整持仓至总资产的 50%。
     *   `self.order_target_value(target_value=10000, symbol="AAPL")`: 调整持仓至 10000 元市值。
+    *   按金额、比例、权重买入（上面两个与 `rebalance_weights`）时资金不足会自动缩量：扣掉安全垫、
+        费用后买不起目标数量时，缩到买得起的最大整手数，满仓调仓（比例 `1.0`）不会被整单拒掉。
+        传 `allow_quantity_auto_resize=False` 可恢复整单校验；按股数的 `order_target()` 不缩量。
     *   目标仓位系列（含 `close_position()`）按**投影持仓**算差额，即结算持仓叠加同一根
         bar 内**全部**在途单的预期效果。因为它们问的是"仓位最终落在哪"，若按结算持仓算，
         同一根 bar 内连续调用会以同一基准重复下单（例如先 `close_position()` 再

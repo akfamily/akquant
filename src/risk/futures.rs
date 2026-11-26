@@ -36,10 +36,14 @@ impl RiskRule for FuturesMarginRule {
         prices_for_order.insert(order.symbol.clone(), order_price);
 
         let mut current_portfolio = ctx.portfolio.clone();
-        for active_order in ctx.active_orders {
-            if active_order.status != OrderStatus::New {
-                continue;
-            }
+        let pending: Vec<&Order> = ctx
+            .active_orders
+            .iter()
+            .filter(|o| o.status == OrderStatus::New)
+            .collect();
+        // 同一 OCO 组(如 bracket 的止损止盈)只会成交一条腿, 按一组投影一次
+        for active_order in crate::model::dedup_oco_legs(pending, crate::model::larger_remaining)
+        {
             let Some(active_price) = resolve_order_price(active_order, ctx.current_prices) else {
                 continue;
             };
@@ -261,5 +265,49 @@ mod tests {
         );
 
         assert!(rule.check(&order, &ctx).is_ok());
+    }
+
+    /// 在途的两张互斥买单(同一 OCO 组)只投影一条腿: 各 400 手, 再买 200 手时
+    /// 投影占用 60000(维持率 1.67)而不是 100000(1.0)。不是 OCO 组员的同图订单
+    /// 照旧各算一次, 维持率跌破 1.2 被拒。
+    #[test]
+    fn futures_rule_projects_an_oco_group_once() {
+        let symbol = "IF9999".to_string();
+        let instrument = make_futures_instrument(&symbol);
+        let instruments = HashMap::from([(symbol.clone(), instrument.clone())]);
+        let current_prices = HashMap::from([(symbol.clone(), Decimal::from(100))]);
+        let portfolio = Portfolio {
+            cash: Decimal::from(100_000),
+            positions: Arc::new(HashMap::new()),
+            available_positions: Arc::new(HashMap::new()),
+        };
+        let mut config = RiskConfig::new();
+        config.account_mode = "margin".to_string();
+        config.maintenance_margin_ratio = 1.2;
+        let tracker = TradeTracker::new();
+        let leg = |id: &str, graph: &str| {
+            let mut order = make_order(&symbol, OrderSide::Buy, Decimal::from(400));
+            order.id = id.to_string();
+            order.graph_id = Some(graph.to_string());
+            order
+        };
+        let order = make_order(&symbol, OrderSide::Buy, Decimal::from(200));
+        let check = |active: &[Order]| {
+            let mut ctx = make_context(
+                &portfolio,
+                &instrument,
+                &instruments,
+                &current_prices,
+                &tracker,
+                &config,
+            );
+            ctx.active_orders = active;
+            FuturesMarginRule.check(&order, &ctx)
+        };
+
+        check(&[leg("a", "oco:g"), leg("b", "oco:g")]).expect("OCO legs project once");
+        let err = check(&[leg("a", "plan-1"), leg("b", "plan-1")])
+            .expect_err("non-OCO orders are each projected");
+        assert!(err.to_string().contains("Ratio: 1.0, Required: 1.2"), "{err}");
     }
 }

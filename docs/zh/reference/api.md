@@ -253,7 +253,7 @@ def run_from_checkpoint(
 *   `catalog_path`: 当 `data` 未显式传入时，可从该目录按 `ParquetDataCatalog` 规则加载数据。
 *   `config`: `BacktestConfig` 配置对象，用于集中管理配置。
 *   `lot_size`: 最小交易单位。如果是 `int`，应用于所有标的；如果是字典，按标的匹配。
-*   `custom_matchers`: 自定义撮合器字典。
+*   `custom_matchers`: 自定义撮合器字典（`AssetType` → 撮合器对象）。撮合器实现 `match(order, event, instrument, bar_index)`：返回 `Trade` 表示成交，返回 `None` 表示本次不成交。订单的已成交量、成交均价和状态由引擎按返回的成交更新，撮合器不必自己改订单；分批成交时订单保持在途（`PartiallyFilled`），之后继续送进 `match`。订单号、品种、方向与订单不符，或数量不为正、超过订单剩余量的成交被忽略（不入账、不改订单），并记一条错误日志。成交的手续费入账时由引擎按费率重算，`Trade` 里填的 `commission` 不被采用。
 *   `risk_config`: 风控配置。支持字典 (e.g., `{"max_position_pct": 0.1}`) 或 `RiskConfig` 对象。如果同时提供了 `config.strategy_config.risk`，此参数将覆盖其中的同名字段。
 *   `strategy_runtime_config` / `runtime_config_override`: 运行时行为注入与冲突处理开关，支持 `StrategyRuntimeConfig` 或 `dict`。
 *   `strategies_by_slot`: 可选多策略映射。键为 slot id，值为策略类/实例/函数式 on_bar 回调；用于启用 slot 迭代执行。
@@ -1039,12 +1039,14 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
     *   `target_weights` 形如 `{symbol: weight}`，默认要求权重和不超过 `1.0`。
     *   `liquidate_unmentioned=True` 时，会将未出现在目标字典中的现有持仓目标设为 `0`。
     *   执行顺序为先卖后买，减少现金约束导致的调仓失败。
+    *   目标价值按名义市值（数量 × 价格 × 合约乘数）换算，`order_target_value`、`order_target_percent` 相同。
+    *   买入方向资金不足时自动缩量（回测与 paper）：数量是按参考价由权重换算的，扣掉安全垫、佣金或成交价高于参考价后买不起时，缩到买得起的最大整手数，而不是整单被拒。`order_target_value`、`order_target_percent` 相同；传 `allow_quantity_auto_resize=False` 恢复整单校验。按数量调仓的 `order_target`、`rebalance_positions` 不缩量，可传 `allow_quantity_auto_resize=True` 打开。
     *   `rebalance_tolerance` 按组合市值比例跳过小偏差，降低无效换手。
 *   `cancel_order(order_id: str | OrderReceipt | Order)`: 撤销指定订单。可传订单号、下单返回的 `OrderReceipt`（取首腿）或订单对象（取其 `id`）；其他类型抛 `TypeError`。
 *   `cancel_group(group_id: str | OrderReceipt)`: 按 `group_id` 撤销一个逻辑委托拆出的全部腿。传订单对象会抛 `TypeError`，撤单笔订单请用 `cancel_order`。
 *   `cancel_all_orders(symbol)`: 取消指定标的的所有挂单。如果不指定 `symbol`，则取消所有挂单。
-*   `place_oco(first_order_id, second_order_id, group_id=None) -> str`: 创建 OCO 订单组。组内任一订单成交后，另一订单会被自动撤单。
-*   `place_bracket(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...) -> str`: 创建 Bracket 订单。先提交进场单，进场成交后自动提交止损/止盈；当止损与止盈同时存在时会自动绑定 OCO。
+*   `place_oco(first_order_id, second_order_id, group_id=None) -> str`: 创建 OCO 订单组。组内任一订单成交后，另一订单会被自动撤单。组内只会成交一张，所以提交时的可用持仓校验、投影持仓（`order_target*`、`close_position` 据此算差额）、买入力、冻结资金等在途量统计里，同一组同品种同方向的两张单按一组算一次，取剩余量较大的那张；可平持仓只计平仓单，组内两张都是平仓单时同样只算一次。回测登记后，两张单的 `graph_id` 写为 `oco:<组号>`（此前为空），多策略槽位下写为 `oco:<槽位>:<组号>`，不同槽位用同一个组号（含默认的 `oco-1`）也是不同的组；单子本身已有 `graph_id` 时不改写，这样的组在统计里各算一次。同一个回调里先 `place_oco`、紧接着调用 `close_position` / `order_target*` 时，投影持仓同样按一组计算。
+*   `place_bracket(symbol, quantity, entry_price=None, stop_trigger_price=None, take_profit_price=None, ...) -> str`: 创建 Bracket 订单。先提交进场单，进场成交后自动提交止损/止盈；当止损与止盈同时存在时会自动绑定 OCO，在途量统计里按一组算一次（同 `place_oco`；子单的开平标志沿用进场单，是开仓，本来就不计入可平持仓）。止损、止盈只减仓（回测与模拟盘 `trading_mode="paper"`）：成交量不超过当时的持仓（持仓 100、手动卖出 50 后止损触发只成交 50），不会开出反向仓位；该品种的持仓归零或反向后（手动卖出、另一组止损、到期等），挂着的子单自动撤销，原因 `Bracket exit cancelled: position closed (flat or reversed)`。判断按账户里该品种的总持仓。子单不占用可卖数量，挂着它们时手动 `sell` 减仓或卖完不会因“已有在途卖出”被拒。`close_position`、目标为 0 的 `order_target*` 与 `rebalance_*` 会先撤掉该品种上本策略的子单，再下平仓单；目标不为 0 时不撤子单，差额按不含子单的持仓计算（持仓 100、目标 50 → 卖出 50）。T+1：进场当日触及止损时止损单保持挂着，之后按价格重新判断，次日可卖时成交；当日还不能全部卖出时调用 `close_position` 不撤子单，只卖出超出子单数量的部分（子单覆盖全部持仓时不下单、返回 `None`）。手工 `place_oco` 的组没有这些保护。柜台路径（`broker_live`）不做自动撤销，也不在平仓前撤子单：撤单要等柜台回报，须自行先撤子单、收到撤单回报后再平仓。
 
 **数据与工具:**
 
@@ -1073,7 +1075,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
     *   只读，写入抛 `AttributeError`：数据粒度由数据源决定，改这个属性不会真的改变粒度。
 *   `get_account() -> AccountSnapshot`: 获取账户详情快照（字典），回测与实盘的键完全一致：`cash`、`equity`、`market_value`、`notional_value`、`margin`、`frozen_cash`、`available_cash`、`unrealized_pnl`、`borrowed_cash`、`short_market_value`、`maintenance_ratio`、`account_mode`、`accrued_interest`、`daily_interest`。
     *   三项资金满足 `equity == margin + frozen_cash + available_cash`：总权益 = 持仓占用 + 挂单冻结 + 可用资金。回测里严格成立；经柜台交易时三项各取柜台的值。
-    *   `margin` 是持仓占用的保证金，现金账户里的股票按全额市值计。`frozen_cash` 是未完成委托冻结的资金：每笔按自己的委托价估算（没有委托价的用最新价），只计会增加占用的委托，挂着的卖出、平仓单不占资金，也不会释放买单的冻结；不含手续费。
+    *   `margin` 是持仓占用的保证金，现金账户里的股票按全额市值计。`frozen_cash` 是未完成委托冻结的资金：每笔按自己的委托价估算（没有委托价的用最新价），只计会增加占用的委托，挂着的卖出、平仓单不占资金，也不会释放买单的冻结；不含手续费。同一 OCO 组（如两张互斥的限价买单）只冻结占用较大的那张。
     *   现金账户 / 现货账户下，`market_value` 通常表示持仓市值。
     *   期货保证金账户下，`equity` 表示账户权益，`margin` 表示已占用保证金，`notional_value` 表示期货名义敞口，`unrealized_pnl` 表示浮动盈亏；期货持仓不会像股票那样把全额名义本金直接计入 `cash` 扣减，也不会把名义敞口直接映射为 `market_value`。
     *   `cash` 是现金余额，`available_cash` 才是可用于新开仓的资金，与下单被拒时日志里的 `Available` 口径相近（后者另按 `safety_margin` 折减）。期货保证金账户下开仓不从 `cash` 扣减保证金，因此 `cash` 通常大于 `available_cash`；股票现金账户下没有挂单时二者相等。权益不足以覆盖占用与冻结时 `available_cash` 为负数。
@@ -1620,7 +1622,7 @@ class RiskConfig:
     *   **减仓/平仓**会释放保证金，变化量为负，先抵掉自己的费用——因此**卖单不需要预先持有现金**，与 A 股"卖出费用从成交款净额扣除"的规则一致。满仓后只剩几十元现金时，全量卖单照常成交。
     *   仅当卖出所得连费用都盖不住时（如持 100 股 0.01 元的股票），该值仍为正并照常验资；放过它等于让现金透支，而透支只有 `check_cash=False` 才允许。
 *   `safety_margin`: 提交时闸门的安全垫（默认 `0.0001`），按 `(1 - safety_margin)` 折减可用资金，用于吸收"提交时用预估价、成交时用真实价"的偏差。成交时闸门不留安全垫。
-*   提交时闸门用**参考价**估算：限价单用限价，市价单用最新价。`fill_policy=NextOpen()` 时最新价就是上一根的收盘价，而真实成交价是下一根的开盘价，所以次日低开（开盘价低于前收盘）乃至平开时，按开盘价算好的满仓市价买单会在提交时被拒——参考价高于成交价，可用资金还要扣掉安全垫（拒单原因 `Insufficient margin`，其中 `Required = 数量 × 参考价 + 佣金`，`Available = 可用资金 × (1 − safety_margin)`）。成交时闸门再按真实成交价校验一次，不留安全垫。规避办法：用限价单，限价按你能接受的最高价给；或 `buy(symbol, quantity=None)` 交给仓位管理器按可用资金计算数量，资金不足时引擎会自动缩到买得起的整手数（提交时与成交时都会缩；显式给 `quantity` 的买单不缩量）；或者按 `参考价 × (1 + 预留比例)` 自己计算数量。
+*   提交时闸门用**参考价**估算：限价单用限价，市价单用最新价。`fill_policy=NextOpen()` 时最新价就是上一根的收盘价，而真实成交价是下一根的开盘价，所以次日低开（开盘价低于前收盘）乃至平开时，按开盘价算好的满仓市价买单会在提交时被拒——参考价高于成交价，可用资金还要扣掉安全垫（拒单原因 `Insufficient margin`，其中 `Required = 数量 × 参考价 + 佣金`，`Available = 可用资金 × (1 − safety_margin)`）。成交时闸门再按真实成交价校验一次，不留安全垫。规避办法：用限价单，限价按你能接受的最高价给；或 `buy(symbol, quantity=None)` 交给仓位管理器按可用资金计算数量，资金不足时引擎会自动缩到买得起的整手数（提交时与成交时都会缩；显式给 `quantity` 的买单不缩量）；或用 `order_target_value` / `order_target_percent` / `rebalance_weights`，它们的买入单同样自动缩量，满仓调仓不会被整单拒掉；或者按 `参考价 × (1 + 预留比例)` 自己计算数量。
 
 这些拒单原因会体现在 `orders_df.reject_reason` 字段中。成交时闸门产生的拒单，原因里会带 `at execution` 标记。订单此前已部分成交（如开了 `volume_limit_pct` 跨多根 bar 成交）时，成交时被拒的只是剩余部分：状态为 `cancelled`，`filled_quantity` 与 `avg_price` 保留已成交部分，原因仍写在 `reject_reason`。
 

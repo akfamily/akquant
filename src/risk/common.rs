@@ -391,10 +391,27 @@ pub(crate) fn project_active_orders_into(
     instruments: &HashMap<String, crate::model::Instrument>,
 ) -> crate::portfolio::Portfolio {
     let mut projected = portfolio.clone();
-    for o in active_orders {
-        if o.status != crate::model::OrderStatus::New {
-            continue;
+    let pending: Vec<&Order> = active_orders
+        .iter()
+        .filter(|o| o.status == crate::model::OrderStatus::New)
+        .collect();
+    // 同一 OCO 组(如 bracket 的止损止盈)只会成交一条腿, 按一组投影一次: 取剩余量
+    // 最大的一条; 剩余量相同时取对资金更不利的(卖出回笼少、买入花费多)。
+    let order_price = |o: &Order| o.price.or_else(|| prices.get(&o.symbol).copied());
+    let prefer = |candidate: &Order, current: &Order| {
+        let remaining = |o: &Order| o.quantity - o.filled_quantity;
+        if remaining(candidate) != remaining(current) {
+            return remaining(candidate) > remaining(current);
         }
+        match (order_price(candidate), order_price(current)) {
+            (Some(a), Some(b)) => match candidate.side {
+                OrderSide::Sell => a < b,
+                OrderSide::Buy => a > b,
+            },
+            _ => false,
+        }
+    };
+    for o in crate::model::dedup_oco_legs(pending, prefer) {
         let active_price = if let Some(p) = o.price {
             p
         } else if let Some(p) = prices.get(&o.symbol) {

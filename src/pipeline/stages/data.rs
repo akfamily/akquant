@@ -1,5 +1,6 @@
 use super::shared::{
-    apply_execution_report, effective_execution_policy_for_order, flush_accumulated_trades,
+    apply_execution_report, cancel_bracket_exits_without_position,
+    effective_execution_policy_for_order, flush_accumulated_trades,
 };
 use crate::calendar::trading_calendar::CalendarError;
 use crate::context::{EngineContext, SessionView};
@@ -323,7 +324,7 @@ impl DataProcessor {
                     );
                 }
             }
-            flush_accumulated_trades(engine, &mut trades_to_process);
+            flush_accumulated_trades(engine, py, &mut trades_to_process);
         }
         // 模拟 tick 的时间片里没有 K 线: 不据此给其余品种补合成 bar。
         if !(engine.simulate_ticks && !self.slice_has_bar) {
@@ -1392,6 +1393,11 @@ fn settle_day_close(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_t
         close_ts,
         engine.bar_count,
     );
+    // 到期结算清掉的持仓与成交入账同样处理: 该品种上不再有持仓可平的 bracket
+    // 出场子单随之撤销。
+    for event in &expiry_settlement.events {
+        cancel_bracket_exits_without_position(engine, py, &event.symbol, close_ts);
+    }
     let settlement_prices = engine.last_prices.read().expect("last_prices 读锁被污染");
     let settlement_ctx = crate::settlement::manager::SettlementContext {
         date: day,
@@ -1498,7 +1504,7 @@ fn settle_day_close(engine: &mut Engine, py: Python<'_>, day: NaiveDate, close_t
             );
         }
     }
-    flush_accumulated_trades(engine, &mut liquidation_trades);
+    flush_accumulated_trades(engine, py, &mut liquidation_trades);
     engine.emit_expiry_stream_events(py);
 
     for o in expired_orders {
@@ -1587,7 +1593,7 @@ fn finalize_closing_auctions(engine: &mut Engine, py: Python<'_>, day: NaiveDate
             );
         }
     }
-    flush_accumulated_trades(engine, &mut trades);
+    flush_accumulated_trades(engine, py, &mut trades);
 }
 
 /// 收盘定时器触发时交易日 `day` 是否真的走到了收盘。
