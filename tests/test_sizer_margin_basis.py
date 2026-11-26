@@ -676,3 +676,83 @@ def test_broker_live_custom_sizer_receives_price_and_cash() -> None:
     strategy = _BrokerStrategy(_Spy(seen, 4.0))
     assert _broker_submit(strategy) == [4.0]
     assert seen == [(_PRICE, _CASH)]
+
+
+# ---------------------------------------------------------------------------
+# 期权买方按全额权利金; 非期货标的不看合约乘数与保证金率
+# ---------------------------------------------------------------------------
+
+_OPT = "CALL_OPT"
+_UNDERLYING = "UL"
+
+
+def _run_single(
+    symbol: str, instruments: List[Any], sizer: Sizer, prices: List[float]
+) -> Any:
+    strategy = _strategy({0: [("sizer", (sizer,)), ("buy", ())]}, symbol)
+    config = aq.BacktestConfig(
+        strategy_config=aq.StrategyConfig(initial_cash=_CASH, commission_rate=0.0),
+        instruments_config=instruments,
+    )
+    return aq.run_backtest(
+        data={symbol: _daily(prices)},
+        strategy=strategy,
+        symbols=symbol,
+        freq="1d",
+        fill_policy=aq.NextOpen(),
+        config=config,
+        show_progress=False,
+    )
+
+
+@pytest.mark.parametrize("kind", ["percent50", "all_in"])
+def test_option_buyer_sized_by_full_premium(kind: str) -> None:
+    """期权买方: 每张占用 = 权利金 × 合约乘数(全额), 不按保证金率打折.
+
+    权利金 0.5、乘数 10000, 每张 5000 元; 10 万资金全仓 20 张、一半 10 张。
+    此前按价格折算, 请求 20 万张 / 10 万张。
+    """
+    premium, multiplier = 0.5, 10000.0
+    sink: List[float] = []
+    sizer: Sizer = (
+        _RecordingPercent(50.0, sink) if kind == "percent50" else _RecordingAllIn(sink)
+    )
+    instruments = [
+        aq.InstrumentConfig(
+            symbol=_OPT,
+            asset_type="OPTION",
+            multiplier=multiplier,
+            margin_ratio=0.35,
+            option_type="CALL",
+            strike_price=10,
+            expiry_date=20301231,
+            underlying_symbol=_UNDERLYING,
+        ),
+        aq.InstrumentConfig(symbol=_UNDERLYING, asset_type="STOCK"),
+    ]
+    _run_single(_OPT, instruments, sizer, [premium] * 5)
+
+    share = 0.5 if kind == "percent50" else 1.0
+    expected = float(int(_CASH * share / (premium * multiplier)))
+    assert expected == (10.0 if kind == "percent50" else 20.0)
+    assert sink == [expected]
+
+
+@pytest.mark.parametrize(
+    ("asset_type", "symbol"),
+    [("STOCK", _STOCK), ("FUND", _FUND)],
+    ids=["stock", "fund"],
+)
+def test_non_futures_ignore_registered_multiplier_and_margin_ratio(
+    asset_type: Any, symbol: str
+) -> None:
+    """股票、基金登记了乘数与保证金率也按价格全额折算(引擎对它们的乘数恒为 1)."""
+    sink: List[float] = []
+    instruments = [
+        aq.InstrumentConfig(
+            symbol=symbol, asset_type=asset_type, multiplier=10.0, margin_ratio=0.5
+        )
+    ]
+    _run_single(symbol, instruments, _RecordingPercent(50.0, sink), [_PRICE] * 5)
+
+    assert sink == [float(int(_CASH * 0.5 / _PRICE))] == [5000.0]

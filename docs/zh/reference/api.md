@@ -1026,9 +1026,9 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
         *   `FixedSize(size)`：每次固定数量。
         *   `PercentSizer(percents)`：用可用资金的 `percents`% 作为这笔开仓占用的资金，数量 = 资金 × `percents`% ÷ 每单位占用资金。
         *   `AllInSizer()`：用全部可用资金，即 `PercentSizer(100)`。
-        *   每单位占用资金：期货为价格 × 合约乘数 × 保证金率（与引擎提交时校验资金所用的保证金相同）；期权为价格 × 合约乘数，即全额权利金（期权卖方的保证金按模型计算，内置 sizer 不处理，同样按全额权利金算）；股票、基金（含 ETF、可转债）为价格，股票融资账户也按全额，不随初始保证金率放大。手续费与安全垫不计入，`AllInSizer` 算出的数量因此超出时由引擎按可用资金缩量。
+        *   每单位占用资金：期货为价格 × 合约乘数 × 保证金率（与引擎提交时校验资金所用的保证金相同）；期权为价格 × 合约乘数，即全额权利金（期权卖方的保证金按模型计算，内置 sizer 不处理，同样按全额权利金算）；股票、基金（含 ETF、可转债）为价格，股票融资账户也按全额，不随初始保证金率放大。手续费与安全垫不计入，`AllInSizer` 算出的数量因此超出时由引擎按可用资金缩量（期权除外：引擎下单时不校验期权买方的权利金，不会缩量，全仓买入后现金可能因手续费略为负）。
         *   可用资金：期货为 `get_account()["available_cash"]`（权益 − 占用保证金 − 冻结资金）；其余品种为 `ctx.cash`。多策略槽位共用一个账户。`broker_live` 下一律为柜台现金 `get_cash()`（柜台不一定回报可用资金）；每单位占用资金同样按 `run_live(instruments=...)` 登记的合约算。
-        *   自定义 sizer：继承 `Sizer` 实现 `get_size(price, cash, context, symbol)`，`price` 是参考价（限价单为限价，市价单为最新价），`cash` 按上一条取值。若 `get_size` 再显式声明一个 `unit_cost=None` 参数，下单入口会按关键字传入每单位占用资金；只写 `**kwargs` 的不传。
+        *   自定义 sizer：继承 `Sizer` 实现 `get_size(price, cash, context, symbol)`，`price` 是参考价（限价单为限价，市价单为最新价），`cash` 按上一条取值。若 `get_size` 再显式声明一个 `unit_cost=None` 参数，下单入口会按关键字传入每单位占用资金（股票上就是价格）；只写 `**kwargs` 的不传。自定义 sizer 若已有一个同名但含义不同的 `unit_cost` 参数，会被这个值覆盖，请改名。
 *   `sell(symbol=None, quantity=None, price=None, trigger_price=None, ...)`: 卖出（平多/开空）。参数同上，但**不传 `quantity` 时不走 sizer，而是全平当前持仓**：回测取总持仓，`broker_live` 取可用持仓（A 股 T+1 下当日买入部分不可卖，按总量报单会被柜台整单拒绝）。
 *   解析后下单量 `<= 0` 时不报单，返回空回执（`len(receipt) == 0`、`receipt.primary == ""`）。
 *   `receipt.failure`（只读，`None` / `"rejected"` / `"unknown"`）：区分空回执的三种成因。
