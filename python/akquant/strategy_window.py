@@ -245,6 +245,24 @@ def freeze_window_subscriptions(strategies: Iterable[Any]) -> None:
         strategy._window_subscriptions_frozen = True
 
 
+def _reject_calendar_base_freq(base_freq: Optional[str], window_freq: str) -> None:
+    """基础数据是日历周期(周/月/季/年)时不支持窗口周期: 报错而不是静默聚合."""
+    if base_freq is None:
+        return
+    from .backtest.engine import _parse_bar_period  # 局部导入避免环
+
+    try:
+        period = _parse_bar_period(base_freq)
+    except ValueError:
+        return
+    if period is not None and period.calendar:
+        raise ValueError(
+            f"基础数据是日历周期 freq={base_freq!r}(周/月/季/年), 不支持再声明窗口"
+            f"周期 subscribe_bars({window_freq!r}) 或 I(freq=...): 窗口周期只能"
+            "由分钟、小时、日线聚合而来。请去掉窗口订阅, 或改用更细的基础数据"
+        )
+
+
 def configure_engine_window_subscriptions(
     engine: Any,
     strategies: Iterable[Any],
@@ -268,6 +286,7 @@ def configure_engine_window_subscriptions(
             entries.append((sub.symbols, sub.freq, sub.session_windows))
     if not entries:
         return
+    _reject_calendar_base_freq(base_freq, entries[0][1])
     specs = _merge_scoped_specs(entries)
     base_min = base_interval_minutes(base_freq)
     # 基础周期未知时不在这里告警: bar 带 interval_start(只有日期的日线改写、tick

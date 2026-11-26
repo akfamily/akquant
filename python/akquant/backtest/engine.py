@@ -1021,57 +1021,136 @@ class _FixedTimeDailyChecker:
         )
 
 
+@dataclass(frozen=True)
+class _BarPeriod:
+    """``freq`` 声明的 bar 周期.
+
+    ``calendar`` 为假时 ``ns`` 是固定长度，区间起点 = 时间戳 − ``ns``。为真时是
+    日历周期（周、月、季、年）：同一品种里区间起点取上一根的时间戳，``ns`` 只是
+    该品种第一根用的名义长度。
+    """
+
+    ns: int
+    calendar: bool = False
+
+
+def _calendar_interval_starts(
+    ts_ns: Any, symbols: Optional[Any], first_ns: int
+) -> np.ndarray:
+    """日历周期的区间起点：同品种里比本行早的最近一个时间戳，第一根取 ts − 名义长度.
+
+    “上一根”按品种分别取（``symbols`` 为 None 视为单一品种），按时间排序后取，与
+    行情源投递前按时间排序一致；同一品种同一时间戳的重复行照旧都保留，共用同一个
+    更早的时间戳作起点（起点必须早于终点）。
+    """
+    ts = np.asarray(ts_ns, dtype=np.int64)
+    n = len(ts)
+    if n == 0:
+        return ts.copy()
+    if symbols is None:
+        codes = np.zeros(n, dtype=np.int64)
+    else:
+        codes = pd.factorize(np.asarray(symbols, dtype=object), sort=False)[0]
+    order = np.lexsort((ts, codes))
+    sorted_ts = ts[order]
+    sorted_codes = codes[order]
+    new_run = np.ones(n, dtype=bool)
+    new_run[1:] = (sorted_codes[1:] != sorted_codes[:-1]) | (
+        sorted_ts[1:] != sorted_ts[:-1]
+    )
+    run_ts = sorted_ts[new_run]
+    run_codes = sorted_codes[new_run]
+    run_starts = run_ts - int(first_ns)
+    same_symbol = run_codes[1:] == run_codes[:-1]
+    run_starts[1:] = np.where(same_symbol, run_ts[:-1], run_starts[1:])
+    out = np.empty(n, dtype=np.int64)
+    out[order] = run_starts[np.cumsum(new_run) - 1]
+    return out
+
+
 def _bar_interval_starts(
-    ts_ns: np.ndarray, *, date_only: bool, period_ns: Optional[int]
+    ts_ns: np.ndarray,
+    *,
+    date_only: bool,
+    period: Optional[_BarPeriod],
+    symbols: Optional[Any] = None,
 ) -> Optional[np.ndarray]:
-    """Bar 区间起点：只有日期的数据取 24h 前；声明了周期取 ts−周期；否则 None."""
+    """Bar 区间起点.
+
+    日历周期按同品种上一根取（只有日期的数据先已改写到收盘时刻）；否则只有日期的
+    数据取 24h 前，声明了固定周期取 ts−周期，都没有为 None。
+    """
+    if period is not None and period.calendar:
+        return _calendar_interval_starts(ts_ns, symbols, period.ns)
     if date_only:
         return ts_ns.astype(np.int64) - _ONE_DAY_NS
-    if period_ns is not None:
-        return ts_ns.astype(np.int64) - int(period_ns)
+    if period is not None:
+        return ts_ns.astype(np.int64) - int(period.ns)
     return None
 
 
 def _masked_interval_starts(
-    ts_ns: np.ndarray, rewritten: np.ndarray, period_ns: Optional[int]
+    ts_ns: np.ndarray,
+    rewritten: np.ndarray,
+    period: Optional[_BarPeriod],
+    symbols: Any,
 ) -> Optional[np.ndarray]:
-    """多标的数据：被只有日期改写的行按日线取起点，其余行按声明周期（未声明则未知）."""
+    """多标的数据：被只有日期改写的行按日线取起点，其余行按声明周期（未声明则未知）.
+
+    日历周期不区分是否改写，全部行按同品种上一根取。
+    """
     ts_ns = np.asarray(ts_ns, dtype=np.int64)
-    rest = _bar_interval_starts(ts_ns, date_only=False, period_ns=period_ns)
+    if period is not None and period.calendar:
+        return _calendar_interval_starts(ts_ns, symbols, period.ns)
+    rest = _bar_interval_starts(ts_ns, date_only=False, period=period)
     if not rewritten.any():
         return rest
-    daily = cast(
-        np.ndarray, _bar_interval_starts(ts_ns, date_only=True, period_ns=None)
-    )
+    daily = cast(np.ndarray, _bar_interval_starts(ts_ns, date_only=True, period=None))
     if rest is None:
         rest = np.full(len(ts_ns), _INTERVAL_UNKNOWN, dtype=np.int64)
     return cast(np.ndarray, np.where(rewritten, daily, rest))
 
 
 def _arrays_interval_starts(
-    arrays: Tuple[Any, ...], *, date_only: bool, period_ns: Optional[int]
+    arrays: Tuple[Any, ...], *, date_only: bool, period: Optional[_BarPeriod]
 ) -> Optional[np.ndarray]:
     """``dataframe_to_arrays`` 结果的区间起点列（时间戳在 ``arrays[0]``）."""
     return _bar_interval_starts(
-        np.asarray(arrays[0], dtype=np.int64), date_only=date_only, period_ns=period_ns
+        np.asarray(arrays[0], dtype=np.int64),
+        date_only=date_only,
+        period=period,
+        symbols=arrays[7],
     )
 
 
-_BAR_FREQ_PATTERN = re.compile(r"^\s*(\d*)\s*(min|h|d|day)\s*$", re.IGNORECASE)
-_BAR_FREQ_UNIT_NS = {
-    "min": 60 * 10**9,
-    "h": 3600 * 10**9,
-    "d": _ONE_DAY_NS,
-    "day": _ONE_DAY_NS,
+_BAR_FREQ_PATTERN = re.compile(
+    r"^\s*(\d*)\s*(min|h|day|d|week|w|month|mon|quarter|q|year|y)\s*$",
+    re.IGNORECASE,
+)
+_BAR_FREQ_UNITS: Dict[str, _BarPeriod] = {
+    "min": _BarPeriod(60 * 10**9),
+    "h": _BarPeriod(3600 * 10**9),
+    "d": _BarPeriod(_ONE_DAY_NS),
+    "day": _BarPeriod(_ONE_DAY_NS),
+    # 日历周期：ns 是该品种第一根的名义长度（取偏大的值）
+    "w": _BarPeriod(7 * _ONE_DAY_NS, calendar=True),
+    "week": _BarPeriod(7 * _ONE_DAY_NS, calendar=True),
+    "mon": _BarPeriod(31 * _ONE_DAY_NS, calendar=True),
+    "month": _BarPeriod(31 * _ONE_DAY_NS, calendar=True),
+    "q": _BarPeriod(92 * _ONE_DAY_NS, calendar=True),
+    "quarter": _BarPeriod(92 * _ONE_DAY_NS, calendar=True),
+    "y": _BarPeriod(366 * _ONE_DAY_NS, calendar=True),
+    "year": _BarPeriod(366 * _ONE_DAY_NS, calendar=True),
 }
 
 
-def _freq_period_ns(freq: Optional[str]) -> Optional[int]:
-    """``freq`` 声明的 bar 周期（纳秒）；未声明为 None.
+def _parse_bar_period(freq: Optional[str]) -> Optional[_BarPeriod]:
+    """``freq`` 声明的 bar 周期；未声明为 None.
 
-    与 tick 聚合用的 ``parse_freq_to_interval_min`` 不同，bar 周期可以是日：
-    接受 ``Nmin`` / ``Nh`` / ``Nd`` / ``Nday``（大小写不敏感，省略 N 视为 1，
-    如 ``"D"`` 即 1 天）。
+    与 tick 聚合用的 ``parse_freq_to_interval_min`` 不同，bar 周期可以是日与日历
+    周期：接受 ``Nmin`` / ``Nh`` / ``Nd`` / ``Nday``，以及 ``Nw`` / ``Nmon`` /
+    ``Nq`` / ``Ny``（全称 week / month / quarter / year 同样接受）。大小写不敏感，
+    省略 N 视为 1，如 ``"D"`` 即 1 天、``"1w"`` 即 1 周。月不用 ``m`` / ``M``。
     """
     if freq is None:
         return None
@@ -1080,11 +1159,14 @@ def _freq_period_ns(freq: Optional[str]) -> Optional[int]:
     if match is None or value <= 0:
         raise ValueError(
             f"freq={freq!r} 无法解析为 bar 周期。bar 数据的 freq 写成“正整数 + 单位”，"
-            "单位为 min（分钟）、h（小时）、d 或 day（日），大小写不敏感，省略数字"
-            "视为 1，如 '1min'、'5min'、'1h'、'1d'、'D'；秒级或周/月周期请先用 "
-            "akquant.feed_adapter 的 resample() 重采样"
+            "单位为 min（分钟）、h（小时）、d 或 day（日）、w（周）、mon（月）、"
+            "q（季）、y（年），周月季年也可写全称 week / month / quarter / year，"
+            "大小写不敏感，省略数字视为 1，如 '1min'、'5min'、"
+            "'1h'、'1d'、'D'、'1w'、'1mon'、'1q'、'1y'；月不能写成 m 或 M（与分钟"
+            "混淆）。秒级周期请先用 akquant.feed_adapter 的 resample() 重采样"
         )
-    return value * _BAR_FREQ_UNIT_NS[match.group(2).lower()]
+    unit = _BAR_FREQ_UNITS[match.group(2).lower()]
+    return _BarPeriod(value * unit.ns, calendar=unit.calendar)
 
 
 def _rewrite_date_only_utc(
@@ -1215,41 +1297,50 @@ def _with_interval_start(old: Bar, timestamp: int, interval_start: int) -> Bar:
 def _rewrite_date_only_bars(
     bars: List[Bar],
     rewriter: _DateOnlyRewriter,
-    period_ns: Optional[int] = None,
+    period: Optional[_BarPeriod] = None,
 ) -> List[Bar]:
     """Bar 列表按标的分组：某标的全部 bar 为本地 0 点时改写该标的的时间戳.
 
-    同时填区间起点（用户自带的 ``interval_start`` 原样保留）：被改写的 bar 取
-    改写后时间戳前 24h；未改写且声明了周期 ``period_ns`` 时取时间戳前一个周期。
+    同时填区间起点（用户自带的 ``interval_start`` 原样保留）：日历周期按同标的
+    上一根（改写后的）时间戳取；否则被改写的 bar 取改写后时间戳前 24h，未改写且
+    声明了周期 ``period`` 时取时间戳前一个周期。
     返回新列表；改动的 bar 是新建的副本，不修改调用方传入的对象。
     """
     by_symbol: Dict[str, List[int]] = {}
     for pos, bar in enumerate(bars):
         by_symbol.setdefault(str(bar.symbol), []).append(pos)
     out = list(bars)
+    calendar = period is not None and period.calendar
     for symbol, positions in by_symbol.items():
-        utc = pd.DatetimeIndex(
-            pd.to_datetime(
-                [int(bars[pos].timestamp) for pos in positions], unit="ns", utc=True
-            )
+        stamps = np.asarray(
+            [int(bars[pos].timestamp) for pos in positions], dtype=np.int64
         )
+        utc = pd.DatetimeIndex(pd.to_datetime(stamps, unit="ns", utc=True))
         new_utc = _rewrite_date_only_utc(utc, rewriter)
-        if new_utc is None:
-            if period_ns is None:
-                continue
-            for pos in positions:
-                old = bars[pos]
-                if old.interval_start is None:
-                    ts = int(old.timestamp)
-                    out[pos] = _with_interval_start(old, ts, ts - int(period_ns))
-            continue
-        for pos, new_stamp in zip(positions, new_utc):
-            old = bars[pos]
-            ts = int(new_stamp.value)
-            start = old.interval_start
-            out[pos] = _with_interval_start(
-                old, ts, ts - _ONE_DAY_NS if start is None else int(start)
+        if new_utc is not None:
+            stamps = (
+                new_utc.tz_localize(None)
+                .to_numpy(dtype="datetime64[ns]")
+                .astype(np.int64)
             )
+        if calendar:
+            starts = _calendar_interval_starts(
+                stamps, None, cast(_BarPeriod, period).ns
+            )
+        elif new_utc is not None:
+            starts = stamps - _ONE_DAY_NS
+        elif period is not None:
+            starts = stamps - int(period.ns)
+        else:
+            continue
+        rewritten = new_utc is not None
+        for pos, ts, start in zip(positions, stamps.tolist(), starts.tolist()):
+            old = bars[pos]
+            if old.interval_start is not None:
+                if rewritten:
+                    out[pos] = _with_interval_start(old, ts, int(old.interval_start))
+                continue
+            out[pos] = _with_interval_start(old, ts, start)
     return out
 
 
@@ -4338,10 +4429,11 @@ def run_backtest(
         setattr(current_strategy, "_analyzer_manager", analyzer_manager)
 
     # Determine Data Loading Strategy
-    # bar 数据声明的周期(纳秒), 用于填 bar 区间起点; 见下方 freq 说明
+    # bar 数据声明的周期, 用于填 bar 区间起点; 见下方 freq 说明
     # freq 对含 Tick 的列表是聚合周期(合成 bar 的区间由聚合器填);
     # 对 bar 数据(含 data=None 时从 catalog 加载的)是声明的 bar 周期: 区间起点
-    # = 时间戳 - 周期。DataFeed 输入已由调用方建好, 只注入 self.freq。
+    # = 时间戳 - 周期; 日历周期(周/月/季/年)取同品种上一根的时间戳。
+    # DataFeed 输入已由调用方建好, 只注入 self.freq。
     if (
         simulate_ticks
         and isinstance(data, list)
@@ -4351,11 +4443,11 @@ def run_backtest(
             "simulate_ticks=True 时数据里不能有真实 tick: 模拟 tick 由引擎按 K 线生成。"
             "已有 tick 数据时去掉 simulate_ticks"
         )
-    bar_period_ns: Optional[int] = None
+    bar_period: Optional[_BarPeriod] = None
     if freq is not None and not (
         isinstance(data, list) and any(isinstance(item, Tick) for item in data)
     ):
-        bar_period_ns = _freq_period_ns(freq)
+        bar_period = _parse_bar_period(freq)
     if data is not None:
         # polars / pyarrow 输入统一转 pandas, 复用既有数据路径(issue #298)
         data = coerce_to_pandas(data)
@@ -4485,7 +4577,7 @@ def run_backtest(
                     df_prep, symbol=sym, tz=date_only_rewriter.timezone
                 )
                 interval_starts = _arrays_interval_starts(
-                    arrays, date_only=date_only, period_ns=bar_period_ns
+                    arrays, date_only=date_only, period=bar_period
                 )
                 if interval_starts is None:
                     fixed_time_checker.check(sym, arrays[0])
@@ -4584,14 +4676,14 @@ def run_backtest(
                         df, date_only_rewriter
                     )
                     arrays = dataframe_to_arrays(df, tz=date_only_rewriter.timezone)
-                    if bar_period_ns is None:
+                    if bar_period is None:
                         fixed_time_checker.check_rows(
                             df["symbol"].to_numpy(), arrays[0], ~rewritten_rows
                         )
                     feed.add_arrays(
                         *arrays,  # type: ignore[arg-type]
                         interval_starts=_masked_interval_starts(
-                            arrays[0], rewritten_rows, bar_period_ns
+                            arrays[0], rewritten_rows, bar_period, arrays[7]
                         ),
                     )
                     grouped = df.groupby("symbol", sort=False)
@@ -4632,7 +4724,7 @@ def run_backtest(
                     df, symbol=target_symbol, tz=date_only_rewriter.timezone
                 )
                 interval_starts = _arrays_interval_starts(
-                    arrays, date_only=date_only, period_ns=bar_period_ns
+                    arrays, date_only=date_only, period=bar_period
                 )
                 if interval_starts is None:
                     fixed_time_checker.check(target_symbol, arrays[0])
@@ -4696,7 +4788,7 @@ def run_backtest(
                     df_prep, symbol=sym, tz=date_only_rewriter.timezone
                 )
                 interval_starts = _arrays_interval_starts(
-                    arrays, date_only=date_only, period_ns=bar_period_ns
+                    arrays, date_only=date_only, period=bar_period
                 )
                 if interval_starts is None:
                     fixed_time_checker.check(sym, arrays[0])
@@ -4746,7 +4838,7 @@ def run_backtest(
                 data = _rewrite_date_only_bars(
                     data,  # type: ignore[arg-type]
                     date_only_rewriter,
-                    bar_period_ns,
+                    bar_period,
                 )
                 fixed_time_checker.check_bars(data)
                 data.sort(key=lambda b: b.timestamp)
@@ -4819,7 +4911,7 @@ def run_backtest(
                     df, symbol=sym, tz=date_only_rewriter.timezone
                 )
                 interval_starts = _arrays_interval_starts(
-                    arrays, date_only=date_only, period_ns=bar_period_ns
+                    arrays, date_only=date_only, period=bar_period
                 )
                 if interval_starts is None:
                     fixed_time_checker.check(sym, arrays[0])
@@ -6041,8 +6133,8 @@ def run_backtest(
         logger.warning(
             "simulate_ticks=True, 但整场回测没有生成任何模拟 tick, on_tick 没有执行。"
             "只有连续竞价时段、成交量大于 0 的 K 线才生成; K 线没有区间起点时按时间戳"
-            "判断时段, 收盘时刻打戳的日线会落在收盘集合竞价。请传 freq=(如 freq='1d')"
-            "声明 K 线周期"
+            "判断时段, 收盘时刻打戳的日线会落在收盘集合竞价。请传 freq=(如 freq='1d',"
+            "周、月线为 '1w'、'1mon')声明 K 线周期"
         )
 
     result = BacktestResult(
@@ -6342,13 +6434,15 @@ def run_from_checkpoint(
     fixed_time_checker = _FixedTimeDailyChecker(
         session_resolver, timezone_name, session_asset_type_of, logger
     )
-    # 存档里的 self.freq 即 bar 周期(续跑不支持 tick 输入); 解析不了按未声明处理
+    # 存档里的 self.freq 即 bar 周期(续跑不支持 tick 输入); 解析不了按未声明处理。
+    # 日历周期的“上一根”只从本次传入的数据里取: 存档不记各品种最后一根的时间戳,
+    # 续接数据没有带上存档前那一根时, 该品种第一根退回名义长度。
     try:
-        bar_period_ns = _freq_period_ns(
+        bar_period = _parse_bar_period(
             getattr(strategy_instance, "_framework_freq", None)
         )
     except ValueError:
-        bar_period_ns = None
+        bar_period = None
     saved_session_asset_types = _saved_session_asset_types(strategy_instance)
     saved_session_underlyings = _saved_session_underlyings(strategy_instance)
     resume_extra_symbols = [
@@ -6414,7 +6508,7 @@ def run_from_checkpoint(
                     df_prep, symbol=sym, tz=date_only_rewriter.timezone
                 )
                 interval_starts = _arrays_interval_starts(
-                    arrays, date_only=date_only, period_ns=bar_period_ns
+                    arrays, date_only=date_only, period=bar_period
                 )
                 if interval_starts is None:
                     fixed_time_checker.check(sym, arrays[0])
@@ -6496,7 +6590,7 @@ def run_from_checkpoint(
             resume_bars: List[Any] = _rewrite_date_only_bars(
                 data,  # type: ignore[arg-type]
                 date_only_rewriter,
-                bar_period_ns,
+                bar_period,
             )
             fixed_time_checker.check_bars(resume_bars)
             feed.add_bars(resume_bars)
@@ -6559,7 +6653,7 @@ def run_from_checkpoint(
                     df, symbol=sym, tz=date_only_rewriter.timezone
                 )
                 interval_starts = _arrays_interval_starts(
-                    arrays, date_only=date_only, period_ns=bar_period_ns
+                    arrays, date_only=date_only, period=bar_period
                 )
                 if interval_starts is None:
                     fixed_time_checker.check(sym, arrays[0])
