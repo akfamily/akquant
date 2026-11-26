@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-11-26
+
 > 规则版本 2.6.0 → 2.6.1：修撮合、提交与 bracket 出场的几处口径（见下文）。受影响的有：用 `custom_matchers` 的回测；用 `place_bracket` / `place_oco` 的策略（bracket 子单主要影响 `CurrentClose` 等当根成交模式；OCO 在途量、bracket 止损止盈只减仓、平仓前先撤子单各成交模式都受影响）；在同一个回调里先撤单、再调用 `order_target*` / `close_position` 的策略（已请求撤单的订单不再计入投影持仓）；在模拟盘（`trading_mode="paper"`）里用 `place_bracket` / `place_oco` 的策略；用 `order_target_value` / `order_target_percent` / `rebalance_weights` 买入且此前因资金不足被拒的订单（现在缩量成交），以及在合约乘数不为 1 的品种上用这三个入口的策略（手数按名义市值换算）；期货等品种上同一次撮合里与其他减仓单重复平同一份持仓的平仓单。不用这几样、也没有这类拒单的回测结果不变。
 
 ### Fixed
