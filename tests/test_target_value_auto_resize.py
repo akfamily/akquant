@@ -397,3 +397,52 @@ def test_futures_rebalance_at_target_weight_places_no_order() -> None:
     assert strategy is not None
     assert strategy.second == []
     assert _orders(result) == [(_FUT, "buy", "filled", 500.0, "")]
+
+
+def test_futures_rebalance_tolerance_compares_notional_value() -> None:
+    """价格涨 4%、容差 5%: 现值按名义市值算, 在容差内不调仓.
+
+    此前现值少乘了合约乘数, 被当成远低于目标而去下单。
+    """
+
+    class _Drift(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.n = 0
+            self.second: Any = "unset"
+
+        def on_bar(self, bar: Bar) -> None:
+            if self.n == 0:
+                self.rebalance_weights({_FUT: 0.5})
+            elif self.n == 3:
+                self.second = self.rebalance_weights(
+                    {_FUT: 0.5}, rebalance_tolerance=0.05
+                )
+            self.n += 1
+
+    config = aq.BacktestConfig(
+        strategy_config=aq.StrategyConfig(initial_cash=_CASH, commission_rate=0.0),
+        instruments_config=[
+            aq.InstrumentConfig(
+                symbol=_FUT,
+                asset_type="FUTURES",
+                multiplier=_MULTIPLIER,
+                margin_ratio=0.1,
+            )
+        ],
+        china_futures=aq.ChinaFuturesConfig(),
+    )
+    result = aq.run_backtest(
+        data={_FUT: _daily([10.0, 10.0, 10.4, 10.4, 10.4, 10.4])},
+        strategy=_Drift,
+        symbols=_FUT,
+        freq="1d",
+        fill_policy=aq.NextOpen(),
+        config=config,
+        show_progress=False,
+    )
+
+    strategy = result.strategy
+    assert strategy is not None
+    assert strategy.second == []
+    assert len(_orders(result)) == 1

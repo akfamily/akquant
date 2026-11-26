@@ -1622,3 +1622,58 @@ def test_futures_close_order_is_capped_at_remaining_position() -> None:
     assert rows[-1][:4] == ("sell", "market", "filled", 40.0)
     assert ("sell", "stopmarket", "filled", 60.0) in [row[:4] for row in rows]
     assert _position(result, _FUT) == 0.0
+
+
+def _close_sell(quantity: float, **kwargs: Any) -> Tuple[str, Tuple[Any, ...], Any]:
+    """显式平仓卖单(submit_order, position_effect="close")."""
+    return (
+        "submit_order",
+        (),
+        {
+            "symbol": _FUT,
+            "side": "Sell",
+            "quantity": quantity,
+            "position_effect": "close",
+            **kwargs,
+        },
+    )
+
+
+@pytest.mark.parametrize("policy", _POLICIES, ids=["next_open", "current_close"])
+def test_futures_reverse_with_resting_close_order_still_reaches_target(
+    policy: Any,
+) -> None:
+    """不变性: 多 100、挂着限价平仓 100@11 时 order_target(-50), 最终 -50.
+
+    反手拆出的开仓腿先成交, 不扣减挂着的平仓单的可平量(同一次撮合里前面没有
+    减仓成交时平仓单不封顶), 结果与以前相同。
+    """
+    script: Dict[int, List[Any]] = {
+        0: [("buy", (_FUT, 100), {})],
+        1: [_close_sell(100, price=11.0)],
+        2: [("order_target", (_FUT, -50), {})],
+    }
+    prices = [10.0, 10.0, 10.0, 10.0, 11.5, 11.5]
+    result = _run_futures_script(script, policy(), prices=prices)
+
+    assert not [row for row in _order_rows(result) if row[2] == "rejected"]
+    assert _position(result, _FUT) == -50.0
+
+
+def test_futures_two_close_orders_in_one_match_do_not_overshoot() -> None:
+    """持仓 100, 同一回调里两张显式平仓单各 60: 第二张只成交剩下的 40."""
+    script: Dict[int, List[Any]] = {
+        0: [("buy", (_FUT, 100), {})],
+        2: [
+            _close_sell(60),
+            _close_sell(60),
+        ],
+    }
+    result = _run_futures_script(script, aq.NextOpen())
+
+    assert [row[:4] for row in _order_rows(result)] == [
+        ("buy", "market", "filled", 100.0),
+        ("sell", "market", "filled", 60.0),
+        ("sell", "market", "filled", 40.0),
+    ]
+    assert _position(result, _FUT) == 0.0

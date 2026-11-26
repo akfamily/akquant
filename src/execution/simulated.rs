@@ -623,6 +623,10 @@ impl SimulatedExecutionClient {
         // 出现时再建(见 `funds_projection_ready`)。在那之前 `projected_portfolio`
         // 没被改过, 建出来的值与进函数时就建完全相同。
         let mut projected_available_positions: HashMap<String, Decimal> = HashMap::new();
+        // 本次撮合里各品种、各方向已由减仓单(bracket 出场子单、平仓单、reduce_only)
+        // 平掉的数量; 只用于给同一次撮合里排在后面的平仓单封顶。
+        let mut closed_in_match: HashMap<(String, crate::model::OrderSide), Decimal> =
+            HashMap::new();
         let stock_margin_ratio_override = stock_margin_ratio_override(ctx.risk_config);
         let mut current_free_margin = Decimal::ZERO;
         let mut funds_projection_ready = false;
@@ -778,10 +782,13 @@ impl SimulatedExecutionClient {
                                 // 总持仓而非当日可卖数量: T+1 当日可卖为 0 的仍由下面的
                                 // 可用持仓校验拒掉。
                                 //
-                                // 普通的平仓单(开平标志为平仓, 或 reduce_only)同理: 平仓单
-                                // 不应开出反向仓位。同一次撮合里排在前面的单(如止损)已把
-                                // 持仓平掉时, 它按剩余持仓成交, 无仓可平则拒掉。股票类按
-                                // 可用持仓校验的品种不走这里, 仍由下面的校验整单拒绝。
+                                // 普通的平仓单(开平标志为平仓, 或 reduce_only): 同一次撮合里
+                                // 排在前面的减仓单(如止损)已经平掉一部分时, 它只能平撮合
+                                // 开始时的持仓里还没被平掉的那部分, 无仓可平则拒掉——否则
+                                // 同一份持仓被平两次, 开出反向仓位。只在本次撮合里前面确有
+                                // 减仓成交时才封顶: 开仓方向的成交(如反手的开仓腿先成交)
+                                // 不扣减可平量, 其余情形与以前相同。股票类按可用持仓校验的
+                                // 品种不走这里, 仍由下面的校验整单拒绝。
                                 let stock_available_checked = matches!(
                                     instrument.asset_type,
                                     AssetType::Stock | AssetType::Fund
@@ -789,19 +796,31 @@ impl SimulatedExecutionClient {
                                     && !(ctx.risk_config.is_margin_account()
                                         && ctx.risk_config.enable_short_sell);
                                 let is_bracket_exit = order_snapshot.is_bracket_exit();
-                                if is_bracket_exit
-                                    || (!stock_available_checked
-                                        && crate::model::is_position_reducing_order(
-                                            &order_snapshot,
-                                        ))
-                                {
-                                    let closable = order_snapshot.closable_quantity(
-                                        projected_portfolio
-                                            .positions
-                                            .get(&trade.symbol)
-                                            .copied()
-                                            .unwrap_or(Decimal::ZERO),
-                                    );
+                                let closed_before = closed_in_match
+                                    .get(&(trade.symbol.clone(), trade.side))
+                                    .copied();
+                                let capped_plain_close = !is_bracket_exit
+                                    && !stock_available_checked
+                                    && closed_before.is_some()
+                                    && crate::model::is_position_reducing_order(&order_snapshot);
+                                if is_bracket_exit || capped_plain_close {
+                                    let closable = if is_bracket_exit {
+                                        order_snapshot.closable_quantity(
+                                            projected_portfolio
+                                                .positions
+                                                .get(&trade.symbol)
+                                                .copied()
+                                                .unwrap_or(Decimal::ZERO),
+                                        )
+                                    } else {
+                                        order_snapshot.closable_quantity(
+                                            ctx.portfolio
+                                                .positions
+                                                .get(&trade.symbol)
+                                                .copied()
+                                                .unwrap_or(Decimal::ZERO),
+                                        ) - closed_before.unwrap_or(Decimal::ZERO)
+                                    };
                                     if closable <= Decimal::ZERO {
                                         let closed = if is_bracket_exit {
                                             Self::bracket_exit_cancellation(
@@ -1107,6 +1126,13 @@ impl SimulatedExecutionClient {
                                     funds_projection_ready,
                                     "带成交的回报必先经过上面的资金检查分支"
                                 );
+                                if order_snapshot.is_bracket_exit()
+                                    || crate::model::is_position_reducing_order(&order_snapshot)
+                                {
+                                    *closed_in_match
+                                        .entry((trade.symbol.clone(), trade.side))
+                                        .or_insert(Decimal::ZERO) += trade.quantity;
+                                }
                                 // 记入这根 bar 的已成交量(成交时缩量后的实际成交量)
                                 if let Event::Bar(bar) = event {
                                     let used = self
