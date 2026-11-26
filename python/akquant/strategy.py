@@ -99,6 +99,7 @@ from .strategy_order_events import (
 )
 from .strategy_position import Position
 from .strategy_preload import PHASE_RUN, replay_preload_history
+from .strategy_run_info import EMPTY_RUN_INFO
 from .strategy_runtime_config import (
     REMOVED_PRECISE_BOUNDARY_FIELD,
     StrategyRuntimeConfig,
@@ -423,6 +424,8 @@ class Strategy:
     _framework_phase: Optional[str]
     _framework_history_cutoff_ns: Optional[int]
     _framework_freq: Optional[str]
+    #: run_info 的只读内容(见 strategy_run_info.py); 由运行入口每次写入, 不入存档
+    _framework_run_info: Mapping[str, Any]
     _framework_dual_stream: Union[bool, frozenset[str]]
     #: simulate_ticks 是否打开(回测入口每次写实例属性); 其余入口(实盘、续跑)取这里的
     #: 缺省值, 热路径只读一个布尔属性
@@ -509,6 +512,19 @@ class Strategy:
         if REMOVED_PRECISE_BOUNDARY_FIELD in vars(cls):
             raise ValueError(
                 removed_precise_boundary_message(f"策略类 {cls.__name__} 类属性")
+            )
+        # run_info 由运行入口的调用方填写; 子类(含经 mixin)自己定义同名属性会遮住
+        # 它, 策略读到的就成了自己写死的值, 而作者以为读的是调用方给的。按 MRO
+        # 找到第一个定义它的类, 不是 Strategy 就报错。
+        run_info_owner = next(
+            (klass for klass in cls.__mro__ if "run_info" in vars(klass)), None
+        )
+        if run_info_owner is not Strategy:
+            owner_name = getattr(run_info_owner, "__qualname__", "?")
+            raise TypeError(
+                f"{cls.__name__}: run_info 是框架属性(只读, 由 run_backtest/run_live "
+                f"等入口的 run_info= 传入), 不能在策略类里定义; {owner_name} 定义了"
+                "同名属性, 请改名"
             )
         cls._aq_title = _validate_script_label("title", title, cls.__name__)
         cls._aq_id = _validate_script_label("id", id, cls.__name__)
@@ -690,6 +706,8 @@ class Strategy:
         instance._framework_phase = None
         instance._framework_history_cutoff_ns = None
         instance._framework_freq = None  # 数据周期 ("1min"/"1d" 等), 拿不到时 None
+        # 运行信息: 交给引擎之前(含 __init__)为空映射, 运行入口开跑前写入
+        instance._framework_run_info = EMPTY_RUN_INFO
         # tick/bar 双流的标的(True 为全部): 这些标的的 tick 不推进基础周期指标
         instance._framework_dual_stream = False
         instance._framework_use_previous_account_snapshot = False
@@ -750,6 +768,9 @@ class Strategy:
             del state["ctx"]
         # 开跑前的账户视图同样是引擎对象, 不可 pickle; 恢复时由运行入口重新挂上。
         state.pop("_framework_prestart_ctx", None)
+        # 运行信息属于"这一次运行", 不是策略状态: 不入存档, 也不随 pickle 带到别处;
+        # 续跑与子进程里由运行入口按本次传入的值重新写入。
+        state.pop("_framework_run_info", None)
         if "current_bar" in state:
             del state["current_bar"]
         if "current_tick" in state:
@@ -814,6 +835,8 @@ class Strategy:
     def __setstate__(self, state: Dict[str, Any]) -> None:
         """Pickle 反序列化支持."""
         self.__dict__.update(state)
+        # 不入存档(见 __getstate__); 即使旧对象的 state 里带着也丢弃
+        self._framework_run_info = EMPTY_RUN_INFO
         # 注意判 state 而非 self.__dict__: __new__ 已预置 _cost_config 默认,
         # 故必须看"传入 snapshot 是否带 _cost_config"来区分新旧格式。
         if "_cost_config" not in state:
@@ -4058,6 +4081,39 @@ class Strategy:
             "freq 是只读属性(数据粒度由数据源决定, 策略改它不会真的改变粒度): "
             "回测请用 run_backtest(freq='1min'), "
             "实盘请用 run_live(gateway_options={'period': 'M1'})。"
+        )
+
+    @property
+    def run_info(self) -> Mapping[str, Any]:
+        """本次运行的运行信息(只读映射), 由运行入口的调用方经 ``run_info=`` 传入.
+
+        ``run_backtest``、``run_live``、``run_grid_search``、``run_walk_forward``、
+        ``run_from_checkpoint`` 都接受这个参数。框架不解释其中的键, 只原样交给策略,
+        常见用法是由启动运行的宿主程序放入运行者的标识, 策略在 ``on_start`` 里自行
+        判断是否允许运行(不允许就抛异常)。
+
+        - 从 ``on_start`` 起可用(函数式策略的 ``initialize`` 里也可用); 策略类的
+          ``__init__`` 里还没交给引擎, 读到的是空映射。没传时也是空映射。
+        - 内容是传入值的深拷贝, 整个结构只读: 嵌套的字典同样不能改, 列表变成
+          ``tuple``。不能整体赋值替换。
+        - 多槽位策略与指标脚本读到同一份内容。
+        - 不入存档: 续跑时以本次 ``run_from_checkpoint(run_info=)`` 为准, 不传即为空。
+
+        它只是调用方传进来的数据, 可信程度取决于启动这次运行的程序; 写在策略源码里的
+        校验, 能改源码的人也能删掉。
+
+        :return: 只读映射, 值为 str/int/float/bool/None 及由它们组成的 tuple/映射
+        """
+        return cast(
+            Mapping[str, Any], getattr(self, "_framework_run_info", EMPTY_RUN_INFO)
+        )
+
+    @run_info.setter
+    def run_info(self, value: Any) -> None:
+        raise AttributeError(
+            "run_info 是只读属性: 内容由运行入口传入, 请用 run_backtest(run_info=...) "
+            "或 run_live(run_info=...) 设置; 策略里要改动请先复制, "
+            "如 info = dict(self.run_info)"
         )
 
     def order_target(

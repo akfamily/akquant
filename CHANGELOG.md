@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **策略可读取调用方传入的运行信息 `self.run_info`**：`run_backtest`、`run_live`、`run_grid_search`、`run_walk_forward`、`run_from_checkpoint` 新增参数 `run_info`（键为字符串、值为 `str` / `int` / `float` / `bool` / `None` 及由它们组成的 `list` / `tuple` / `dict` 的映射），策略经只读属性 `self.run_info` 读取。用于把“这次运行”的环境信息交给策略，例如由启动运行的宿主程序放入运行者的标识，策略在 `on_start` 里自己判断是否允许运行、不允许就抛异常。框架不解释其中的键。
+    - 策略读到的是深拷贝，整个结构只读（嵌套字典同样只读，列表变成 `tuple`），`self.run_info = ...` 抛 `AttributeError`；调用方之后再改自己的字典不影响策略。不合规的取值（其他类型、内置类型的子类、numpy 标量、非字符串键、NaN 与无穷大、循环引用）在入口处抛 `TypeError` / `ValueError`，在加载数据、连接网关之前。
+    - 从 `on_start` 起可用，回测、模拟盘与实盘相同；策略类的 `__init__` 里与没传时都是空映射。函数式策略用 `ctx.run_info`（`initialize` 里也可读）。主策略、`strategies_by_slot` 的各槽位与 `indicators` 的指标脚本读到同一份；网格搜索与 walk-forward 的每次回测（含子进程里的）都收到同一份。
+    - 不入存档：`save_checkpoint` 与 pickle 策略时都不带它，`run_from_checkpoint` 以本次传入的为准，不传就是空映射。
+    - 与 `context` 互不影响。`context={"run_info": ...}` 抛 `AttributeError`；策略类（含经 mixin 继承）自己定义 `run_info` 时在类定义处抛 `TypeError`，不再静默遮住调用方传入的值。
+    - 校验写在策略源码里，能改源码的人也能删掉；`run_info` 只和传入它的程序一样可信。见策略指南“运行信息”。
+
 ## [0.4.3] - 2026-11-26
 
 > 规则版本 2.6.1 → 2.6.2：内置 sizer 在期货、期权上的定量口径（见下文）。受影响的有：在期货、期权上不给数量下单（`buy(symbol)`）并用 `PercentSizer` / `AllInSizer` 的策略；在期货上用自定义 sizer 且依赖传入的 `cash` 的策略（现在是可用资金）；用 `_calculate_max_buy_qty` 计算期货、期权可买数量的策略；买入期权且此前资金不足仍成交的回测（现在被拒或缩量）；**账户里持有期权多头的回测**：付出的权利金不再被算回可用资金，同一账户里之后的股票、期货、期权卖方订单可能由成交变为被拒或缩量，保证金账户在穿仓时期权多头也会被强平（见下文）。账户里没有期权多头的回测——纯股票、基金（含 ETF、可转债）、期货、期权卖方——结果不变。

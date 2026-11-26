@@ -93,6 +93,7 @@ def run_backtest(
     fill_policy: Optional[FillMode] = None,
     strict_strategy_params: bool = True,
     simulate_ticks: bool = False,
+    run_info: Optional[Mapping[str, Any]] = None,
     **kwargs: Any,
 ) -> BacktestResult
 ```
@@ -100,6 +101,12 @@ def run_backtest(
 **关键参数补充:**
 
 *   `simulate_ticks`: 回测数据只有 K 线时，把每根 K 线拆成四个模拟 tick（开盘价、两个极值、收盘价）驱动 `on_tick`，缺省 `False`。`on_tick` 里下的单按模拟 tick 撮合：市价单在该 tick 上按 tick 价成交；挂着的限价单被越过时按限价成交，止损单按触发时的 tick 价成交。`on_bar`、`on_timer` 里下的单仍按 K 线撮合，结果与关闭时相同。数据里已有真实 tick 时不能使用，也只用于回测；`run_from_checkpoint` 不接受这个参数。见[策略指南](../guide/strategy.md#simulate-ticks)“只有 K 线时回测 `on_tick`”。
+*   `run_info`: 运行信息，默认 `None`（策略读到空映射）。由调用方传入，策略经只读属性 `self.run_info` 读取，用来把“这次运行”的环境信息交给策略，例如由启动运行的宿主程序放入运行者的标识，策略自己判断是否允许运行（见[策略指南](../guide/strategy.md#run-info)“运行信息”）。框架不解释其中的键。
+    *   键必须是字符串；值只能是 `str` / `int` / `float` / `bool` / `None`（内置类型本身，不收它们的子类与 numpy 标量）以及由它们组成的 `list` / `tuple` / `dict`。其他类型抛 `TypeError`，NaN 与无穷大抛 `ValueError`，都在加载数据之前报错。这样它能 pickle 到网格搜索的子进程，也能 JSON 序列化。
+    *   策略读到的是深拷贝，整个结构只读：嵌套的字典同样不能改，列表变成 `tuple`；`self.run_info = ...` 抛 `AttributeError`。调用方之后再改自己的字典，不影响策略。
+    *   从 `on_start` 起可用；策略类的 `__init__` 里还没交给引擎，读到空映射。函数式策略用 `ctx.run_info`，`initialize` 里也可读。主策略、`strategies_by_slot` 的各槽位与 `indicators` 的指标脚本读到同一份。
+    *   与 `context` 互不影响：`context` 把每个键设成可写的策略属性，用于传策略参数；`run_info` 只读、单独一个命名空间。`context` 里不能有 `run_info` 键（抛 `AttributeError`），策略类（含它继承的 mixin）也不能自己定义 `run_info`（类定义时抛 `TypeError`）。
+    *   不入存档：`save_checkpoint` 不保存它，`run_from_checkpoint` 以本次传入的为准，不传就是空映射。
 
 ### `akquant.run_grid_search`
 
@@ -121,6 +128,8 @@ def run_grid_search(
     max_tasks_per_child: Optional[int] = None,
     db_path: Optional[str] = None,
     forward_worker_logs: bool = False,
+    raise_on_all_failed: bool = True,
+    run_info: Optional[Mapping[str, Any]] = None,
     **kwargs: Any,
 ) -> Union[pd.DataFrame, List[OptimizationResult]]
 ```
@@ -133,6 +142,7 @@ def run_grid_search(
 *   `strict_strategy_params`: 通过 `**kwargs` 传递给 `run_backtest`（默认在 `run_grid_search` 内为 `True`）。
     *   严格校验 `param_grid` 与策略构造参数匹配关系；
     *   参数不匹配时快速失败，避免静默回退。
+*   `run_info`: 同 `run_backtest(run_info=)`。在派发任务之前校验，每组参数的回测（含子进程里的）都收到同一份。
 
 ### `akquant.run_walk_forward`
 
@@ -155,6 +165,7 @@ def run_walk_forward(
     compounding: bool = False,
     timeout: Optional[float] = None,
     max_tasks_per_child: Optional[int] = None,
+    run_info: Optional[Mapping[str, Any]] = None,
     **kwargs: Any,
 ) -> pd.DataFrame
 ```
@@ -164,6 +175,7 @@ def run_walk_forward(
 *   `**kwargs` 会透传到 `run_grid_search`（样本内优化阶段）与 `run_backtest`（样本外验证阶段）。
 *   因此，`forward_worker_logs` 可用于控制样本内并行优化日志回传。
 *   同时，`strict_strategy_params` 会在优化与回测阶段保持严格参数校验语义（默认严格）。
+*   `run_info`: 同 `run_backtest(run_info=)`，样本内网格搜索与样本外回测都收到同一份。
 
 ### `akquant.run_from_checkpoint`
 
@@ -200,6 +212,7 @@ def run_from_checkpoint(
     config: Optional[BacktestConfig] = None,
     sessions: Optional[SessionsArg] = None,
     trading_calendar: Optional[Iterable[Any]] = None,
+    run_info: Optional[Mapping[str, Any]] = None,
     **kwargs: Any,
 ) -> BacktestResult
 ```
@@ -210,6 +223,8 @@ def run_from_checkpoint(
 `sessions` / `trading_calendar` 与 `run_backtest` 同义。存档保存这两项，续跑不传就沿用存档里的配置；传入且与存档不一致时以传入为准并告警。
 
 `run_from_checkpoint` 不接受 `simulate_ticks`：模拟 tick 不支持存档续跑。传入这个参数（无论真假），或存档来自 `simulate_ticks=True` 的回测时，报 `ValueError`。
+
+`run_info` 与 `run_backtest` 同义，但存档里不保存：续跑以本次传入的为准，不传则策略读到空映射，不会沿用存档前那次运行的值。
 
 **通用行为说明（主要对应 `run_backtest`，`run_from_checkpoint` 共享其中的成交/风控/策略映射规则）:**
 
@@ -1080,6 +1095,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
     *   回测侧由 `run_backtest(freq=)` 注入（tick 聚合周期，或 bar 数据声明的周期）；实盘侧由行情网关声明（klinedata 把自己的 `period="M1"` 转换成 `"1min"`，`broker="replay"` 支持 `gateway_options={"freq": "1min"}`）。两侧统一到回测口径，故同一个策略在回测与实盘读到同一个值，无需按 broker 写兼容分支。
     *   **拿不到周期时为 `None`**：纯 bar 回测未传 `freq`、CTP 等只有逐笔源的网关、trader-only broker（无行情通道）、klinedata 周线（插件目前不声明周线周期）。框架**不从数据推断**周期——相邻 bar 的时间戳差会被停牌、跨日、午休误导，错误的周期比未知的周期更危险。请显式处理 `None`。
     *   只读，写入抛 `AttributeError`：数据粒度由数据源决定，改这个属性不会真的改变粒度。
+*   `run_info -> Mapping[str, Any]`: 本次运行的运行信息（只读属性），即 `run_backtest` / `run_live` / `run_grid_search` / `run_walk_forward` / `run_from_checkpoint` 的 `run_info=` 参数的深拷贝；没传时为空映射。整个结构只读（嵌套字典同样只读，列表变为 `tuple`），赋值抛 `AttributeError`。从 `on_start` 起可用，`__init__` 里为空映射。框架不解释其中的键。见[策略指南](../guide/strategy.md#run-info)。
 *   `get_account() -> AccountSnapshot`: 获取账户详情快照（字典），回测与实盘的键完全一致：`cash`、`equity`、`market_value`、`notional_value`、`margin`、`frozen_cash`、`available_cash`、`unrealized_pnl`、`borrowed_cash`、`short_market_value`、`maintenance_ratio`、`account_mode`、`accrued_interest`、`daily_interest`。
     *   三项资金满足 `equity == margin + frozen_cash + available_cash`：总权益 = 持仓占用 + 挂单冻结 + 可用资金。回测里严格成立；经柜台交易时三项各取柜台的值。
     *   `margin` 是持仓占用的保证金，现金账户里的股票按全额市值计，期权多头按全额权利金市值计。`frozen_cash` 是未完成委托冻结的资金：每笔按自己的委托价估算（没有委托价的用最新价），只计会增加占用的委托，挂着的卖出、平仓单不占资金，也不会释放买单的冻结；不含手续费。同一 OCO 组（如两张互斥的限价买单）只冻结占用较大的那张。
@@ -1333,6 +1349,19 @@ run_live(
 *   `slippage`：与 `run_backtest(slippage=)` 同格式，`{"type": "percent" | "fixed" | "ticks" | "zero", "value": ...}`，不接受裸数字；`ticks` 要求所有标的的 `tick_size` 相同。不传则无滑点。
 *   `volume_limit_pct`：单根 bar 最多成交该 bar 成交量的这一比例，截断量按手数取整，未成交部分留到后续 bar；不传或 `0` 表示不限制。行情源的成交量单位要与下单数量一致（AKShare 部分接口的成交量单位是“手”）。
 *   取值须为有限的非负数，非法值在连接网关之前报错。
+
+### `akquant.run_live(run_info=...)`（运行信息） {: #live-run-info }
+
+```python
+run_live(
+    ...,
+    run_info={"user_id": "user-001", "account": "A-001"},
+)
+```
+
+*   与 `run_backtest(run_info=)` 同名同义：策略经只读的 `self.run_info` 读取，主策略、各槽位与指标脚本读到同一份，paper 与 `broker_live` 相同。
+*   取值不合规时在连接网关之前抛 `TypeError` / `ValueError`。
+*   在 `on_start` 里抛异常时会话以错误中止：`run_live` 不向外抛出这个异常，而是记一条带异常堆栈的 CRITICAL 日志，`on_bar` 等不再触发，`on_stop` 照常调用。
 
 ## 3. 核心引擎 (Core)
 

@@ -764,6 +764,42 @@ strategy_params = {
     strategy reads; the backtest period is set by
     `run_backtest(start_time=..., end_time=...)`.
 
+### Run Information (`self.run_info`) {: #run-info }
+
+`self.run_info` is the information the caller passed to this run; the strategy can read it but not change it. `run_backtest`, `run_live`, `run_grid_search`, `run_walk_forward` and `run_from_checkpoint` all accept the same `run_info=` parameter. The framework does not interpret the keys; what goes in is up to whatever starts the run. For example, a platform hosting strategies can put in the identity of the user running it, and the strategy decides for itself whether it may run:
+
+```python
+import akquant as aq
+
+ALLOWED_USERS = {"user-001", "user-002"}
+
+
+class MyStrategy(aq.Strategy):
+    def on_start(self):
+        user = self.run_info.get("user_id")
+        if user not in ALLOWED_USERS:
+            raise PermissionError(f"user {user!r} is not allowed to run this strategy")
+
+    def on_bar(self, bar):
+        pass
+
+
+aq.run_backtest(data=df, strategy=MyStrategy, run_info={"user_id": "user-001"})
+```
+
+`user_id` is only an example key (others might be `account` or `mode`); the framework requires no particular key.
+
+*   **When it is available**: from `on_start` on, in every callback. In a strategy class's `__init__` the strategy has not been handed to the engine yet, so it sees an empty mapping. It is also empty when nothing was passed, so the example above refuses to run without `run_info` too. Function-style strategies use `ctx.run_info`, also inside `initialize`.
+*   **Read-only**: it is a deep copy of what was passed; nested dicts cannot be changed either, and lists become `tuple`s. `self.run_info = ...` raises `AttributeError`. Copy it first if you need something mutable, e.g. `dict(self.run_info)`.
+*   **Values**: keys are strings; values may only be `str` / `int` / `float` / `bool` / `None` and `list` / `tuple` / `dict` built from them, otherwise the entry point raises.
+*   **Scope**: multi-slot strategies and indicator scripts see the same mapping; grid-search worker processes receive it too; checkpoints do not store it, and a resumed run uses the value passed to that call.
+*   **Refusing to run**: raise in `on_start`. In a backtest `run_backtest` propagates the exception to the caller and no bar is processed; in live trading the session aborts with an error — `run_live` does not re-raise, the exception and its traceback are logged at CRITICAL.
+*   **Versus `context`**: `context` sets each key as a writable strategy attribute and is meant for strategy parameters; `run_info` is read-only and lives in its own namespace. The two do not affect each other.
+
+!!! warning "What such a check can and cannot prevent"
+    *   **The check lives in the strategy source**: anyone who can get and edit the source can delete those lines. It only binds where users cannot change the source (for instance a strategy hosted and run by a platform), or as a guard against accidental misuse.
+    *   **`run_info` is whatever the program calling `run_backtest` / `run_live` passed in**: when you run a script locally, the caller can put anything there. It is only as trustworthy as the host that started the run: rely on it for authorisation only when the host fills it from verified identity information and does not let users override it.
+
 ## 5. Orders & Execution
 
 ### 4.1 Order Lifecycle

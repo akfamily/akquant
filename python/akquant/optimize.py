@@ -39,6 +39,7 @@ from .params import unknown_param_message
 from .params_adapter import validate_strategy_params
 from .strategy import Strategy
 from .strategy import _legacy_init_arg_names as _legacy_init_arg_names_impl
+from .strategy_run_info import plain_run_info
 
 _WORKER_LOG_QUEUE: Any = None
 OptimizationData = Union[pd.DataFrame, Dict[str, pd.DataFrame]]
@@ -633,6 +634,7 @@ def run_grid_search(
     db_path: Optional[str] = None,
     forward_worker_logs: bool = False,
     raise_on_all_failed: bool = True,
+    run_info: Optional[Mapping[str, Any]] = None,
     **kwargs: Any,
 ) -> Union[pd.DataFrame, List[OptimizationResult]]:
     """
@@ -661,12 +663,19 @@ def run_grid_search(
                                 总是策略或数据本身的问题; 传 False 则照旧返回
                                 每行都带 error、sharpe_ratio=-999 的结果表。部分
                                 失败时不受影响, 只打 warning
+    :param run_info: 运行信息, 同 ``run_backtest(run_info=)``。在派发任务之前校验,
+                     每组参数的回测(含子进程里的)都收到同一份内容
     :param kwargs: 传递给 run_backtest 的其他参数 (symbol, cash, etc.)
     :return: 优化结果 (DataFrame 或 List[OptimizationResult])
     :raises RuntimeError: ``raise_on_all_failed`` 为真且没有任何一组成功
     """
     backtest_kwargs = _resolve_optimization_backtest_kwargs(data, dict(kwargs))
     backtest_kwargs.setdefault("strict_strategy_params", True)
+    # 先在主进程校验, 不合规时在派发任务之前报错; 传给子任务的是普通 dict, 由每次
+    # run_backtest 重新校验、冻结。
+    checked_run_info = plain_run_info(run_info)
+    if checked_run_info is not None:
+        backtest_kwargs["run_info"] = checked_run_info
     if (
         "execution_mode" in backtest_kwargs
         or "timer_execution_policy" in backtest_kwargs
@@ -1025,6 +1034,7 @@ def run_walk_forward(
     compounding: bool = False,
     timeout: Optional[float] = None,
     max_tasks_per_child: Optional[int] = None,
+    run_info: Optional[Mapping[str, Any]] = None,
     **kwargs: Any,
 ) -> pd.DataFrame:
     """
@@ -1049,6 +1059,8 @@ def run_walk_forward(
     :param compounding: 是否使用复利拼接结果 (True=复利, False=累加盈亏, 默认: False)
     :param timeout: 单次优化任务超时时间 (秒)
     :param max_tasks_per_child: Worker 重启频率
+    :param run_info: 运行信息, 同 ``run_backtest(run_info=)``; 样本内网格搜索与
+                     样本外回测都收到同一份内容
     :param kwargs: 透传给 run_grid_search 和 run_backtest 的其他参数。
                    其中 max_workers/db_path/forward_worker_logs/return_df 等
                    仅 run_grid_search 专用的键，在转发给样本外 run_backtest 前
@@ -1057,6 +1069,10 @@ def run_walk_forward(
     :return: 包含拼接后资金曲线的 DataFrame
     """
     kwargs = _resolve_optimization_backtest_kwargs(data, kwargs)
+    checked_run_info = plain_run_info(run_info)
+    if checked_run_info is not None:
+        # 经 kwargs 同时转给样本内 run_grid_search 与样本外 run_backtest
+        kwargs["run_info"] = checked_run_info
     requested_symbols = _normalize_symbol_values(kwargs.get("symbols"))
     prepared_data = _prepare_optimization_data(data)
     prepared_data = _filter_optimization_data_by_symbols(
