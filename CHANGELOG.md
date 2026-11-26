@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - 不入存档：`save_checkpoint` 与 pickle 策略时都不带它，`run_from_checkpoint` 以本次传入的为准，不传就是空映射。
     - 与 `context` 互不影响。`context={"run_info": ...}` 抛 `AttributeError`；策略类（含经 mixin 继承）自己定义 `run_info` 时在类定义处抛 `TypeError`，不再静默遮住调用方传入的值。
     - 校验写在策略源码里，能改源码的人也能删掉；`run_info` 只和传入它的程序一样可信。见策略指南“运行信息”。
+- **`get_account()` 带上柜台账号 `account_id`**：账户快照（`AccountSnapshot`）新增键 `account_id`（字符串）。经柜台交易（`broker_live`）时取柜台账户回报里的账号（`UnifiedAccount.account_id`，如 CTP 的 AccountID，交易插件填什么就是什么）；回测与模拟盘没有柜台，为空串。柜台首次回报账户之前（如 `on_start` 时）也可能是空串。回测与实盘的键仍完全一致；自己按 `AccountSnapshot` 构造快照的代码需补上这个键。
 
 ## [0.4.3] - 2026-11-26
 

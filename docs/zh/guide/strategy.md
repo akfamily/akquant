@@ -1393,7 +1393,7 @@ def on_bar(self, bar: Bar):
 
 *   **`self.ctx.cash`**: 当前账户现金余额。期货保证金账户下开仓不扣现金，可用资金请读 `get_account()["available_cash"]`。
 *   **`self.equity`**: 当前账户总权益。
-*   **`self.get_account()`**: 当前账户快照；在保证金账户中可进一步读取 `margin`、`available_cash`、`notional_value`、`unrealized_pnl`、`maintenance_ratio` 等字段。
+*   **`self.get_account()`**: 当前账户快照；在保证金账户中可进一步读取 `margin`、`available_cash`、`notional_value`、`unrealized_pnl`、`maintenance_ratio` 等字段。经柜台交易时 `account_id` 是柜台账号（柜台首次回报账户之前可能为空串），回测与模拟盘为空串。
 *   **`self.get_trades()`**: 获取历史所有已平仓交易记录（Closed Trades）。
 *   **`self.get_open_orders()`**: 获取当前未成交订单。
 

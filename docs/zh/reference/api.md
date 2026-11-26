@@ -1096,7 +1096,8 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
     *   **拿不到周期时为 `None`**：纯 bar 回测未传 `freq`、CTP 等只有逐笔源的网关、trader-only broker（无行情通道）、klinedata 周线（插件目前不声明周线周期）。框架**不从数据推断**周期——相邻 bar 的时间戳差会被停牌、跨日、午休误导，错误的周期比未知的周期更危险。请显式处理 `None`。
     *   只读，写入抛 `AttributeError`：数据粒度由数据源决定，改这个属性不会真的改变粒度。
 *   `run_info -> Mapping[str, Any]`: 本次运行的运行信息（只读属性），即 `run_backtest` / `run_live` / `run_grid_search` / `run_walk_forward` / `run_from_checkpoint` 的 `run_info=` 参数的深拷贝；没传时为空映射。整个结构只读（嵌套字典同样只读，列表变为 `tuple`），赋值抛 `AttributeError`。从 `on_start` 起可用，`__init__` 里为空映射。框架不解释其中的键。见[策略指南](../guide/strategy.md#run-info)。
-*   `get_account() -> AccountSnapshot`: 获取账户详情快照（字典），回测与实盘的键完全一致：`cash`、`equity`、`market_value`、`notional_value`、`margin`、`frozen_cash`、`available_cash`、`unrealized_pnl`、`borrowed_cash`、`short_market_value`、`maintenance_ratio`、`account_mode`、`accrued_interest`、`daily_interest`。
+*   `get_account() -> AccountSnapshot`: 获取账户详情快照（字典），回测与实盘的键完全一致：`cash`、`equity`、`market_value`、`notional_value`、`margin`、`frozen_cash`、`available_cash`、`unrealized_pnl`、`borrowed_cash`、`short_market_value`、`maintenance_ratio`、`account_mode`、`accrued_interest`、`daily_interest`、`account_id`。
+    *   `account_id`：柜台账号。经柜台交易（`trading_mode="broker_live"`）时取柜台账户回报里的账号（`UnifiedAccount.account_id`，如 CTP 的 AccountID）；回测与模拟盘（`paper`）没有柜台，为空串。柜台首次回报账户之前（如 `on_start` 时）也可能是空串，需要在 `on_start` 就用账号的，请由启动运行的程序经 `run_info` 传入。
     *   三项资金满足 `equity == margin + frozen_cash + available_cash`：总权益 = 持仓占用 + 挂单冻结 + 可用资金。回测里严格成立；经柜台交易时三项各取柜台的值。
     *   `margin` 是持仓占用的保证金，现金账户里的股票按全额市值计，期权多头按全额权利金市值计。`frozen_cash` 是未完成委托冻结的资金：每笔按自己的委托价估算（没有委托价的用最新价），只计会增加占用的委托，挂着的卖出、平仓单不占资金，也不会释放买单的冻结；不含手续费。同一 OCO 组（如两张互斥的限价买单）只冻结占用较大的那张。
     *   现金账户 / 现货账户下，`market_value` 通常表示持仓市值。

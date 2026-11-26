@@ -3434,6 +3434,9 @@ class Strategy:
                 - account_mode: 账户模式 ("cash" / "margin")
                 - accrued_interest: 累计计提利息
                 - daily_interest: 本次结算计提利息 (按两次结算间的自然日天数计提)
+                - account_id: 柜台账号。经柜台交易时取柜台账户回报里的账号(CTP
+                  的 AccountID 等); 回测与模拟盘为空串。柜台首次回报账户之前
+                  (如 on_start 时)也可能是空串
         """
         return _get_account_impl(self)
 
