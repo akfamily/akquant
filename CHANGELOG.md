@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-11-27
+
 ### Added
 - **策略可读取调用方传入的运行信息 `self.run_info`**：`run_backtest`、`run_live`、`run_grid_search`、`run_walk_forward`、`run_from_checkpoint` 新增参数 `run_info`（键为字符串、值为 `str` / `int` / `float` / `bool` / `None` 及由它们组成的 `list` / `tuple` / `dict` 的映射），策略经只读属性 `self.run_info` 读取。用于把“这次运行”的环境信息交给策略，例如由启动运行的宿主程序放入运行者的标识，策略在 `on_start` 里自己判断是否允许运行、不允许就抛异常。框架不解释其中的键。
     - 策略读到的是深拷贝，整个结构只读（嵌套字典同样只读，列表变成 `tuple`），`self.run_info = ...` 抛 `AttributeError`；调用方之后再改自己的字典不影响策略。不合规的取值（其他类型、内置类型的子类、numpy 标量、非字符串键、NaN 与无穷大、循环引用）在入口处抛 `TypeError` / `ValueError`，在加载数据、连接网关之前。
