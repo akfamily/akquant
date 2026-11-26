@@ -1039,6 +1039,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
     *   `target_weights` 形如 `{symbol: weight}`，默认要求权重和不超过 `1.0`。
     *   `liquidate_unmentioned=True` 时，会将未出现在目标字典中的现有持仓目标设为 `0`。
     *   执行顺序为先卖后买，减少现金约束导致的调仓失败。
+    *   目标价值按名义市值（数量 × 价格 × 合约乘数）换算，`order_target_value`、`order_target_percent` 相同。
     *   买入方向资金不足时自动缩量（回测与 paper）：数量是按参考价由权重换算的，扣掉安全垫、佣金或成交价高于参考价后买不起时，缩到买得起的最大整手数，而不是整单被拒。`order_target_value`、`order_target_percent` 相同；传 `allow_quantity_auto_resize=False` 恢复整单校验。按数量调仓的 `order_target`、`rebalance_positions` 不缩量，可传 `allow_quantity_auto_resize=True` 打开。
     *   `rebalance_tolerance` 按组合市值比例跳过小偏差，降低无效换手。
 *   `cancel_order(order_id: str | OrderReceipt | Order)`: 撤销指定订单。可传订单号、下单返回的 `OrderReceipt`（取首腿）或订单对象（取其 `id`）；其他类型抛 `TypeError`。

@@ -1548,3 +1548,77 @@ def test_place_oco_then_close_position_in_same_callback_does_not_buy_back() -> N
     ]
     assert result.strategy.seen["projected"] == 0.0
     assert _position(result) == 100.0
+
+
+# ---------------------------------------------------------------------------
+# 平仓单不开反向仓: 同一次撮合里止损已把持仓平掉时, 手动平仓单不再成交
+# ---------------------------------------------------------------------------
+
+
+def _run_futures_ohlc(script: Dict[int, List[Any]], frame: pd.DataFrame) -> Any:
+    strategy_cls = type(
+        "_FuturesOhlc", (_FuturesScripted,), {"script": script, "probes": {}}
+    )
+    config = aq.BacktestConfig(
+        strategy_config=aq.StrategyConfig(initial_cash=100000.0, commission_rate=0.0),
+        instruments_config=[
+            aq.InstrumentConfig(
+                symbol=_FUT, asset_type="FUTURES", multiplier=10.0, margin_ratio=0.1
+            )
+        ],
+        china_futures=aq.ChinaFuturesConfig(),
+    )
+    return aq.run_backtest(
+        data={_FUT: frame},
+        strategy=strategy_cls,
+        symbols=_FUT,
+        freq="1d",
+        fill_policy=aq.CurrentClose(),
+        config=config,
+        show_progress=False,
+    )
+
+
+def _stop_bar_frame() -> pd.DataFrame:
+    """第 4 根最低 8(触及止损 9)、收盘 8.5, 其余都是 10."""
+    frame = _daily([10.0, 10.0, 10.0, 10.0, 8.5, 8.5])
+    frame.loc[frame.index[4], ["open", "high", "low"]] = [10.0, 10.0, 8.0]
+    return frame
+
+
+@pytest.mark.parametrize("quantity", [100, 60])
+def test_futures_manual_close_on_the_stop_bar_does_not_open_short(
+    quantity: int,
+) -> None:
+    """CurrentClose: 触及止损的那根 K 线上手动卖出平仓, 止损先成交, 手动单被拒.
+
+    此前两张单在同一次撮合里各成交一次, 持仓变成 -100(卖 60 时 -60)。
+    """
+    result = _run_futures_ohlc(
+        {0: [_bracket(_FUT)], 4: [("sell", (_FUT, quantity), {})]}, _stop_bar_frame()
+    )
+
+    rows = _order_rows(result)
+    assert [row[:4] for row in rows] == [
+        ("buy", "market", "filled", 100.0),
+        ("sell", "stopmarket", "filled", 100.0),
+        ("sell", "limit", "cancelled", 0.0),
+        ("sell", "market", "rejected", 0.0),
+    ]
+    assert "No position left to close" in rows[-1][4]
+    assert _position(result, _FUT) == 0.0
+
+
+def test_futures_close_order_is_capped_at_remaining_position() -> None:
+    """持仓 100、止损子单 60 与手动平仓 100 同一次撮合: 手动单只成交剩下的 40."""
+    script: Dict[int, List[Any]] = {
+        0: [("buy", (_FUT, 40), {})],
+        1: [_bracket(_FUT, 60)],
+        4: [("sell", (_FUT, 100), {})],
+    }
+    result = _run_futures_ohlc(script, _stop_bar_frame())
+
+    rows = _order_rows(result)
+    assert rows[-1][:4] == ("sell", "market", "filled", 40.0)
+    assert ("sell", "stopmarket", "filled", 60.0) in [row[:4] for row in rows]
+    assert _position(result, _FUT) == 0.0

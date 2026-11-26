@@ -1310,6 +1310,16 @@ def _target_to_orders(
     return None
 
 
+def _contract_multiplier(strategy: Any, symbol: str) -> float:
+    """标的的合约乘数(未登记或非正时为 1): 市值 = 数量 × 价格 × 合约乘数."""
+    snapshot = (getattr(strategy, "_instrument_snapshots", None) or {}).get(symbol)
+    try:
+        multiplier = float(getattr(snapshot, "multiplier", 1.0) or 1.0)
+    except (TypeError, ValueError):
+        return 1.0
+    return multiplier if multiplier > 0 else 1.0
+
+
 def order_target_value(
     strategy: Any,
     symbol: Optional[str] = None,
@@ -1342,7 +1352,9 @@ def order_target_value(
             )
             return None
 
-    target_qty = target_value / current_price
+    # 目标价值是名义市值(数量 × 价格 × 合约乘数): 期货等乘数不为 1 的品种要除以乘数,
+    # 否则下出的手数是目标的"乘数"倍。
+    target_qty = target_value / (current_price * _contract_multiplier(strategy, symbol))
     # 数量是按参考价由金额换算出来的: 买入方向资金不足(安全垫、费用、成交价高于
     # 参考价)时缩到买得起的最大数量, 而不是整单被拒; 调用方显式传值时以其为准。
     kwargs.setdefault("allow_quantity_auto_resize", True)
@@ -1427,7 +1439,9 @@ def rebalance_weights(
             elif strategy.current_tick and strategy.current_tick.symbol == symbol:
                 current_price = strategy.current_tick.price
 
-        current_value = current_qty * float(current_price)
+        current_value = (
+            current_qty * float(current_price) * _contract_multiplier(strategy, symbol)
+        )
         delta_value = target_value - current_value
         if abs(delta_value) <= abs_tolerance_value:
             continue

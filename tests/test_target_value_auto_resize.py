@@ -290,3 +290,110 @@ def test_one_lot_unaffordable_after_resize_is_rejected(policy: Any) -> None:
 
     rows = _orders(result)
     assert [row[:4] for row in rows] == [(_SYMBOL, "buy", "rejected", 0.0)]
+
+
+# ---------------------------------------------------------------------------
+# 期货: 目标金额按名义市值(数量 × 价格 × 合约乘数)换算
+# ---------------------------------------------------------------------------
+
+_FUT = "RB2310"
+_MULTIPLIER = 10.0
+
+
+def _run_futures(action: Action) -> Any:
+    class _Fut(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.n = 0
+
+        def on_bar(self, bar: Bar) -> None:
+            if self.n == 0:
+                action(self)
+            self.n += 1
+
+    config = aq.BacktestConfig(
+        strategy_config=aq.StrategyConfig(initial_cash=_CASH, commission_rate=0.0),
+        instruments_config=[
+            aq.InstrumentConfig(
+                symbol=_FUT,
+                asset_type="FUTURES",
+                multiplier=_MULTIPLIER,
+                margin_ratio=0.1,
+            )
+        ],
+        china_futures=aq.ChinaFuturesConfig(),
+    )
+    return aq.run_backtest(
+        data={_FUT: _daily([10.0] * 4)},
+        strategy=_Fut,
+        symbols=_FUT,
+        freq="1d",
+        fill_policy=aq.NextOpen(),
+        config=config,
+        show_progress=False,
+    )
+
+
+_FUT_HALF: List[Tuple[str, Action]] = [
+    ("order_target_value", lambda s: s.order_target_value(_FUT, _CASH / 2)),
+    ("order_target_percent", lambda s: s.order_target_percent(_FUT, 0.5)),
+    ("rebalance_weights", lambda s: s.rebalance_weights({_FUT: 0.5})),
+]
+
+
+@pytest.mark.parametrize(
+    "action", [a for _, a in _FUT_HALF], ids=[n for n, _ in _FUT_HALF]
+)
+def test_futures_target_value_uses_contract_multiplier(action: Action) -> None:
+    """权益 100000 的 50% = 名义市值 50000 = 500 手(每手 10 元 × 乘数 10).
+
+    此前按 50000 / 10 = 5000 手下单, 名义市值是目标的 10 倍。
+    """
+    expected = _CASH / 2 / (10.0 * _MULTIPLIER)
+    assert expected == 500.0
+
+    assert _orders(_run_futures(action)) == [(_FUT, "buy", "filled", expected, "")]
+
+
+def test_futures_rebalance_at_target_weight_places_no_order() -> None:
+    """已持有目标权重对应的手数时再调仓: 不下单(现值按名义市值算)."""
+
+    class _Twice(Strategy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.n = 0
+            self.second: Any = "unset"
+
+        def on_bar(self, bar: Bar) -> None:
+            if self.n == 0:
+                self.rebalance_weights({_FUT: 0.5})
+            elif self.n == 2:
+                self.second = self.rebalance_weights({_FUT: 0.5})
+            self.n += 1
+
+    config = aq.BacktestConfig(
+        strategy_config=aq.StrategyConfig(initial_cash=_CASH, commission_rate=0.0),
+        instruments_config=[
+            aq.InstrumentConfig(
+                symbol=_FUT,
+                asset_type="FUTURES",
+                multiplier=_MULTIPLIER,
+                margin_ratio=0.1,
+            )
+        ],
+        china_futures=aq.ChinaFuturesConfig(),
+    )
+    result = aq.run_backtest(
+        data={_FUT: _daily([10.0] * 5)},
+        strategy=_Twice,
+        symbols=_FUT,
+        freq="1d",
+        fill_policy=aq.NextOpen(),
+        config=config,
+        show_progress=False,
+    )
+
+    strategy = result.strategy
+    assert strategy is not None
+    assert strategy.second == []
+    assert _orders(result) == [(_FUT, "buy", "filled", 500.0, "")]

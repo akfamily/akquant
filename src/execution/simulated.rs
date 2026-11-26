@@ -777,7 +777,24 @@ impl SimulatedExecutionClient {
                                 // 了结; 已无持仓可平(为 0 或已反向)时撤销、不成交。看的是
                                 // 总持仓而非当日可卖数量: T+1 当日可卖为 0 的仍由下面的
                                 // 可用持仓校验拒掉。
-                                if order_snapshot.is_bracket_exit() {
+                                //
+                                // 普通的平仓单(开平标志为平仓, 或 reduce_only)同理: 平仓单
+                                // 不应开出反向仓位。同一次撮合里排在前面的单(如止损)已把
+                                // 持仓平掉时, 它按剩余持仓成交, 无仓可平则拒掉。股票类按
+                                // 可用持仓校验的品种不走这里, 仍由下面的校验整单拒绝。
+                                let stock_available_checked = matches!(
+                                    instrument.asset_type,
+                                    AssetType::Stock | AssetType::Fund
+                                ) && ctx.risk_config.active
+                                    && !(ctx.risk_config.is_margin_account()
+                                        && ctx.risk_config.enable_short_sell);
+                                let is_bracket_exit = order_snapshot.is_bracket_exit();
+                                if is_bracket_exit
+                                    || (!stock_available_checked
+                                        && crate::model::is_position_reducing_order(
+                                            &order_snapshot,
+                                        ))
+                                {
                                     let closable = order_snapshot.closable_quantity(
                                         projected_portfolio
                                             .positions
@@ -786,13 +803,23 @@ impl SimulatedExecutionClient {
                                             .unwrap_or(Decimal::ZERO),
                                     );
                                     if closable <= Decimal::ZERO {
-                                        replacement_report = Some(Event::ExecutionReport(
+                                        let closed = if is_bracket_exit {
                                             Self::bracket_exit_cancellation(
                                                 &order_snapshot,
                                                 ctx.current_time,
-                                            ),
-                                            None,
-                                        ));
+                                            )
+                                        } else {
+                                            Self::execution_time_rejection(
+                                                &order_snapshot,
+                                                format!(
+                                                    "Risk: No position left to close for {} at execution",
+                                                    trade.symbol
+                                                ),
+                                                ctx.current_time,
+                                            )
+                                        };
+                                        replacement_report =
+                                            Some(Event::ExecutionReport(closed, None));
                                     } else if trade.quantity > closable {
                                         // 与成交时按资金缩量同样按快照重算回报, 订单数量
                                         // 收为实际成交总量

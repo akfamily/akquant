@@ -972,6 +972,7 @@ Note: if you do not pass an explicit `fill_mode` here, the framework defaults to
 *   `place_trailing_stop_limit(symbol, quantity, price, trail_offset, side="Sell", trail_reference_price=None, ...) -> str`: Helper for trailing stop-limit orders, promoted to limit order when triggered.
 *   `order_target_value(target_value, symbol, price=None)`: Adjust position to target value.
 *   `order_target_percent(target_percent, symbol, price=None)`: Adjust position to target account percentage.
+    *   The target value is notional value (quantity × price × contract multiplier), also for `rebalance_weights`.
     *   Buys from `order_target_value`, `order_target_percent` and `rebalance_weights` are resized when funds are short (backtest and paper): the quantity is derived from a value at the reference price, so when the safety margin, commission or a fill price above the reference price make it unaffordable, it is shrunk to the largest whole-lot quantity that can be afforded instead of being rejected. Pass `allow_quantity_auto_resize=False` to keep the all-or-nothing check. Quantity-based `order_target` and `rebalance_positions` are not resized unless called with `allow_quantity_auto_resize=True`.
 *   `rebalance_weights(target_weights, price_map=None, liquidate_unmentioned=False, allow_leverage=False, rebalance_tolerance=0.0, ...)`: Rebalance a multi-asset portfolio by target weights.
     *   `target_weights` is `{symbol: weight}` and by default requires total weight `<= 1.0`.

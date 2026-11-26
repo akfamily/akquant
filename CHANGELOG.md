@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-> 规则版本 2.6.0 → 2.6.1：修撮合、提交与 bracket 出场的几处口径（见下文）。受影响的有：用 `custom_matchers` 的回测；用 `place_bracket` / `place_oco` 的策略（bracket 子单主要影响 `CurrentClose` 等当根成交模式；OCO 在途量、bracket 止损止盈只减仓、平仓前先撤子单各成交模式都受影响）；在同一个回调里先撤单、再调用 `order_target*` / `close_position` 的策略（已请求撤单的订单不再计入投影持仓）；在模拟盘（`trading_mode="paper"`）里用 `place_bracket` / `place_oco` 的策略；用 `order_target_value` / `order_target_percent` / `rebalance_weights` 买入且此前因资金不足被拒的订单（现在缩量成交）。不用这几样、也没有这类拒单的回测结果不变。
+> 规则版本 2.6.0 → 2.6.1：修撮合、提交与 bracket 出场的几处口径（见下文）。受影响的有：用 `custom_matchers` 的回测；用 `place_bracket` / `place_oco` 的策略（bracket 子单主要影响 `CurrentClose` 等当根成交模式；OCO 在途量、bracket 止损止盈只减仓、平仓前先撤子单各成交模式都受影响）；在同一个回调里先撤单、再调用 `order_target*` / `close_position` 的策略（已请求撤单的订单不再计入投影持仓）；在模拟盘（`trading_mode="paper"`）里用 `place_bracket` / `place_oco` 的策略；用 `order_target_value` / `order_target_percent` / `rebalance_weights` 买入且此前因资金不足被拒的订单（现在缩量成交），以及在合约乘数不为 1 的品种上用这三个入口的策略（手数按名义市值换算）；期货等品种上成交时持仓已不足的平仓单。不用这几样、也没有这类拒单的回测结果不变。
 
 ### Fixed
 - **自定义撮合器返回成交后订单不了结、每根 K 线被重复成交**（#458，规则版本 2.6.0 → 2.6.1）：`custom_matchers` 里的撮合器只返回 `Trade`、不自己改订单时，成交和资金都入了账，订单却一直是 `submitted`、已成交量为 0，下一根 K 线又被送进 `match` 再成交一次（下单 100 股，期末持有 300 股）。现在由引擎按返回的成交更新订单：已成交量累加、成交均价按量加权，成交完记为 `Filled`，没成交完记为 `PartiallyFilled` 并继续撮合。撮合器自己改过订单的旧写法结果不变，不会重复累加。订单号、品种、方向与订单不符，或数量不为正、超过剩余量的成交被忽略（不入账、不改订单）并记一条错误日志。成交手续费照旧由引擎按费率重算，不采用 `Trade.commission`。
@@ -31,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - 子单不占用可卖数量：挂着子单时手动 `sell` 减仓或卖完，`CurrentClose` 等提交时校验可用持仓的模式下不再被拒（卖完后子单自动撤销）。
     - 目标不为 0 的 `order_target*` / `rebalance_*` 算差额时不把子单计作将要卖出的量：持仓 100、子单各 100 时 `order_target(symbol, 50)` 卖出 50（此前买入 50，持仓变成 150），`order_target(symbol, 150)` 买入 50（此前买入 150）。
     - 模拟盘：`run_live(trading_mode="paper")` 下 `place_bracket` / `place_oco` 现在与回测一样交给引擎管理，以上各条以及 OCO 在途量按一组计算、平仓先撤子单在模拟盘同样生效。此前模拟盘走策略侧的本地联动，子单是普通卖单：期货手动平仓后止损会开出空仓，挂着子单时 `close_position` 会反向买入。
+    - 普通平仓单（开平标志为平仓，或 `reduce_only`）在期货等不按可用持仓校验的品种上同样不再开出反向仓位：成交时持仓不足按剩余持仓成交，已无持仓时拒单（`No position left to close ... at execution`）。此前 `CurrentClose` 下某根 K 线触及止损、策略又在同一根 K 线上手动卖出平仓时，止损与手动卖单在同一次撮合里各成交一次，开出空仓。股票类品种照旧按可用持仓整单拒绝。
     - 手工 `place_oco` 登记的组没有这项保护。柜台路径（`broker_live`）不做自动撤销，行为不变。
 - **挂着 bracket 止损止盈时 `close_position`、目标为 0 的 `order_target*` 不下单**：子单覆盖着全部持仓时投影持仓为 0，平仓调用静默返回 `None`，持仓要等止损或止盈触发才了结。现在 `close_position`、`order_target(symbol, 0)`、`order_target_value(symbol, 0)`、`order_target_percent(symbol, 0.0)` 以及 `rebalance_weights` / `rebalance_positions` 里目标为 0 的品种，先撤掉该品种上本策略挂着的 bracket 止损止盈，再按撤单后的投影持仓下平仓单；`CurrentClose` 下平仓单不会因“已有在途卖出”被拒。
     - 只撤 `place_bracket` 生成的子单：普通在途单（照旧计入投影持仓）、手工 `place_oco` 的组、其他品种、其他策略槽位的订单都不动。目标不为 0 的 `order_target*` 与手动 `sell` 不会先撤子单。多头持仓当日还不能全部卖出时（T+1 当日买入）也不撤子单（平仓单会被拒，撤掉子单只会让持仓失去保护）：这时差额按含子单的投影持仓计算，子单覆盖全部持仓时不下单、返回 `None`，持仓多于子单数量时只卖出多出的部分。
@@ -39,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **按目标金额、比例、权重买入时资金不足整单被拒**（#459）：`rebalance_weights({symbol: 1.0})`、`order_target_percent(symbol, 1.0)` 这类满仓调仓，数量按参考价由金额换算，提交时可用资金要扣安全垫（缺省万分之一）和佣金，成交价还可能高于参考价，于是必然以 `Insufficient margin` 整单被拒，一股都买不到；多标的调仓里后面的腿也会因前面的腿实际占用超出预算而被拒。现在 `order_target_value`、`order_target_percent`、`rebalance_weights` 产生的买入单打开引擎已有的按可用资金缩量：提交时与成交时资金不足，都缩到买得起的最大整手数（10 万元、10 元一股、每手 100 股时满仓买入成交 9900 股）。
     - 数量由调用方明确给出的入口不变，资金不足仍整单被拒：`order_target`（目标股数）、`rebalance_positions`（目标持仓数量）、`buy(symbol, quantity)`。
     - 开关：这几个入口都接受 `allow_quantity_auto_resize`——`order_target_value(..., allow_quantity_auto_resize=False)` 恢复整单校验，`order_target(..., allow_quantity_auto_resize=True)` 让按股数下的单也缩量。
+    - 随之修正：这三个入口换算数量时没有除以合约乘数，期货上下出的手数是目标的“乘数”倍（权益 10 万、目标 50%、价格 10、乘数 10 时下 5000 手而不是 500 手），`rebalance_weights` 判断是否已达目标权重时也没乘合约乘数。此前这类单多半因资金不足被拒，缩量之后会按放大的手数成交，所以一并修正：目标价值按名义市值（数量 × 价格 × 合约乘数）换算。股票等乘数为 1 的品种不变。
     - 只缩买入的开仓部分；卖出、开空不缩量。缩量后一手都买不起时仍被拒。柜台路径（`broker_live`）不受影响，报单数量不变。
 
 ## [0.4.0] - 2026-11-25
