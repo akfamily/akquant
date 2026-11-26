@@ -4231,7 +4231,8 @@ class Strategy:
 
         Args:
             symbol: 标的代码 (如果不填, 默认使用当前 Bar/Tick 的 symbol)
-            quantity: 数量 (如果不填, 使用 Sizer 计算)
+            quantity: 数量。不填时不经 Sizer: 持有多头则全部卖出, 空仓则不下单;
+                开空请显式给数量
             price: 限价 (None 为市价)
             time_in_force: 订单有效期
             trigger_price: 触发价 (止损/止盈)

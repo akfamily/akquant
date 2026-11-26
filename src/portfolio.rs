@@ -76,7 +76,7 @@ fn test_portfolio_calculate_margin() {
     };
     instruments.insert("FUT".to_string(), fut_instr);
 
-    // Option Long: Margin 0
+    // Option Long: full premium
     let opt_long = Instrument {
         asset_type: AssetType::Option,
         inner: InstrumentEnum::Option(OptionInstrument {
@@ -121,9 +121,9 @@ fn test_portfolio_calculate_margin() {
     let used_margin = portfolio.calculate_used_margin(&prices, &instruments);
 
     // Futures: 30,000
-    // Long Option: 0
+    // Long Option: full premium 50 * 100 * 5 = 25,000
     // Short Option: 12,400
-    assert_eq!(used_margin, Decimal::from(42400));
+    assert_eq!(used_margin, Decimal::from(67400));
 }
 
 #[pymethods]

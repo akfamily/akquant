@@ -121,7 +121,12 @@ impl MarginCalculator for FuturesMarginCalculator {
 }
 
 /// Calculator for Options.
-/// Handles Long (usually 0 margin) and Short (complex margin) positions.
+///
+/// - Long (the buyer): the full premium, `price * multiplier * quantity`. The
+///   buyer pays it up front, so it is held exactly like a stock bought in a cash
+///   account: opening a long needs the premium in available funds, a resting buy
+///   freezes it, and a held long's market value is not free funds for new orders.
+/// - Short (the writer): the margin model below.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct OptionMarginCalculator;
 
@@ -134,7 +139,8 @@ impl MarginCalculator for OptionMarginCalculator {
         underlying_price: Option<Decimal>,
     ) -> Decimal {
         if quantity > Decimal::ZERO {
-            return Decimal::ZERO;
+            let premium = checked_mul_or_cap(quantity, price.abs());
+            return checked_mul_or_cap(premium, instrument.multiplier().abs());
         }
 
         let abs_qty = quantity.abs();
@@ -387,5 +393,42 @@ mod tests {
         assert_eq!(low_margin, dec!(2700));
         assert_eq!(high_margin, dec!(5400));
         assert!(high_margin > low_margin);
+    }
+
+    #[test]
+    fn long_option_margin_is_full_premium_under_every_model() {
+        for model in [
+            OptionMarginModel::Ratio,
+            OptionMarginModel::ChinaSingleLeg,
+            OptionMarginModel::USBrokerSingleLeg,
+            OptionMarginModel::USBrokerSingleLegVolAdjusted,
+        ] {
+            let instrument = Instrument {
+                asset_type: AssetType::Option,
+                inner: InstrumentEnum::Option(OptionInstrument {
+                    symbol: "OPT".to_string(),
+                    multiplier: dec!(10000),
+                    margin_ratio: dec!(0.35),
+                    tick_size: dec!(0.0001),
+                    option_margin_model: model,
+                    option_type: OptionType::Call,
+                    strike_price: dec!(3),
+                    expiry_date: 20260101,
+                    underlying_symbol: "UL".to_string(),
+                    settlement_type: None,
+                    settlement_price: None,
+                    implied_volatility: Some(dec!(0.3)),
+                    reference_volatility: Some(dec!(0.2)),
+                }),
+            };
+            let calc = OptionMarginCalculator;
+            // 权利金 0.1 × 乘数 10000 × 5 张, 与标的价格、保证金模型无关
+            for underlying in [None, Some(dec!(3.2))] {
+                assert_eq!(
+                    calc.calculate_margin(dec!(5), dec!(0.1), &instrument, underlying),
+                    dec!(5000)
+                );
+            }
+        }
     }
 }

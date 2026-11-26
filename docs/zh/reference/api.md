@@ -1022,6 +1022,13 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
     *   如果指定 `trigger_price`，则为止损/止盈单 (Stop Market)。
     *   不传 `symbol` 时取当前 bar/tick 的标的；在无行情上下文的回调（如 `on_start`）中必须显式传入。
     *   不传 `quantity` 时按 `self.sizer` 计算下单量（默认 `FixedSize(100)`，可用 `set_sizer()` 替换），算出的数量按标的最小交易单位（`lot_size`）向下取整，不足一手则不下单；`lot_size` 为 1 时不取整（小数数量照常下单）。显式给的 `quantity` 不取整。
+    *   内置 sizer（`from akquant import FixedSize, PercentSizer, AllInSizer`）：
+        *   `FixedSize(size)`：每次固定数量。
+        *   `PercentSizer(percents)`：用可用资金的 `percents`% 作为这笔开仓占用的资金，数量 = 资金 × `percents`% ÷ 每单位占用资金。
+        *   `AllInSizer()`：用全部可用资金，即 `PercentSizer(100)`。
+        *   每单位占用资金：期货为价格 × 合约乘数 × 保证金率（与引擎提交时校验资金所用的保证金相同）；期权为价格 × 合约乘数，即全额权利金（期权卖方的保证金按模型计算，内置 sizer 不处理，同样按全额权利金算）；股票、基金（含 ETF、可转债）为价格，股票融资账户也按全额，不随初始保证金率放大。手续费与安全垫不计入，`AllInSizer` 算出的数量因此超出时由引擎按可用资金缩量（期权买方同样如此：引擎按权利金加手续费校验，缩到买得起的张数）。
+        *   可用资金：期货为 `get_account()["available_cash"]`（权益 − 占用保证金 − 冻结资金）；其余品种为 `ctx.cash`。多策略槽位共用一个账户。`broker_live` 下一律为柜台现金 `get_cash()`（柜台不一定回报可用资金）；每单位占用资金同样按 `run_live(instruments=...)` 登记的合约算。
+        *   自定义 sizer：继承 `Sizer` 实现 `get_size(price, cash, context, symbol)`，`price` 是参考价（限价单为限价，市价单为最新价），`cash` 按上一条取值。若 `get_size` 再显式声明一个 `unit_cost=None` 参数，下单入口会按关键字传入每单位占用资金（股票上就是价格）；只写 `**kwargs` 的不传。自定义 sizer 若已有一个同名但含义不同的 `unit_cost` 参数，会被这个值覆盖，请改名。
 *   `sell(symbol=None, quantity=None, price=None, trigger_price=None, ...)`: 卖出（平多/开空）。参数同上，但**不传 `quantity` 时不走 sizer，而是全平当前持仓**：回测取总持仓，`broker_live` 取可用持仓（A 股 T+1 下当日买入部分不可卖，按总量报单会被柜台整单拒绝）。
 *   解析后下单量 `<= 0` 时不报单，返回空回执（`len(receipt) == 0`、`receipt.primary == ""`）。
 *   `receipt.failure`（只读，`None` / `"rejected"` / `"unknown"`）：区分空回执的三种成因。
@@ -1075,7 +1082,7 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
     *   只读，写入抛 `AttributeError`：数据粒度由数据源决定，改这个属性不会真的改变粒度。
 *   `get_account() -> AccountSnapshot`: 获取账户详情快照（字典），回测与实盘的键完全一致：`cash`、`equity`、`market_value`、`notional_value`、`margin`、`frozen_cash`、`available_cash`、`unrealized_pnl`、`borrowed_cash`、`short_market_value`、`maintenance_ratio`、`account_mode`、`accrued_interest`、`daily_interest`。
     *   三项资金满足 `equity == margin + frozen_cash + available_cash`：总权益 = 持仓占用 + 挂单冻结 + 可用资金。回测里严格成立；经柜台交易时三项各取柜台的值。
-    *   `margin` 是持仓占用的保证金，现金账户里的股票按全额市值计。`frozen_cash` 是未完成委托冻结的资金：每笔按自己的委托价估算（没有委托价的用最新价），只计会增加占用的委托，挂着的卖出、平仓单不占资金，也不会释放买单的冻结；不含手续费。同一 OCO 组（如两张互斥的限价买单）只冻结占用较大的那张。
+    *   `margin` 是持仓占用的保证金，现金账户里的股票按全额市值计，期权多头按全额权利金市值计。`frozen_cash` 是未完成委托冻结的资金：每笔按自己的委托价估算（没有委托价的用最新价），只计会增加占用的委托，挂着的卖出、平仓单不占资金，也不会释放买单的冻结；不含手续费。同一 OCO 组（如两张互斥的限价买单）只冻结占用较大的那张。
     *   现金账户 / 现货账户下，`market_value` 通常表示持仓市值。
     *   期货保证金账户下，`equity` 表示账户权益，`margin` 表示已占用保证金，`notional_value` 表示期货名义敞口，`unrealized_pnl` 表示浮动盈亏；期货持仓不会像股票那样把全额名义本金直接计入 `cash` 扣减，也不会把名义敞口直接映射为 `market_value`。
     *   `cash` 是现金余额，`available_cash` 才是可用于新开仓的资金，与下单被拒时日志里的 `Available` 口径相近（后者另按 `safety_margin` 折减）。期货保证金账户下开仓不从 `cash` 扣减保证金，因此 `cash` 通常大于 `available_cash`；股票现金账户下没有挂单时二者相等。权益不足以覆盖占用与冻结时 `available_cash` 为负数。
@@ -1621,6 +1628,7 @@ class RiskConfig:
     *   **开仓/加仓**变化量为正，需要现金预付。
     *   **减仓/平仓**会释放保证金，变化量为负，先抵掉自己的费用——因此**卖单不需要预先持有现金**，与 A 股"卖出费用从成交款净额扣除"的规则一致。满仓后只剩几十元现金时，全量卖单照常成交。
     *   仅当卖出所得连费用都盖不住时（如持 100 股 0.01 元的股票），该值仍为正并照常验资；放过它等于让现金透支，而透支只有 `check_cash=False` 才允许。
+*   期权买入开仓（权利方）的占用就是全额权利金，与现金账户里的股票买入同一口径：所需资金 = 权利金 × 合约乘数 × 数量 + 手续费，可用资金不够即拒单，带缩量标记的单缩到买得起的最大张数；保证金账户里也按全额，不按股票的初始保证金率放大。持有期权多头后可用资金已扣掉付出的权利金，挂着的期权买单冻结 委托价 × 合约乘数 × 数量。卖出开仓（义务方）按期权保证金模型计算；买入平仓释放卖方保证金，不需要另备资金。
 *   `safety_margin`: 提交时闸门的安全垫（默认 `0.0001`），按 `(1 - safety_margin)` 折减可用资金，用于吸收"提交时用预估价、成交时用真实价"的偏差。成交时闸门不留安全垫。
 *   提交时闸门用**参考价**估算：限价单用限价，市价单用最新价。`fill_policy=NextOpen()` 时最新价就是上一根的收盘价，而真实成交价是下一根的开盘价，所以次日低开（开盘价低于前收盘）乃至平开时，按开盘价算好的满仓市价买单会在提交时被拒——参考价高于成交价，可用资金还要扣掉安全垫（拒单原因 `Insufficient margin`，其中 `Required = 数量 × 参考价 + 佣金`，`Available = 可用资金 × (1 − safety_margin)`）。成交时闸门再按真实成交价校验一次，不留安全垫。规避办法：用限价单，限价按你能接受的最高价给；或 `buy(symbol, quantity=None)` 交给仓位管理器按可用资金计算数量，资金不足时引擎会自动缩到买得起的整手数（提交时与成交时都会缩；显式给 `quantity` 的买单不缩量）；或用 `order_target_value` / `order_target_percent` / `rebalance_weights`，它们的买入单同样自动缩量，满仓调仓不会被整单拒掉；或者按 `参考价 × (1 + 预留比例)` 自己计算数量。
 
