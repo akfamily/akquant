@@ -10,7 +10,7 @@ def test_streaming_indicator_sink_is_public() -> None:
 
 
 def test_engine_rule_version_is_current() -> None:
-    """规则版本为 2.6.1(自定义撮合器了结订单, 当根成交模式下 bracket 子单)."""
+    """规则版本为 2.6.2(内置 sizer 在期货上按占用保证金与可用资金定量)."""
     import akquant
 
-    assert akquant.__engine_rule_version__ == "2.6.1"
+    assert akquant.__engine_rule_version__ == "2.6.2"

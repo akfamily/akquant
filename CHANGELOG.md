@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> 规则版本 2.6.1 → 2.6.2：内置 sizer 在期货、期权上的定量口径（见下文）。受影响的有：在期货、期权上不给数量下单（`buy(symbol)`）并用 `PercentSizer` / `AllInSizer` 的策略；在期货上用自定义 sizer 且依赖传入的 `cash` 的策略（现在是可用资金）；用 `_calculate_max_buy_qty` 计算期货、期权可买数量的策略。股票、基金（含 ETF、可转债）的结果不变，不用 sizer 定量的回测结果不变。
+
+### Fixed
+- **内置 sizer 在期货上不看合约乘数与保证金率，已有持仓后再开仓算出 0 手**：`PercentSizer` / `AllInSizer` 一律按“资金 ÷ 价格”折算数量。期货上 `AllInSizer` 靠引擎缩量才成了按保证金满仓，`PercentSizer(50)` 在乘数 10、保证金率 0.1 的合约上碰巧是占用一半资金，在乘数 300、保证金率 0.12 的合约上被缩成满仓，同一个 50% 没有一致的含义；传给 sizer 的资金是 `ctx.cash`，现金账户里它按名义市值扣减，持有 1000 手（价格 10、乘数 10、保证金 1 万）后约为 −2.3，任何 sizer 都算出 0 手，而可用资金还有约 9 万。现在：
+    - `PercentSizer(p)` 是“用可用资金的 p% 作为这笔开仓占用的资金”，`AllInSizer()` 即 `PercentSizer(100)`。每单位占用资金：期货为价格 × 合约乘数 × 保证金率，与引擎提交时校验资金所用的保证金相同；期权为价格 × 合约乘数（全额权利金；期权卖方的保证金按模型计算，本次不处理，同样按全额权利金算）；股票、基金为价格，股票融资账户也按全额，不随初始保证金率放大。手续费与安全垫不计入，按全部资金算出的数量因此超出时仍由引擎缩量去掉零头，与股票相同。例（资金 10 万、价格 10）：乘数 300、保证金率 0.12 时 `PercentSizer(50)` 由请求 5000 手（引擎缩成 277 手满仓）变为 138 手，`AllInSizer` 仍成交 277 手；乘数 10、保证金率 0.1 时两者结果不变（5000 手、9996 手）；乘数 10000 的期权、权利金 0.1 时 `AllInSizer` 由请求 100 万张变为 100 张。
+    - 期货上传给 sizer 的 `cash`（自定义 sizer 也一样）由 `ctx.cash` 改为可用资金，即 `get_account()["available_cash"]`（权益 − 占用保证金 − 冻结资金）。上例持有 1000 手后 `PercentSizer(50)` 按约 9 万可用资金算出 4499 手（此前 0 手）；保证金账户里 `ctx.cash` 不扣保证金，此前算出的手数超过可用资金，现在同样按可用资金算。其余品种仍传 `ctx.cash`。多策略槽位共用一个账户，各槽位看到的都是账户的可用资金。
+    - 自定义 sizer 的接口不变：`get_size(price, cash, context, symbol)` 收到的 `price` 仍是价格。`get_size` 显式声明了 `unit_cost` 参数时，下单入口按关键字传入每单位占用资金（内置 sizer 即如此）；只写了 `**kwargs` 的不传。继承 `PercentSizer` / `AllInSizer`、以四个参数覆写 `get_size` 再调用 `super().get_size(price, cash, context, symbol)` 的写法仍按价格折算。
+    - `_calculate_max_buy_qty` 同口径：期货按保证金、期权按权利金折算，手续费按成交金额计；股票、基金的结果不变。
+    - 模拟盘（`trading_mode="paper"`）与回测相同。柜台路径（`broker_live`）里每单位占用资金同样按合约快照计算，传给 sizer 的资金仍是柜台现金 `get_cash()`，不改成可用资金：柜台没有回报可用资金时该字段记为 0，与“可用资金为 0”分不开。
+    - `sell(symbol)` / `short(symbol)` 不给数量时本来就不走 sizer（有多头时全平，否则不下单），不变。
+
 ## [0.4.2] - 2026-11-26
 
 ### Added

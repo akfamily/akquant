@@ -1,3 +1,5 @@
+import functools
+import inspect
 from collections import deque
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union, cast
 
@@ -425,11 +427,7 @@ def _submit_buy_side_orders(
             quantity is None if override is None else bool(override)
         )
     if quantity is None:
-        quantity = round_sizer_quantity(
-            strategy,
-            symbol,
-            strategy.sizer.get_size(ref_price, strategy.ctx.cash, strategy.ctx, symbol),
-        )
+        quantity = _sim_sizer_quantity(strategy, symbol, ref_price)
     if quantity <= 0:
         return []
 
@@ -1136,10 +1134,150 @@ def round_sizer_quantity(strategy: Any, symbol: str, quantity: float) -> float:
     return float((quantity // lot_size) * lot_size)
 
 
+def _instrument_asset_type(strategy: Any, symbol: str) -> str:
+    """合约快照里的品种类型(``STOCK`` / ``FUND`` / ``FUTURES`` / ``OPTION``).
+
+    没有快照时为空串。
+    """
+    snapshot = (getattr(strategy, "_instrument_snapshots", None) or {}).get(symbol)
+    return str(getattr(snapshot, "asset_type", "") or "").strip().upper()
+
+
+def _is_futures_type(strategy: Any, symbol: str) -> bool:
+    """期货类品种: 持仓按保证金率占用资金.
+
+    与引擎一致: 只有 ``AssetType::Futures`` 按 价格 × 乘数 × 保证金率 计占用
+    (``FuturesMarginCalculator``); 可转债、ETF 登记为基金, 不在此列。
+    """
+    return _instrument_asset_type(strategy, symbol) == "FUTURES"
+
+
+def _futures_margin_ratio(strategy: Any, symbol: str) -> float:
+    """期货保证金率(取绝对值, 同引擎); 未登记或不为正时按 1(全额)."""
+    snapshot = (getattr(strategy, "_instrument_snapshots", None) or {}).get(symbol)
+    try:
+        ratio = abs(float(getattr(snapshot, "margin_ratio", 1.0)))
+    except (TypeError, ValueError):
+        return 1.0
+    return ratio if ratio > 0 else 1.0
+
+
+def _fee_notional_per_unit(strategy: Any, symbol: str, price: float) -> float:
+    """每单位的成交金额(手续费按它计): 期货、期权乘合约乘数, 股票、基金就是价格.
+
+    引擎对股票、基金不看合约乘数(``Instrument.multiplier()`` 恒为 1), 这里同样不看。
+    """
+    if _instrument_asset_type(strategy, symbol) in ("FUTURES", "OPTION"):
+        return float(price) * _contract_multiplier(strategy, symbol)
+    return float(price)
+
+
+def sizer_unit_cost(strategy: Any, symbol: str, price: float) -> float:
+    """开仓时每单位占用的资金, 内置 sizer 用它把资金折算成数量.
+
+    - 期货: 价格 × 合约乘数 × 保证金率, 与引擎下单时校验可用资金所用的保证金
+      (``FuturesMarginCalculator``)相同;
+    - 期权: 价格 × 合约乘数, 即全额权利金。期权卖方的保证金按模型计算, 这里不
+      处理, 同样按全额权利金算;
+    - 股票、基金(含 ETF、可转债)以及没有合约快照的标的: 价格。股票融资账户也
+      按全额, 不随初始保证金率放大。
+
+    手续费与安全垫不计入: 按全部资金算出的数量若因此超出, 由引擎的资金不足缩量
+    去掉零头, 股票上原本也是如此。
+    """
+    if _is_futures_type(strategy, symbol):
+        return _fee_notional_per_unit(strategy, symbol, price) * _futures_margin_ratio(
+            strategy, symbol
+        )
+    return _fee_notional_per_unit(strategy, symbol, price)
+
+
+@functools.lru_cache(maxsize=256)
+def _function_takes_unit_cost(func: Any) -> bool:
+    try:
+        parameter = inspect.signature(func).parameters.get("unit_cost")
+    except (TypeError, ValueError):
+        return False
+    return parameter is not None and parameter.kind in (
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    )
+
+
+def _sizer_takes_unit_cost(get_size: Any) -> bool:
+    """``get_size`` 是否显式声明了 ``unit_cost`` 参数(只有 ``**kwargs`` 不算)."""
+    func = getattr(get_size, "__func__", get_size)
+    try:
+        return _function_takes_unit_cost(func)
+    except TypeError:  # 不可哈希的可调用对象, 不缓存
+        return bool(_function_takes_unit_cost.__wrapped__(func))
+
+
+def call_sizer(
+    sizer: Any, strategy: Any, symbol: str, price: float, cash: float, context: Any
+) -> Any:
+    """调用 ``sizer.get_size(price, cash, context, symbol)``.
+
+    ``get_size`` 声明了 ``unit_cost`` 参数时(内置的 ``PercentSizer`` /
+    ``AllInSizer``)再按关键字传入 :func:`sizer_unit_cost`; 只实现四参数的自定义
+    sizer 不受影响, 收到的 ``price`` 仍是价格。
+    """
+    get_size = sizer.get_size
+    if _sizer_takes_unit_cost(get_size):
+        return get_size(
+            price,
+            cash,
+            context,
+            symbol,
+            unit_cost=sizer_unit_cost(strategy, symbol, price),
+        )
+    return get_size(price, cash, context, symbol)
+
+
+def _sizer_cash(strategy: Any, symbol: str) -> float:
+    """回测与 paper 下传给 sizer 的资金.
+
+    期货: 可用资金(权益 − 占用保证金 − 冻结资金, 同 ``get_account()`` 的
+    ``available_cash``)。``ctx.cash`` 在现金账户里按名义市值扣减、保证金账户里
+    不扣保证金, 有持仓后都不是还能用来开仓的钱。取当前值, 不取框架回调里
+    ``get_account()`` 可能给出的上一期快照, 与原先读 ``ctx.cash`` 一致。
+
+    其余品种: ``ctx.cash``, 与原先相同。
+    """
+    if not _is_futures_type(strategy, symbol):
+        return float(strategy.ctx.cash)
+    previous = getattr(strategy, "_framework_use_previous_account_snapshot", False)
+    strategy._framework_use_previous_account_snapshot = False
+    try:
+        return float(_sim_get_account(strategy)["available_cash"])
+    finally:
+        strategy._framework_use_previous_account_snapshot = previous
+
+
+def _sim_sizer_quantity(strategy: Any, symbol: str, ref_price: float) -> float:
+    """回测与 paper 下不给数量时由 sizer 算出、按最小交易单位取整后的数量."""
+    return round_sizer_quantity(
+        strategy,
+        symbol,
+        call_sizer(
+            strategy.sizer,
+            strategy,
+            symbol,
+            ref_price,
+            _sizer_cash(strategy, symbol),
+            strategy.ctx,
+        ),
+    )
+
+
 def calculate_max_buy_qty(
     strategy: Any, symbol: str, price: float, cash: float
 ) -> float:
-    """计算考虑费率后的最大可买数量."""
+    """计算考虑费率后的最大可买数量.
+
+    每单位占用资金同 :func:`sizer_unit_cost`(期货按保证金), 手续费按成交金额计;
+    期货的 ``cash`` 应传可用资金。股票、基金的结果与按价格计算时相同。
+    """
     if price <= 0 or cash <= 0:
         return 0.0
 
@@ -1149,16 +1287,22 @@ def calculate_max_buy_qty(
     if strategy.ctx and hasattr(strategy.ctx, "risk_config"):
         safety_margin = float(strategy.ctx.risk_config.safety_margin)
 
+    unit_cost = sizer_unit_cost(strategy, symbol, price)
+    notional = _fee_notional_per_unit(strategy, symbol, price)
+    # 手续费按成交金额收, 折到每单位占用资金上; 股票、基金两者相等, 比例为 1,
+    # 算式与按价格计算时逐位相同
+    fee_scale = notional / unit_cost
+
     safe_cash = float(cash) * (1.0 - float(safety_margin))
-    est_qty = safe_cash / (float(price) * (1 + float(total_rate)))
-    est_commission = est_qty * float(price) * float(strategy.commission_rate)
+    est_qty = safe_cash / (unit_cost * (1 + float(total_rate) * fee_scale))
+    est_commission = est_qty * notional * float(strategy.commission_rate)
 
     if est_commission < float(strategy.min_commission):
         remaining_cash = safe_cash - float(strategy.min_commission)
         if remaining_cash <= 0:
             return 0.0
         est_qty = remaining_cash / (
-            float(price) * (1 + float(strategy.transfer_fee_rate))
+            unit_cost * (1 + float(strategy.transfer_fee_rate) * fee_scale)
         )
 
     current_lot_size = _resolve_lot_size(strategy, symbol)
@@ -1745,11 +1889,7 @@ def short(
             ref_price = 0.0
 
     if quantity is None:
-        quantity = round_sizer_quantity(
-            strategy,
-            symbol,
-            strategy.sizer.get_size(ref_price, strategy.ctx.cash, strategy.ctx, symbol),
-        )
+        quantity = _sim_sizer_quantity(strategy, symbol, ref_price)
 
     if quantity > 0:
         return _submit_sell_side(

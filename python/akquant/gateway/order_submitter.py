@@ -496,18 +496,28 @@ class BrokerOrderSubmitter:
         if ref_price is None:
             last_prices = getattr(self._strategy, "_last_prices", None) or {}
             ref_price = float(last_prices.get(symbol, 0.0) or 0.0)
+        # 资金取柜台现金, 期货也不改成可用资金: 柜台未回报可用资金时该字段记 0, 与
+        # "可用资金为 0" 分不开, 账户缓存也只在回报后刷新。每单位占用资金只依赖合约
+        # 快照, 与回测同口径(内置 sizer 期货按保证金折算)。
         cash = float(execution.get_cash()) if execution is not None else 0.0
+        # 延迟导入: strategy_trading_api 依赖 gateway 包。
+        from ..strategy_trading_api import call_sizer, round_sizer_quantity
+
         # 实盘无回测 ctx(为 None); 自定义 sizer 若依赖 context 需自行兼容。
-        size = sizer.get_size(
-            float(ref_price), cash, getattr(self._strategy, "ctx", None), symbol
+        size = call_sizer(
+            sizer,
+            self._strategy,
+            symbol,
+            float(ref_price),
+            cash,
+            getattr(self._strategy, "ctx", None),
         )
         if size is None:
             raise RuntimeError(
                 f"sizer {type(sizer).__name__}.get_size() 返回 None "
                 "(get_size 是否漏了 return?)"
             )
-        # 与回测同口径按手数取整; 延迟导入: strategy_trading_api 依赖 gateway 包。
-        from ..strategy_trading_api import round_sizer_quantity
+        # 与回测同口径按手数取整
 
         return round_sizer_quantity(self._strategy, symbol, float(size))
 
