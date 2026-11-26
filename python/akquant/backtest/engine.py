@@ -86,6 +86,7 @@ from ..strategy import (
     Strategy,
     StrategyConfigurationError,
     StrategyRuntimeConfig,
+    ensure_run_info_untampered,
     instantiate_strategy,
     reconcile_strategy_id,
 )
@@ -99,6 +100,7 @@ from ..strategy_framework_hooks import (
     normalize_dual_stream_declaration,
 )
 from ..strategy_loader import resolve_strategy_input
+from ..strategy_run_info import EMPTY_RUN_INFO, freeze_run_info
 from ..strategy_runtime_config import apply_strategy_runtime_config
 from ..strategy_window import (
     configure_engine_window_subscriptions,
@@ -2978,6 +2980,7 @@ def _build_strategy_instance(
     on_timer: Optional[Callable[[Any, str], None]],
     context: Optional[Dict[str, Any]],
     on_bars: Optional[Callable[[Any, Any], None]] = None,
+    run_info: Mapping[str, Any] = EMPTY_RUN_INFO,
 ) -> Strategy:
     if isinstance(strategy, type) and issubclass(strategy, Strategy):
         accepted_kwargs, unknown_keys = _split_strategy_kwargs(
@@ -3030,6 +3033,7 @@ def _build_strategy_instance(
             on_timer=on_timer,
             context=context,
             on_bars=on_bars,
+            run_info=run_info,
         )
     if strategy is None:
         raise ValueError("Strategy must be provided.")
@@ -3066,9 +3070,13 @@ class FunctionalStrategy(Strategy):
         on_timer: Optional[Callable[[Any, str], None]] = None,
         context: Optional[Dict[str, Any]] = None,
         on_bars: Optional[Callable[[Any, Any], None]] = None,
+        run_info: Optional[Mapping[str, Any]] = None,
     ):
         """Initialize the FunctionalStrategy."""
         super().__init__()
+        # 函数式策略的 initialize 相当于策略类的 on_start 之前的准备: 在它之前写入,
+        # 让 initialize(ctx) 里也能读 ctx.run_info(运行入口开跑前还会再写一次同值)。
+        self._framework_run_info = freeze_run_info(run_info)
         self._initialize = initialize
         self._on_bar_func = on_bar
         self._on_start_func = on_start
@@ -3493,6 +3501,7 @@ def run_backtest(
     fill_policy: Optional[Union[FillMode, FillPolicy]] = None,
     strict_strategy_params: bool = True,
     simulate_ticks: bool = False,
+    run_info: Optional[Mapping[str, Any]] = None,
     **kwargs: Any,
 ) -> BacktestResult:
     """
@@ -3555,6 +3564,10 @@ def run_backtest(
         (开盘价、两个极值、收盘价)驱动 ``on_tick``。``on_tick`` 里下的单按模拟
         tick 撮合; ``on_bar`` 等处下的单仍按 K 线撮合, 结果与关闭时相同。数据里
         已有真实 tick 时不能使用。精度上限见文档。
+    :param run_info: 运行信息(可选), 策略经只读的 ``self.run_info`` 读取。键为字符串,
+        值为 str/int/float/bool/None 及由它们组成的 list/tuple/dict; 其他类型报
+        ``TypeError``, NaN/无穷大报 ``ValueError``。框架不解释其中的键, 深拷贝后
+        冻结交给主策略、各槽位与指标脚本, 不入存档。与 ``context`` 互不影响
     :param timezone: 时区名称 (默认 "Asia/Shanghai")
     :param sessions: 代码前缀 → 时段模板名或自定义时段表（"default" 为全局默认）；
                      不传时中国时区按资产类型取默认（股票 CN_STOCK、
@@ -3670,6 +3683,8 @@ def run_backtest(
         legacy_timer_used="timer_execution_policy" in kwargs,
         api_name="run_backtest",
     )
+    # 最先校验: 取值不合规时在加载数据、构造策略之前报错
+    frozen_run_info = freeze_run_info(run_info)
     strategy_config = config.strategy_config if config is not None else None
     (
         strategy_id,
@@ -3963,6 +3978,7 @@ def run_backtest(
         on_timer,
         context,
         on_bars=on_bars,
+        run_info=frozen_run_info,
     )
     slot_strategy_instances: Dict[str, Strategy] = {}
     if strategies_by_slot:
@@ -4005,6 +4021,7 @@ def run_backtest(
                 on_timer,
                 context,
                 on_bars=on_bars,
+                run_info=frozen_run_info,
             )
     all_strategy_instances = [strategy_instance, *slot_strategy_instances.values()]
     configured_slot_ids = [effective_strategy_id]
@@ -4034,6 +4051,11 @@ def run_backtest(
     # 多策略槽位共用同一份数据, 故所有实例注入同一个值。
     for current_strategy in all_strategy_instances:
         setattr(current_strategy, "_framework_freq", freq)
+    # 运行信息(self.run_info): 每次运行都写, 不传时写空映射, 传入实例上次运行留下
+    # 的值不沿用。各槽位与指标脚本共用同一份只读对象。
+    for current_strategy in all_strategy_instances:
+        ensure_run_info_untampered(current_strategy)
+        current_strategy._framework_run_info = frozen_run_info
     indicator_recorder = _attach_indicator_recorder(
         stream_emitter=indicator_stream_emitter,
         strategy_instance=strategy_instance,
@@ -6231,6 +6253,7 @@ def run_from_checkpoint(
     config: Optional[BacktestConfig] = None,
     sessions: Optional[SessionsArg] = None,
     trading_calendar: Optional[Iterable[Any]] = None,
+    run_info: Optional[Mapping[str, Any]] = None,
     **kwargs: Any,
 ) -> BacktestResult:
     """
@@ -6248,6 +6271,8 @@ def run_from_checkpoint(
         配置，传入且与存档不一致时以传入为准并告警
     :param trading_calendar: 同 :func:`run_backtest` 的 ``trading_calendar``；
         不传时沿用存档，规则同 ``sessions``
+    :param run_info: 同 :func:`run_backtest` 的 ``run_info``。存档里不保存它，续跑
+        以本次传入的为准，不传则策略读到空映射（不沿用存档前那次运行的值）
     :param kwargs: 其他引擎配置参数 (如 commission_rate, stamp_tax_rate, t_plus_one)。
         ``timezone`` 与 ``risk_config`` 不传时沿用存档（需存档时传了
         ``config=result``），传入且与存档不一致时以传入为准并告警。``risk_config``
@@ -6267,6 +6292,7 @@ def run_from_checkpoint(
             "run_from_checkpoint 不接受 simulate_ticks: 模拟 tick 不支持存档续跑"
             "(只用于 run_backtest)"
         )
+    frozen_run_info = freeze_run_info(run_info)
 
     logger = get_logger("backtest")
     if not has_configured_handler(logger.name, namespace_only=True):
@@ -6738,6 +6764,7 @@ def run_from_checkpoint(
                 on_pre_open=None,
                 on_timer=None,
                 context=None,
+                run_info=frozen_run_info,
             )
 
     configured_slot_ids = [effective_strategy_id]
@@ -6791,6 +6818,9 @@ def run_from_checkpoint(
         # 每段续跑重新判断。
         setattr(current_strategy, "_framework_simulated_ticks", False)
         current_strategy._framework_tick_seen = False
+        # 运行信息以本次调用为准(存档里本就没有, 见 Strategy.__getstate__)
+        ensure_run_info_untampered(current_strategy)
+        current_strategy._framework_run_info = frozen_run_info
         setattr(
             current_strategy,
             "_strategy_fill_policy_map",

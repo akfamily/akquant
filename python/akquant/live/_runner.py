@@ -16,6 +16,7 @@ from typing import (
     Iterable,
     Iterator,
     List,
+    Mapping,
     Optional,
     Sequence,
     Type,
@@ -52,6 +53,7 @@ from ..strategy import (
     InstrumentSnapshot,
     Strategy,
     StrategyRuntimeConfig,
+    ensure_run_info_untampered,
     reconcile_strategy_id,
 )
 from ..strategy_framework_hooks import (
@@ -59,6 +61,7 @@ from ..strategy_framework_hooks import (
     normalize_dual_stream_declaration,
 )
 from ..strategy_loader import resolve_strategy_input
+from ..strategy_run_info import EMPTY_RUN_INFO, freeze_run_info
 from ..strategy_runtime_config import apply_strategy_runtime_config
 from ..strategy_window import configure_engine_window_subscriptions
 from ..utils import format_metric_value
@@ -470,6 +473,7 @@ class LiveRunner:
         min_commission: Optional[float] = None,
         slippage: Optional[Dict[str, Any]] = None,
         volume_limit_pct: Optional[float] = None,
+        run_info: Optional[Mapping[str, Any]] = None,
     ):
         """
         Initialize the LiveRunner.
@@ -520,6 +524,8 @@ class LiveRunner:
         :param on_timer: Optional function-style on_timer callback.
         :param on_bars: Optional function-style on_bars callback（实验性）.
         :param context: Optional context dict injected into function-style strategy.
+        :param run_info: Read-only run information for ``self.run_info``; see
+            ``run_live``. Validated here, before any gateway is connected.
         :param on_broker_event: Optional broker event observer callback.
         :param signal_port_ready: Optional callback receiving a ``SignalPort`` right
             before the engine loop starts. Use it to hand the port to an external
@@ -589,6 +595,7 @@ class LiveRunner:
         self.on_timer = on_timer
         self.on_bars = on_bars
         self.context = context or {}
+        self._run_info = freeze_run_info(run_info)
         self.strategy_max_order_value = self._normalize_strategy_float_map(
             strategy_max_order_value
         )
@@ -820,6 +827,11 @@ class LiveRunner:
         # 生命周期钩子与 naive 时间的本地化都读 strategy.timezone。
         for current_strategy in [strategy_instance, *slot_strategy_instances.values()]:
             current_strategy.timezone = self._session_timezone()
+            # 运行信息(self.run_info): 每次会话都写, 不沿用实例上次运行留下的值
+            ensure_run_info_untampered(current_strategy)
+            current_strategy._framework_run_info = getattr(
+                self, "_run_info", EMPTY_RUN_INFO
+            )
         # 运行时配置下发放在最前: error_mode 等字段影响 on_start 自身的异常
         # 处理与指标声明(self.I 在 on_start 里调用) —— 主策略的 on_start 由
         # Rust 在 engine.run() 内触发, 槽位由 _dispatch_slot_strategy_start
@@ -1083,6 +1095,7 @@ class LiveRunner:
                 on_timer=getattr(self, "on_timer", None),
                 on_bars=getattr(self, "on_bars", None),
                 context=getattr(self, "context", {}),
+                run_info=getattr(self, "_run_info", EMPTY_RUN_INFO),
             )
         raise TypeError("strategy must be Strategy type/instance or callable")
 

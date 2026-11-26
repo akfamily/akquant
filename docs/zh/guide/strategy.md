@@ -1066,6 +1066,45 @@ strategy_params = {
 *   **日期区间参数不会限制回测区间**：它只是策略自己读取的一个参数。回测的起止
     时间由 `run_backtest(start_time=..., end_time=...)` 决定。
 
+### 6.4b 运行信息（`self.run_info`） {: #run-info }
+
+`self.run_info` 是调用方传给这次运行的信息，策略只能读、不能改。`run_backtest`、`run_live`、`run_grid_search`、`run_walk_forward`、`run_from_checkpoint` 都接受同名参数 `run_info=`。框架不解释其中的键，放什么由启动运行的程序决定。例如托管策略的平台可以放入运行者的用户标识，策略据此自己判断是否允许运行：
+
+```python
+import akquant as aq
+
+ALLOWED_USERS = {"user-001", "user-002"}
+
+
+class MyStrategy(aq.Strategy):
+    def on_start(self):
+        user = self.run_info.get("user_id")
+        if user not in ALLOWED_USERS:
+            raise PermissionError(f"用户 {user!r} 没有使用本策略的权限")
+
+    def on_bar(self, bar):
+        pass
+
+
+aq.run_backtest(data=df, strategy=MyStrategy, run_info={"user_id": "user-001"})
+```
+
+`user_id` 只是示例键名（其他如 `account`、`mode`），框架不强制任何键。
+
+*   **可用时机**：从 `on_start` 起，每个回调都能读到；策略类的 `__init__` 里还没交给引擎，读到空映射。没传时也是空映射，所以上例在没传 `run_info` 时同样拒绝运行。函数式策略用 `ctx.run_info`，`initialize` 里也可读。
+*   **只读**：内容是传入值的深拷贝，嵌套字典同样不能改，列表变成 `tuple`；`self.run_info = ...` 抛 `AttributeError`。需要可改的副本时先复制，如 `dict(self.run_info)`。
+*   **取值**：键为字符串，值只能是 `str` / `int` / `float` / `bool` / `None` 及由它们组成的 `list` / `tuple` / `dict`，否则在入口处报错。
+*   **范围**：多槽位策略与指标脚本读到同一份；网格搜索的子进程同样收到；存档不保存它，续跑以本次传入的为准。
+*   **拒绝运行**：在 `on_start` 里抛异常即可。回测时 `run_backtest` 把异常原样抛给调用方，一根 K 线都不跑；实盘时会话以错误中止，`run_live` 不向外抛出，异常连同堆栈记在 CRITICAL 日志里。
+*   **与 `context` 的区别**：`context` 把每个键设成可写的策略属性，用来传策略参数；`run_info` 只读、单独一个命名空间，两者互不影响。
+*   **同一实例只执行一次 `on_start`**：同一个策略实例再次交给 `run_backtest` / `run_live` 时不会重新执行 `on_start`（`run_info` 的值会换成新的，但写在 `on_start` 里的校验不再运行）。宿主每次运行应传策略类或新建的实例。
+*   **同一进程里的其他代码**：只读保护挡的是无意的改动。同一个 Python 进程里运行的任何策略、指标脚本都有办法改掉别的策略读到的值（运行入口会拦下对 `run_info` 属性本身的替换，但拦不住所有手段）。用它做权限判断时，宿主应让互不信任的代码各自在独立进程里运行。
+*   **JSON 与网格缓存**：`self.run_info` 是只读映射，不是 `dict`，`json.dumps` 前先转换（`dict(self.run_info)`，有嵌套时逐层转）。`run_grid_search(db_path=...)` 的断点续跑缓存按参数组合识别，不含 `run_info`：换一个 `run_info` 重跑会直接取到缓存结果、不再执行策略，不同用户请用不同的 `db_path`。
+
+!!! warning "这种校验能防什么、不能防什么"
+    *   **校验写在策略源码里**：能拿到并修改源码的人，删掉这几行就能绕过。它只在使用者改不了源码（如策略托管在平台上运行）或防止误用的场景下有约束力。
+    *   **`run_info` 是调用 `run_backtest` / `run_live` 的程序传进来的**：本地直接跑脚本时，调用者想填什么就填什么。它只和启动这次运行的宿主程序一样可信：只有宿主从验证过的身份信息里填入、且不让使用者自行覆盖时，才适合用于权限判断。
+
 ## 7. 订单与交易详解 (Orders & Execution)
 
 ### 7.1 订单生命周期
@@ -1357,7 +1396,7 @@ def on_bar(self, bar: Bar):
 
 *   **`self.ctx.cash`**: 当前账户现金余额。期货保证金账户下开仓不扣现金，可用资金请读 `get_account()["available_cash"]`。
 *   **`self.equity`**: 当前账户总权益。
-*   **`self.get_account()`**: 当前账户快照；在保证金账户中可进一步读取 `margin`、`available_cash`、`notional_value`、`unrealized_pnl`、`maintenance_ratio` 等字段。
+*   **`self.get_account()`**: 当前账户快照；在保证金账户中可进一步读取 `margin`、`available_cash`、`notional_value`、`unrealized_pnl`、`maintenance_ratio` 等字段。经柜台交易时 `account_id` 是柜台账号（柜台首次回报账户之前可能为空串），回测与模拟盘为空串。
 *   **`self.get_trades()`**: 获取历史所有已平仓交易记录（Closed Trades）。
 *   **`self.get_open_orders()`**: 获取当前未成交订单。
 

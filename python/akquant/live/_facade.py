@@ -13,6 +13,7 @@ from typing import (
     Dict,
     Iterable,
     List,
+    Mapping,
     Optional,
     Sequence,
     Type,
@@ -107,6 +108,7 @@ def run_live(
     min_commission: Optional[float] = None,
     slippage: Optional[Dict[str, Any]] = None,
     volume_limit_pct: Optional[float] = None,
+    run_info: Optional[Mapping[str, Any]] = None,
 ) -> None:
     """Run a live/paper trading session, symmetric with ``run_backtest``.
 
@@ -325,6 +327,12 @@ def run_live(
                              以上六个参数只作用于 ``trading_mode="paper"``（由
                              akquant 撮合）；``broker_live`` 由柜台撮合，传了任一
                              参数即抛 ``ValueError``
+    :param run_info: 运行信息，与 ``run_backtest`` 同名同义：策略经只读的
+                     ``self.run_info`` 读取（主策略、各槽位与指标脚本读到同一份），
+                     从 ``on_start`` 起可用。键为字符串，值只能是
+                     str/int/float/bool/None 及由它们组成的 list/tuple/dict，
+                     否则在连接网关之前抛 ``TypeError``/``ValueError``。
+                     框架不解释其中的键
     """
     if instruments is None:
         raise ValueError("run_live requires instruments")
@@ -396,6 +404,7 @@ def run_live(
         min_commission=min_commission,
         slippage=slippage,
         volume_limit_pct=volume_limit_pct,
+        run_info=run_info,
     )
     runner.set_indicator_stream(
         indicator_recorder=indicator_recorder, on_event=on_event

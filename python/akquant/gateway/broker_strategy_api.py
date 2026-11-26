@@ -15,6 +15,7 @@ def _account_to_dict(acct: Any) -> AccountSnapshot:
 
     柜台给了的字段(可用资金、持仓市值、冻结资金、占用保证金、浮动盈亏)如实采用;
     给不了的(融资负债、利息等)记 0.0, 让按回测写的策略在 broker_live 下不 KeyError。
+    ``account_id`` 取柜台回报里的账号; 还没有账户回报(``acct`` 为 None)时为空串。
     """
     cash = float(getattr(acct, "cash", 0.0) or 0.0)
     equity = float(getattr(acct, "equity", 0.0) or 0.0)
@@ -44,6 +45,7 @@ def _account_to_dict(acct: Any) -> AccountSnapshot:
         "account_mode": "cash",
         "accrued_interest": 0.0,
         "daily_interest": 0.0,
+        "account_id": str(getattr(acct, "account_id", "") or ""),
     }
     return snapshot
 

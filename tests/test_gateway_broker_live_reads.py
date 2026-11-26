@@ -49,6 +49,7 @@ def test_get_account_has_backtest_key_parity() -> None:
     strategy = _Strategy()
     ex = BrokerExecution(strategy, _Gw(), BrokerStateCache(_Gw()), None)
     acct = ex.get_account()
+    assert acct["account_id"] == "a"
     for key in (
         "cash",
         "equity",
@@ -64,6 +65,7 @@ def test_get_account_has_backtest_key_parity() -> None:
         "account_mode",
         "accrued_interest",
         "daily_interest",
+        "account_id",
     ):
         assert key in acct
 

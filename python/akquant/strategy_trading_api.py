@@ -2290,6 +2290,8 @@ def _sim_get_account(strategy: Any) -> AccountSnapshot:
         "account_mode": account_mode,
         "accrued_interest": accrued_interest,
         "daily_interest": daily_interest,
+        # 回测与模拟盘由 AKQuant 撮合, 没有柜台账号
+        "account_id": "",
     }
     return snapshot
 

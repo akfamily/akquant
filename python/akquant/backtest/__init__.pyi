@@ -5,6 +5,7 @@ from typing import (
     Dict,
     List,
     Literal,
+    Mapping,
     Optional,
     Tuple,
     Type,
@@ -67,6 +68,7 @@ class FunctionalStrategy(Strategy):
         on_timer: Optional[Callable[[Any, str], None]] = ...,
         context: Optional[Dict[str, Any]] = ...,
         on_bars: Optional[Callable[[Any, Any], None]] = ...,
+        run_info: Optional[Mapping[str, Any]] = ...,
     ) -> None: ...
 
 class BacktestStreamEvent(TypedDict):
@@ -165,6 +167,7 @@ def run_backtest(
     fill_policy: Optional[FillMode] = ...,
     stream_mode: Literal["observability", "audit"] = ...,
     strict_strategy_params: bool = True,
+    run_info: Optional[Mapping[str, Any]] = ...,
     **kwargs: Any,
 ) -> BacktestResult: ...
 def run_from_checkpoint(
@@ -199,6 +202,7 @@ def run_from_checkpoint(
     on_event: Optional[Callable[[BacktestStreamEvent], None]] = ...,
     indicator_recorder: Optional[IndicatorSink] = ...,
     config: Optional[BacktestConfig] = ...,
+    run_info: Optional[Mapping[str, Any]] = ...,
     **kwargs: Any,
 ) -> BacktestResult: ...
 

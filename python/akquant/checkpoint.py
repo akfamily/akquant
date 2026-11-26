@@ -145,7 +145,10 @@ def save_checkpoint(
     transient_backups: list[tuple[Any, dict[str, Any]]] = []
     for current_strategy in _iter_strategy_graph(strategy):
         attr_backup: dict[str, Any] = {}
-        for attr_name in ("_engine", "_analyzer_manager"):
+        # _framework_run_info(self.run_info)属于这一次运行, 存档里不保存; 续跑时以
+        # run_from_checkpoint(run_info=) 为准。Strategy.__getstate__ 也会去掉它,
+        # 这里再去一次, 覆盖子类自己重写 __getstate__ 的情况。
+        for attr_name in ("_engine", "_analyzer_manager", "_framework_run_info"):
             if hasattr(current_strategy, attr_name):
                 attr_backup[attr_name] = getattr(current_strategy, attr_name)
                 delattr(current_strategy, attr_name)

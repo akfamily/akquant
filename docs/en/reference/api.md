@@ -93,6 +93,7 @@ def run_backtest(
     fill_policy: Optional[FillMode] = None,
     strict_strategy_params: bool = True,
     simulate_ticks: bool = False,
+    run_info: Optional[Mapping[str, Any]] = None,
     **kwargs: Any,
 ) -> BacktestResult
 ```
@@ -126,6 +127,12 @@ def run_backtest(
 *   `legacy_execution_policy_compat` (via `**kwargs`): Removed.
 *   Migration hint: legacy execution parameters and the `fill_policy` dict are no longer accepted; pass a `FillMode` object.
 *   `simulate_ticks`: When the backtest data has bars only, split every bar into four simulated ticks (open, the two extremes, close) to drive `on_tick`. Default `False`. Orders placed in `on_tick` are matched by simulated ticks: market orders fill on that tick at its price; a resting limit order fills at its limit price when crossed, a stop order at the price of the tick that triggers it. Orders placed in `on_bar` / `on_timer` are still matched by bars, with the same results as when the switch is off. Cannot be combined with real tick data, and is for backtests only; `run_from_checkpoint` does not accept it. See "Backtesting `on_tick` with Bars Only" in the [Strategy Guide](../guide/strategy.md#simulate-ticks).
+*   `run_info`: Run information, default `None` (the strategy sees an empty mapping). Passed by the caller and read by the strategy through the read-only property `self.run_info`; it hands information about "this run" to the strategy — for example, a host that starts the run can put in the identity of whoever is running it, and the strategy decides for itself whether to run (see "Run Information" in the [Strategy Guide](../guide/strategy.md#run-info)). The framework does not interpret the keys.
+    *   Keys must be strings; values may only be `str` / `int` / `float` / `bool` / `None` (the built-in types themselves, not their subclasses or NumPy scalars) and `list` / `tuple` / `dict` built from them. Other types raise `TypeError`, NaN and infinity raise `ValueError`, both before any data is loaded. This keeps it picklable for grid-search workers and JSON-serialisable.
+    *   The strategy sees a deep copy and the whole structure is read-only: nested dicts cannot be changed either, lists become `tuple`s, and `self.run_info = ...` raises `AttributeError`. Later changes to the caller's own dict do not reach the strategy.
+    *   Available from `on_start` on; in a strategy class's `__init__` the strategy has not been handed to the engine yet and sees an empty mapping. Function-style strategies use `ctx.run_info`, also inside `initialize`. The main strategy, every `strategies_by_slot` slot and every `indicators` script see the same mapping.
+    *   Independent of `context`: `context` sets each key as a writable strategy attribute and is meant for strategy parameters; `run_info` is read-only and lives in its own namespace. `context` cannot contain a `run_info` key (raises `AttributeError`), and a strategy class (including mixins it inherits from) cannot define its own `run_info` (raises `TypeError` at class definition).
+    *   Not checkpointed: `save_checkpoint` does not store it, and `run_from_checkpoint` uses the value passed to that call — an empty mapping when none is passed.
 *   `strict_strategy_params`: Whether to strictly validate strategy constructor parameters (default `True`).
     *   Raises immediately if unsupported constructor parameters are provided.
     *   Recommended to keep enabled to avoid silent parameter mismatch and distorted backtest results.
@@ -231,6 +238,8 @@ def run_grid_search(
     max_tasks_per_child: Optional[int] = None,
     db_path: Optional[str] = None,
     forward_worker_logs: bool = False,
+    raise_on_all_failed: bool = True,
+    run_info: Optional[Mapping[str, Any]] = None,
     **kwargs: Any,
 ) -> Union[pd.DataFrame, List[OptimizationResult]]
 ```
@@ -243,6 +252,7 @@ def run_grid_search(
 *   `strict_strategy_params`: Passed via `**kwargs` into `run_backtest` (defaulted to `True` inside `run_grid_search`).
     *   Enforces strict match between `param_grid` keys and strategy constructor parameters.
     *   Fails fast on mismatch to avoid silent fallback.
+*   `run_info`: same as `run_backtest(run_info=)`. Validated before any task is dispatched; every parameter combination's backtest (including those in worker processes) receives the same mapping.
 
 ### `akquant.run_walk_forward`
 
@@ -265,6 +275,7 @@ def run_walk_forward(
     compounding: bool = False,
     timeout: Optional[float] = None,
     max_tasks_per_child: Optional[int] = None,
+    run_info: Optional[Mapping[str, Any]] = None,
     **kwargs: Any,
 ) -> pd.DataFrame
 ```
@@ -274,6 +285,7 @@ def run_walk_forward(
 *   `**kwargs` are forwarded to both `run_grid_search` (in-sample optimization) and `run_backtest` (out-of-sample validation).
 *   Therefore, `forward_worker_logs` controls worker-log forwarding during in-sample parallel optimization.
 *   `strict_strategy_params` stays effective across optimization and validation phases (strict by default).
+*   `run_info`: same as `run_backtest(run_info=)`; both the in-sample grid search and the out-of-sample backtests receive the same mapping.
 
 ### `akquant.run_from_checkpoint`
 
@@ -310,6 +322,7 @@ def run_from_checkpoint(
     config: Optional[BacktestConfig] = None,
     sessions: Optional[SessionsArg] = None,
     trading_calendar: Optional[Iterable[Any]] = None,
+    run_info: Optional[Mapping[str, Any]] = None,
     **kwargs: Any,
 ) -> BacktestResult
 ```
@@ -324,6 +337,8 @@ For these fields, priority is:
 `sessions` / `trading_calendar` mean the same as in `run_backtest`. The checkpoint stores both, so a resumed run that omits them keeps the stored configuration; values that are passed and differ from the checkpoint win, with a warning.
 
 `run_from_checkpoint` does not accept `simulate_ticks`: simulated ticks do not support checkpoint resume. Passing the parameter (whether true or false), or resuming a checkpoint taken from a `simulate_ticks=True` backtest, raises `ValueError`.
+
+`run_info` means the same as in `run_backtest`, but the checkpoint does not store it: a resumed run uses the value passed to this call, and the strategy sees an empty mapping when none is passed — never the value from the run before the checkpoint.
 
 **DataFeedAdapter Usage (Multi-Timeframe):**
 
@@ -1015,7 +1030,9 @@ Note: if you do not pass an explicit `fill_mode` here, the framework defaults to
     *   Injected from `run_backtest(freq=)` for backtests (the tick aggregation period, or the period declared for bar data), and declared by the market-data gateway for live trading (klinedata converts its own `period="M1"` into `"1min"`; `broker="replay"` accepts `gateway_options={"freq": "1min"}`). Both sides use the backtest vocabulary, so the same strategy reads the same value in a backtest and live, with no broker-specific branching.
     *   **`None` when the frequency is unknown**: a bar-only backtest that did not pass `freq`, tick-only gateways such as CTP, trader-only brokers (no market-data channel), and klinedata's weekly period (the plugin does not declare a weekly frequency yet). The framework deliberately **does not infer** the frequency from the data — timestamp deltas between adjacent bars are misled by suspensions, day rollovers and lunch breaks, and a wrong frequency is more dangerous than an unknown one. Handle `None` explicitly.
     *   Read-only; assigning to it raises `AttributeError`, since the data granularity is decided by the data source and writing this attribute would not actually change it.
-*   `get_account() -> AccountSnapshot`: Get an account snapshot (a dict) with identical keys in backtest and live trading: `cash`, `equity`, `market_value`, `notional_value`, `margin`, `frozen_cash`, `available_cash`, `unrealized_pnl`, `borrowed_cash`, `short_market_value`, `maintenance_ratio`, `account_mode`, `accrued_interest`, and `daily_interest`.
+*   `run_info -> Mapping[str, Any]`: Run information for this run (read-only property): a deep copy of the `run_info=` argument of `run_backtest` / `run_live` / `run_grid_search` / `run_walk_forward` / `run_from_checkpoint`, an empty mapping when none was passed. The whole structure is read-only (nested dicts too, lists become `tuple`s) and assigning to it raises `AttributeError`. Available from `on_start` on; empty inside `__init__`. The framework does not interpret the keys. See the [Strategy Guide](../guide/strategy.md#run-info).
+*   `get_account() -> AccountSnapshot`: Get an account snapshot (a dict) with identical keys in backtest and live trading: `cash`, `equity`, `market_value`, `notional_value`, `margin`, `frozen_cash`, `available_cash`, `unrealized_pnl`, `borrowed_cash`, `short_market_value`, `maintenance_ratio`, `account_mode`, `accrued_interest`, `daily_interest`, and `account_id`.
+    *   `account_id`: the broker account. When trading through a broker (`trading_mode="broker_live"`) it is the account reported by the broker's account report (`UnifiedAccount.account_id`, e.g. CTP's AccountID); it is the broker-side account identifier whose format is up to the trading gateway and is not necessarily a bare fund account (some gateways report a composite of broker, account and account type) — to compare against a fixed account, use a value the host passes in through `run_info`. Backtests and paper sessions have no broker and give an empty string. It may also be empty before the broker's first account report (e.g. in `on_start`); if you need the account in `on_start`, have the program that starts the run pass it in `run_info`.
     *   The three figures satisfy `equity == margin + frozen_cash + available_cash`: total equity = margin held by positions + funds reserved by working orders + available funds. This holds exactly in backtests; in live trading each figure is taken from the broker.
     *   `margin` is the margin held by open positions; stocks in a cash account count at full market value, and long options at the full market value of their premium. `frozen_cash` is the funds reserved by working orders: each order is estimated at its own price (the last price when it has none), only orders that increase the reservation count, and resting sell or close orders neither reserve funds nor release what buy orders reserve. Commission is not included. An OCO group (e.g. two mutually exclusive limit buys) reserves only the larger of the two.
     *   In cash / spot-style accounts, `market_value` usually represents marked position value.
@@ -1264,6 +1281,19 @@ run_live(
 *   `slippage`: same format as `run_backtest(slippage=)`, `{"type": "percent" | "fixed" | "ticks" | "zero", "value": ...}`; bare numbers are rejected, and `ticks` requires all instruments to share one `tick_size`. Omitted means no slippage.
 *   `volume_limit_pct`: a bar fills at most this fraction of its volume, the capped quantity is rounded down to whole lots and the rest carries over to later bars; omitted or `0` means no limit. The data source's volume unit must match the order quantity unit (some AKShare endpoints report volume in lots).
 *   Values must be finite and non-negative; invalid values raise before any gateway connects.
+
+### `akquant.run_live(run_info=...)` (run information) {: #live-run-info }
+
+```python
+run_live(
+    ...,
+    run_info={"user_id": "user-001", "account": "A-001"},
+)
+```
+
+*   Same name and meaning as `run_backtest(run_info=)`: the strategy reads it through the read-only `self.run_info`; the main strategy, every slot and every indicator script see the same mapping, in paper and `broker_live` alike.
+*   Invalid values raise `TypeError` / `ValueError` before any gateway connects.
+*   Raising in `on_start` aborts the session: `run_live` does not re-raise the exception but logs it at CRITICAL with its traceback; `on_bar` and the other callbacks no longer fire, and `on_stop` is still called.
 
 ## 3. Core Engine
 

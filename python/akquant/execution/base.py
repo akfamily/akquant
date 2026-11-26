@@ -39,6 +39,10 @@ class AccountSnapshot(TypedDict):
     account_mode: str
     accrued_interest: float
     daily_interest: float
+    #: 柜台账号: 经柜台交易(``broker_live``)时取柜台账户回报里的账号(``UnifiedAccount
+    #: .account_id``, 如 CTP 的 AccountID); 回测与模拟盘没有柜台, 为空串。柜台首次
+    #: 回报账户之前(如 ``on_start`` 时)也可能是空串。
+    account_id: str
 
 
 @dataclass(frozen=True)
