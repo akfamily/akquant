@@ -9,7 +9,7 @@ import akquant as aq
 import pandas as pd
 import pytest
 from akquant import Bar, Strategy, run_backtest
-from akquant.backtest.engine import _freq_period_ns
+from akquant.backtest.engine import _parse_bar_period
 from akquant.data import ParquetDataCatalog
 
 TZ = "Asia/Shanghai"
@@ -129,16 +129,20 @@ _DAY_NS = 86_400_000_000_000
 def test_bar_freq_parser_accepts_day_forms(freq: str) -> None:
     """Bar 周期可以是日：Nd / Nday，大小写不敏感，省略数字为 1."""
     days = 2 if "2" in freq else 1
-    assert _freq_period_ns(freq) == days * _DAY_NS
+    period = _parse_bar_period(freq)
+    assert period is not None and not period.calendar
+    assert period.ns == days * _DAY_NS
 
 
 def test_bar_freq_parser_minutes_hours_and_error() -> None:
     """分钟、小时照旧；无法解析时说明 bar 周期的写法，而不是 tick 聚合."""
-    assert _freq_period_ns("5min") == 5 * 60 * 10**9
-    assert _freq_period_ns("1H") == 3600 * 10**9
-    for bad in ["30s", "1w", "0d", "abc"]:
+    five = _parse_bar_period("5min")
+    hour = _parse_bar_period("1H")
+    assert five is not None and five.ns == 5 * 60 * 10**9
+    assert hour is not None and hour.ns == 3600 * 10**9
+    for bad in ["30s", "1m", "0d", "abc"]:
         with pytest.raises(ValueError, match="bar 周期") as info:
-            _freq_period_ns(bad)
+            _parse_bar_period(bad)
         assert "tick" not in str(info.value)
 
 

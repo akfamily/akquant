@@ -242,7 +242,7 @@ def run_from_checkpoint(
 *   `strict_strategy_params`: 是否严格校验策略构造参数（默认 `True`）。
     *   当传入策略不接受的参数时会立即抛错；
     *   推荐保持默认值，避免参数错配被静默忽略导致回测结果偏差。
-*   `freq`: 数据周期，默认 `None`。`data` 为含 `Tick` 的列表时是 tick 聚合周期（只支持整数分钟，如 `"1min"`），把 tick 合成 bar 并同时触发 `on_bar`；bar 数据（DataFrame、`List[Bar]`、catalog）也可传，用来声明 bar 周期并填 bar 的区间起点（`interval_start = 时间戳 − 周期`），写法为“正整数 + 单位”，单位 `min` / `h` / `d`（或 `day`），如 `"1min"`、`"5min"`、`"1h"`、`"1d"`。只有日期（本地 0 点）的日线不需要传，会自动改写到交易日收盘时刻；打在 15:00 等固定非 0 点时刻的日线要传 `freq="1d"`，否则每根 bar 按该时刻所在时段撮合（15:00 按“时间戳前 1ns”即 14:59:59.999… 判为收盘集合竞价），订单排到下一根 bar，并告警一次。策略的 `self.freq` 即该值。
+*   `freq`: 数据周期，默认 `None`。`data` 为含 `Tick` 的列表时是 tick 聚合周期（只支持整数分钟，如 `"1min"`），把 tick 合成 bar 并同时触发 `on_bar`；bar 数据（DataFrame、`List[Bar]`、catalog）也可传，用来声明 bar 周期并填 bar 的区间起点（`interval_start = 时间戳 − 周期`），写法为“正整数 + 单位”，单位 `min` / `h` / `d`（或 `day`），如 `"1min"`、`"5min"`、`"1h"`、`"1d"`。周、月、季、年线写成 `"1w"`、`"1mon"`、`"1q"`、`"1y"`（单位 `w` / `mon` / `q` / `y`，也接受全称 `week` / `month` / `quarter` / `year`，大小写不敏感，可带倍数如 `"2w"`；月不能写成 `m` / `M`，以免与分钟混淆）：这些周期长度不固定，每根 bar 的区间是“同一品种上一根 bar 的时间戳到本根时间戳”，该品种第一根取名义长度（周 7 天、月 31 天、季 92 天、年 366 天）；整周停牌等缺根时区间相应变长。打在 15:00 的周、月线传了这些写法后按连续竞价撮合（市价单按下一根开盘价成交、挂单按最高最低价比对、`is_market_open()` 为真、`simulate_ticks` 每根生成四个模拟 tick）；不传时整根按 15:00 所在的收盘集合竞价处理。基础数据是周、月、季、年线时不支持再用 `subscribe_bars` / `I(freq=...)` 声明窗口周期（报错）。`run_from_checkpoint` 续跑时，续接数据带上存档前最后一根 bar 才能按它取区间，否则续接段每个品种的第一根退回名义长度。只有日期（本地 0 点）的日线不需要传，会自动改写到交易日收盘时刻；打在 15:00 等固定非 0 点时刻的日线要传 `freq="1d"`，否则每根 bar 按该时刻所在时段撮合（15:00 按“时间戳前 1ns”即 14:59:59.999… 判为收盘集合竞价），订单排到下一根 bar，并告警一次。策略的 `self.freq` 即该值。
 *   `sessions`: 代码前缀 → 时段模板名或自定义时段表（`"default"` 为全局默认），默认 `None`。不传时中国时区按资产类型取默认（股票/基金 `CN_STOCK`、期货 `CN_FUTURES_DAY`、期权 `CN_OPTION`，其他资产 `ALWAYS_OPEN`），其他时区全天连续（`ALWAYS_OPEN`）。可选模板见 `aq.SessionResolver.templates()`；自定义时段表写法见下文 `BacktestConfig.china_futures` 一节的时段说明。
 *   `trading_calendar`: 交易日列表（`date` / 字符串 / `Timestamp`），默认 `None`。不传时：中国时区用内置的交易所日历（沪深及期货交易所的休市安排，随版本更新，覆盖范围见 `SessionResolver.builtin_calendar_range()`），节假日不算交易日；回测还会把数据里出现过行情的日期并入交易日。超出内置日历范围的日期、以及非中国时区的自定义时段表，回测以数据为准（所有标的都没有行情的工作日不算交易日），实盘按工作日推算并告警一次。`ALWAYS_OPEN` 每天都算。传了日历时以它为准，数据时刻超出所传日历覆盖范围时报 `ValueError`。
 *   `t_plus_one`: 是否启用 T+1 交易规则。不传时取 `broker_profile` 模板的设置（三个内置 A 股模板都开），没有模板时为 False。如果启用，将强制使用中国市场模型。
@@ -1069,9 +1069,9 @@ def on_pre_open(self, event: Dict[str, Any]) -> None:
 *   `get_position_detail(symbol) -> PositionDetail`: 获取持仓明细。`quantity`、`available` 带符号，与 `get_position()`、`get_available_position()` 相同；另有持仓成本 `avg_price`、`market_value`、`unrealized_pnl`、`margin`，以及多头、空头两边各自的 `detail.long`、`detail.short`（数量、可用、成本、今仓、昨仓、冻结量、最新价等，数量为非负数）。拿不到的项为 `None`：回测没有今昨仓、冻结量和逐标的保证金；实盘取决于柜台是否提供。
 *   `get_holding_bars(symbol) -> int`: 获取当前持仓持有的 Bar 数量。经柜台交易时按柜台持仓逐 Bar 累计，只统计本次会话收到的 Bar。
 *   `cash -> float`: 获取当前现金余额（只读属性）。期货保证金账户下开仓不扣现金，可用资金请读 `get_account()["available_cash"]`。
-*   `freq -> Optional[str]`: 数据周期（只读属性），取值为回测侧口径 `"1min"` / `"5min"` / `"1d"` 等。
+*   `freq -> Optional[str]`: 数据周期（只读属性），取值为回测侧口径 `"1min"` / `"5min"` / `"1d"` / `"1w"` 等，即传入的原样写法。
     *   回测侧由 `run_backtest(freq=)` 注入（tick 聚合周期，或 bar 数据声明的周期）；实盘侧由行情网关声明（klinedata 把自己的 `period="M1"` 转换成 `"1min"`，`broker="replay"` 支持 `gateway_options={"freq": "1min"}`）。两侧统一到回测口径，故同一个策略在回测与实盘读到同一个值，无需按 broker 写兼容分支。
-    *   **拿不到周期时为 `None`**：纯 bar 回测未传 `freq`、CTP 等只有逐笔源的网关、trader-only broker（无行情通道）、klinedata 周线（回测侧 `freq` 只认分钟、小时与日，周线无对应写法）。框架**不从数据推断**周期——相邻 bar 的时间戳差会被停牌、跨日、午休误导，错误的周期比未知的周期更危险。请显式处理 `None`。
+    *   **拿不到周期时为 `None`**：纯 bar 回测未传 `freq`、CTP 等只有逐笔源的网关、trader-only broker（无行情通道）、klinedata 周线（插件目前不声明周线周期）。框架**不从数据推断**周期——相邻 bar 的时间戳差会被停牌、跨日、午休误导，错误的周期比未知的周期更危险。请显式处理 `None`。
     *   只读，写入抛 `AttributeError`：数据粒度由数据源决定，改这个属性不会真的改变粒度。
 *   `get_account() -> AccountSnapshot`: 获取账户详情快照（字典），回测与实盘的键完全一致：`cash`、`equity`、`market_value`、`notional_value`、`margin`、`frozen_cash`、`available_cash`、`unrealized_pnl`、`borrowed_cash`、`short_market_value`、`maintenance_ratio`、`account_mode`、`accrued_interest`、`daily_interest`。
     *   三项资金满足 `equity == margin + frozen_cash + available_cash`：总权益 = 持仓占用 + 挂单冻结 + 可用资金。回测里严格成立；经柜台交易时三项各取柜台的值。

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **`run_backtest(freq=)` 支持周、月、季、年线**：新写法 `"1w"`、`"1mon"`、`"1q"`、`"1y"`（单位 `w` / `mon` / `q` / `y`，也接受全称 `week` / `month` / `quarter` / `year`；大小写不敏感，可带倍数如 `"2w"`；月不能写成 `m` / `M`，`"1m"` 仍报错）。这些周期长度不固定，每根 K 线的区间取同一品种上一根的时间戳到本根时间戳，该品种第一根取名义长度（周 7 天、月 31 天、季 92 天、年 366 天）；缺根时区间相应变长，只有日期的数据先改写到收盘时刻再按此取区间。效果：打在 15:00 的周、月线此前只能不传 `freq`，整根被判成收盘集合竞价——`NextOpen` 市价单按下一根收盘价成交、挂单只与收盘价比对、`is_market_open()` 为假、`simulate_ticks` 不生成模拟 tick；传了新写法后按连续竞价撮合，与日线传 `freq="1d"` 相同。`self.freq` 为传入的原样写法。覆盖 DataFrame（单标的、长表）、`{symbol: DataFrame}`、`List[Bar]`、polars / pyarrow、catalog、`DataFeedAdapter` 输入与 `run_from_checkpoint`（续接数据带上存档前最后一根时按它取区间，否则续接段每个品种的第一根退回名义长度）；直接传入的 `DataFeed`（含 `DataFeed.from_parquet` 流式数据源）与以往任何 `freq` 一样只注入 `self.freq`，不填区间。基础数据是这些周期时不支持再用 `subscribe_bars` / `I(freq=...)` 声明窗口周期，会报错。此前传这些写法报 `ValueError`；其余写法的结果不变。
+
 ## [0.4.1] - 2026-11-26
 
 > 规则版本 2.6.0 → 2.6.1：修撮合、提交与 bracket 出场的几处口径（见下文）。受影响的有：用 `custom_matchers` 的回测；用 `place_bracket` / `place_oco` 的策略（bracket 子单主要影响 `CurrentClose` 等当根成交模式；OCO 在途量、bracket 止损止盈只减仓、平仓前先撤子单各成交模式都受影响）；在同一个回调里先撤单、再调用 `order_target*` / `close_position` 的策略（已请求撤单的订单不再计入投影持仓）；在模拟盘（`trading_mode="paper"`）里用 `place_bracket` / `place_oco` 的策略；用 `order_target_value` / `order_target_percent` / `rebalance_weights` 买入且此前因资金不足被拒的订单（现在缩量成交），以及在合约乘数不为 1 的品种上用这三个入口的策略（手数按名义市值换算）；期货等品种上同一次撮合里与其他减仓单重复平同一份持仓的平仓单。不用这几样、也没有这类拒单的回测结果不变。
