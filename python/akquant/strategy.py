@@ -4475,3 +4475,31 @@ class VectorizedStrategy(Strategy):
             return float(self.precalc[symbol][name][idx])
         except (KeyError, IndexError):
             return float("nan")
+
+
+#: Strategy.run_info 原本的只读属性对象; 运行入口据此发现它被替换
+_RUN_INFO_PROPERTY = vars(Strategy)["run_info"]
+
+
+def ensure_run_info_untampered(strategy: Any) -> None:
+    """运行开始前确认 ``run_info`` 仍是框架的只读属性.
+
+    类定义时的检查拦不住定义之后的赋值(``MyStrategy.run_info = ...``、
+    ``Strategy.run_info = ...``): 那样会让这个类、甚至同一进程里之后的所有运行读到
+    被替换的值而不是调用方传入的值。运行入口对每个策略实例调用本函数, 发现即报错。
+
+    :param strategy: 即将运行的策略实例
+    :raises TypeError: ``run_info`` 已被替换
+    """
+    owner = next(
+        (klass for klass in type(strategy).__mro__ if "run_info" in vars(klass)), None
+    )
+    if (
+        owner is not Strategy
+        or vars(Strategy).get("run_info") is not _RUN_INFO_PROPERTY
+    ):
+        owner_name = getattr(owner, "__qualname__", "?")
+        raise TypeError(
+            f"{type(strategy).__name__}: run_info 是框架的只读属性, 不能替换"
+            f"(发现它在 {owner_name} 上被重新赋值); 请去掉这处赋值后重新运行"
+        )

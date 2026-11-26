@@ -53,6 +53,7 @@ from ..strategy import (
     InstrumentSnapshot,
     Strategy,
     StrategyRuntimeConfig,
+    ensure_run_info_untampered,
     reconcile_strategy_id,
 )
 from ..strategy_framework_hooks import (
@@ -827,6 +828,7 @@ class LiveRunner:
         for current_strategy in [strategy_instance, *slot_strategy_instances.values()]:
             current_strategy.timezone = self._session_timezone()
             # 运行信息(self.run_info): 每次会话都写, 不沿用实例上次运行留下的值
+            ensure_run_info_untampered(current_strategy)
             current_strategy._framework_run_info = getattr(
                 self, "_run_info", EMPTY_RUN_INFO
             )

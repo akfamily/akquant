@@ -692,3 +692,56 @@ def test_raising_in_on_start_aborts_paper_live(
         and "'u-2' is not allowed" in str(r.exc_info[1])
         for r in critical
     )
+
+
+def _plain_frame() -> pd.DataFrame:
+    index = pd.to_datetime(
+        ["2024-01-02 15:00", "2024-01-03 15:00", "2024-01-04 15:00"]
+    ).tz_localize("Asia/Shanghai")
+    return pd.DataFrame(
+        {"open": 10.0, "high": 10.0, "low": 10.0, "close": 10.0, "volume": 1000.0},
+        index=index,
+    )
+
+
+def test_reassigning_run_info_on_the_class_is_rejected_at_run_start() -> None:
+    """类定义之后再赋值绕过了类定义时的检查: 运行入口发现后报错, 不带着假值跑."""
+
+    class Tampered(Strategy):
+        def on_bar(self, bar: Any) -> None:
+            pass
+
+    Tampered.run_info = {"user_id": "forged"}  # type: ignore[misc,assignment]
+
+    with pytest.raises(TypeError, match="run_info 是框架的只读属性"):
+        aq.run_backtest(
+            data={"000001.SZ": _plain_frame()},
+            strategy=Tampered,
+            symbols="000001.SZ",
+            show_progress=False,
+            run_info={"user_id": "real"},
+        )
+
+
+def test_replacing_the_base_property_is_rejected_for_later_runs() -> None:
+    """替换 Strategy.run_info 会影响同进程之后的所有运行: 之后的运行入口报错."""
+
+    class Innocent(Strategy):
+        def on_bar(self, bar: Any) -> None:
+            pass
+
+    original = vars(Strategy)["run_info"]
+    Strategy.run_info = property(  # type: ignore[misc,assignment]
+        lambda self: {"user_id": "forged"}
+    )
+    try:
+        with pytest.raises(TypeError, match="run_info 是框架的只读属性"):
+            aq.run_backtest(
+                data={"000001.SZ": _plain_frame()},
+                strategy=Innocent,
+                symbols="000001.SZ",
+                show_progress=False,
+                run_info={"user_id": "real"},
+            )
+    finally:
+        Strategy.run_info = original  # type: ignore[misc,assignment]

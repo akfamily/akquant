@@ -86,6 +86,7 @@ from ..strategy import (
     Strategy,
     StrategyConfigurationError,
     StrategyRuntimeConfig,
+    ensure_run_info_untampered,
     instantiate_strategy,
     reconcile_strategy_id,
 )
@@ -4053,6 +4054,7 @@ def run_backtest(
     # 运行信息(self.run_info): 每次运行都写, 不传时写空映射, 传入实例上次运行留下
     # 的值不沿用。各槽位与指标脚本共用同一份只读对象。
     for current_strategy in all_strategy_instances:
+        ensure_run_info_untampered(current_strategy)
         current_strategy._framework_run_info = frozen_run_info
     indicator_recorder = _attach_indicator_recorder(
         stream_emitter=indicator_stream_emitter,
@@ -6817,6 +6819,7 @@ def run_from_checkpoint(
         setattr(current_strategy, "_framework_simulated_ticks", False)
         current_strategy._framework_tick_seen = False
         # 运行信息以本次调用为准(存档里本就没有, 见 Strategy.__getstate__)
+        ensure_run_info_untampered(current_strategy)
         current_strategy._framework_run_info = frozen_run_info
         setattr(
             current_strategy,
