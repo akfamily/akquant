@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-11-27
+
 ### Fixed
 - **函数式策略的 `context` 里带内部属性名可以把钩子关掉**：函数式策略把 `initialize`、`on_start` 等钩子存在实例属性里，`context`（以及网格搜索、walk-forward 经 `context` 传入的参数组合）里出现同名键（如 `_on_start_func`）会把它换成别的值，写在这些钩子里的逻辑不再执行。现在先注入 `context`、再写钩子与运行信息，同名键不再生效。
 - **`run_walk_forward` 样本外回测仍会被参数组合里的 `run_info` 顶掉**（0.4.5 只修了网格搜索的单次回测）。
