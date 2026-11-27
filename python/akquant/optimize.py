@@ -328,6 +328,12 @@ def _run_single_backtest(args: Dict[str, Any]) -> OptimizationResult:
         kwargs["context"] = merged_context
     else:
         kwargs.update(params)
+    # 运行信息属于调用方: 参数组合里出现同名键(非严格模式下不会被拒)也不能顶掉它。
+    if "run_info" in params:
+        if "run_info" in backtest_kwargs:
+            kwargs["run_info"] = backtest_kwargs["run_info"]
+        else:
+            kwargs.pop("run_info", None)
 
     # 动态计算 warmup_period
     if warmup_calc:

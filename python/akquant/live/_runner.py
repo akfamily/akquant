@@ -1422,6 +1422,11 @@ class LiveRunner:
                     continue
                 for key, value in self.context.items():
                     setattr(target, key, value)
+            # context 注入之后再写一次运行信息: 无论 context 里放了什么键, 策略
+            # 读到的都是调用方传入的那一份。
+            for target in strategy_targets:
+                ensure_run_info_untampered(target)
+                target._framework_run_info = getattr(self, "_run_info", EMPTY_RUN_INFO)
 
         if hasattr(self.engine, "set_strategy_slots"):
             cast(Any, self.engine).set_strategy_slots(configured_slot_ids)

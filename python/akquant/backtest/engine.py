@@ -3107,6 +3107,8 @@ class FunctionalStrategy(Strategy):
         # 用户可以通过 self.xxx 访问 context 属性
         for k, v in self._context.items():
             setattr(self, k, v)
+        # context 注入之后再写一次, 理由同运行入口
+        self._framework_run_info = freeze_run_info(run_info)
 
         # 调用初始化函数
         if self._initialize is not None:
@@ -4114,6 +4116,11 @@ def run_backtest(
                 continue
             for k, v in context.items():
                 setattr(current_strategy, k, v)
+        # context 注入之后再写一次运行信息: 无论 context 里放了什么键, 策略读到的
+        # 都是调用方传入的那一份。
+        for current_strategy in all_strategy_instances:
+            ensure_run_info_untampered(current_strategy)
+            current_strategy._framework_run_info = frozen_run_info
 
     # 注入 Config 中的 Risk Config
     if config and config.strategy_config and config.strategy_config.risk:
