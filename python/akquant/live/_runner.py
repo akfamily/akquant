@@ -64,6 +64,7 @@ from ..strategy_loader import resolve_strategy_input
 from ..strategy_run_info import (
     EMPTY_RUN_INFO,
     freeze_run_info,
+    reject_context_keys_shadowing_internals,
     reject_framework_context_keys,
 )
 from ..strategy_runtime_config import apply_strategy_runtime_config
@@ -1420,6 +1421,7 @@ class LiveRunner:
             for target in strategy_targets:
                 if hasattr(target, "_context"):
                     continue
+                reject_context_keys_shadowing_internals(target, self.context)
                 for key, value in self.context.items():
                     setattr(target, key, value)
             # context 注入之后再写一次运行信息: 无论 context 里放了什么键, 策略

@@ -794,6 +794,11 @@ def test_run_info_is_written_again_after_context_injection(
     monkeypatch.setattr(
         engine_module, "reject_framework_context_keys", lambda context: None
     )
+    monkeypatch.setattr(
+        engine_module,
+        "reject_context_keys_shadowing_internals",
+        lambda strategy, context: None,
+    )
     result = _run(
         _Recorder,
         context={"_framework_run_info": {"user_id": "forged"}},
@@ -813,6 +818,11 @@ def test_paper_live_run_info_is_written_again_after_context_injection(
 
     monkeypatch.setattr(
         runner_module, "reject_framework_context_keys", lambda context: None
+    )
+    monkeypatch.setattr(
+        runner_module,
+        "reject_context_keys_shadowing_internals",
+        lambda strategy, context: None,
     )
     strategy = _Recorder()
     _run_paper(
@@ -867,9 +877,13 @@ def _functional_guard_run(**kwargs: Any) -> List[str]:
         calls.append("on_start:" + str(ctx.run_info.get("user_id")))
 
     def on_bar(ctx: Any, bar: Bar) -> None:
-        return
+        if "bar" not in calls:
+            calls.append("bar")
 
-    _run(on_bar, initialize=initialize, on_start=on_start, **kwargs)
+    context = kwargs.get("context")
+    result = _run(on_bar, initialize=initialize, on_start=on_start, **kwargs)
+    if context is not None:
+        assert result.strategy._context == context
     return calls
 
 
@@ -880,7 +894,7 @@ def _functional_guard_run(**kwargs: Any) -> List[str]:
 def test_functional_context_cannot_switch_off_hooks(key: str) -> None:
     """函数式策略的钩子存在实例属性里: context 里带同名键不能把钩子换掉或关掉."""
     calls = _functional_guard_run(context={key: None}, run_info={"user_id": "host"})
-    assert calls == ["initialize:host", "on_start:host"]
+    assert calls == ["initialize:host", "on_start:host", "bar"]
 
 
 def test_functional_initialize_reads_callers_run_info_without_key_check(
@@ -892,11 +906,16 @@ def test_functional_initialize_reads_callers_run_info_without_key_check(
     monkeypatch.setattr(
         engine_module, "reject_framework_context_keys", lambda context: None
     )
+    monkeypatch.setattr(
+        engine_module,
+        "reject_context_keys_shadowing_internals",
+        lambda strategy, context: None,
+    )
     calls = _functional_guard_run(
         context={"_framework_run_info": {"user_id": "forged"}},
         run_info={"user_id": "host"},
     )
-    assert calls == ["initialize:host", "on_start:host"]
+    assert calls == ["initialize:host", "on_start:host", "bar"]
 
 
 def test_walk_forward_param_named_run_info_cannot_replace_callers_run_info() -> None:
@@ -916,3 +935,45 @@ def test_walk_forward_param_named_run_info_cannot_replace_callers_run_info() -> 
     )
     assert _WfoRecorder.seen
     assert all(dict(m) == {"user_id": "host"} for m in _WfoRecorder.seen)
+
+
+def test_context_cannot_mark_on_start_as_already_run() -> None:
+    """``_start_initialized`` 是标记 on_start 已执行的内部开关: context 不能把它置真."""
+    forged = {"_start_initialized": True}
+    with pytest.raises(ValueError, match="_start_initialized"):
+        _run(_Guarded, context=forged, run_info={"user_id": "u-2"})
+    with pytest.raises(ValueError, match="_start_initialized"):
+        _functional_guard_run(context=forged, run_info={"user_id": "u-2"})
+    with pytest.raises(ValueError, match="_start_initialized"):
+        _run_paper(_Guarded(), context=forged, run_info={"user_id": "u-2"})
+
+
+def test_context_may_add_new_private_attributes() -> None:
+    """策略自己新起的下划线属性(实例上原本没有)照常注入."""
+    result = _run(_Recorder, context={"_my_flag": 7}, run_info={"user_id": "host"})
+    assert result.strategy._my_flag == 7
+
+
+def test_grid_param_cannot_mark_functional_on_start_as_already_run() -> None:
+    """函数式策略的网格参数经 context 注入: 同样不能跳过 on_start."""
+
+    def on_start(ctx: Any) -> None:
+        raise PermissionError("denied")
+
+    def on_bar(ctx: Any, bar: Bar) -> None:
+        return
+
+    results = aq.run_grid_search(
+        strategy=on_bar,  # type: ignore[arg-type]
+        on_start=on_start,
+        param_grid={"n": [1], "_start_initialized": [True]},
+        data=_data(5),
+        symbols=SYMBOL,
+        max_workers=1,
+        return_df=False,
+        raise_on_all_failed=False,
+        show_progress=False,
+        run_info={"user_id": "u-2"},
+    )
+    assert isinstance(results, list) and len(results) == 1
+    assert results[0].error
