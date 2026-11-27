@@ -854,3 +854,65 @@ def test_grid_param_named_run_info_cannot_replace_callers_run_info() -> None:
     )
     assert isinstance(denied, list) and len(denied) == 1
     assert "'u-2' is not allowed" in str(denied[0].error)
+
+
+def _functional_guard_run(**kwargs: Any) -> List[str]:
+    """函数式策略: initialize / on_start 里各记一次读到的 user_id, 返回调用记录."""
+    calls: List[str] = []
+
+    def initialize(ctx: Any) -> None:
+        calls.append("initialize:" + str(ctx.run_info.get("user_id")))
+
+    def on_start(ctx: Any) -> None:
+        calls.append("on_start:" + str(ctx.run_info.get("user_id")))
+
+    def on_bar(ctx: Any, bar: Bar) -> None:
+        return
+
+    _run(on_bar, initialize=initialize, on_start=on_start, **kwargs)
+    return calls
+
+
+@pytest.mark.parametrize(
+    "key",
+    ["_on_start_func", "_initialize", "_on_bar_func", "_context"],
+)
+def test_functional_context_cannot_switch_off_hooks(key: str) -> None:
+    """函数式策略的钩子存在实例属性里: context 里带同名键不能把钩子换掉或关掉."""
+    calls = _functional_guard_run(context={key: None}, run_info={"user_id": "host"})
+    assert calls == ["initialize:host", "on_start:host"]
+
+
+def test_functional_initialize_reads_callers_run_info_without_key_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """键名检查之外的第二道: initialize(ctx) 读到的也是调用方的值."""
+    import akquant.backtest.engine as engine_module
+
+    monkeypatch.setattr(
+        engine_module, "reject_framework_context_keys", lambda context: None
+    )
+    calls = _functional_guard_run(
+        context={"_framework_run_info": {"user_id": "forged"}},
+        run_info={"user_id": "host"},
+    )
+    assert calls == ["initialize:host", "on_start:host"]
+
+
+def test_walk_forward_param_named_run_info_cannot_replace_callers_run_info() -> None:
+    """walk-forward 的样本外回测同样不能被参数组合里的 run_info 顶掉."""
+    _WfoRecorder.seen = []
+    aq.run_walk_forward(
+        strategy=_WfoRecorder,
+        param_grid={"dummy": [1], "run_info": [{"user_id": "forged"}]},
+        data=_data(40),
+        symbols=SYMBOL,
+        train_period=10,
+        test_period=10,
+        metric="total_return",
+        show_progress=False,
+        strict_strategy_params=False,
+        run_info={"user_id": "host"},
+    )
+    assert _WfoRecorder.seen
+    assert all(dict(m) == {"user_id": "host"} for m in _WfoRecorder.seen)
