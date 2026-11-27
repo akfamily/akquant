@@ -148,6 +148,32 @@ def reject_framework_context_keys(context: Optional[Mapping[str, Any]]) -> None:
         )
 
 
+def reject_context_keys_shadowing_internals(
+    strategy: Any, context: Optional[Mapping[str, Any]]
+) -> None:
+    """``context`` 里下划线开头的键不能与策略实例上已有的属性同名.
+
+    下划线开头的已有属性是框架的内部状态(例如标记 ``on_start`` 已执行的开关):
+    放行的话, 能决定 ``context`` 内容的一方可以让 ``on_start`` 不执行、或改掉别的
+    内部状态。策略自己新起的下划线属性(实例上原本没有的)不受影响。
+
+    :param strategy: 即将被注入 ``context`` 的策略实例
+    :param context: 运行入口收到的 ``context``, 或 ``None``
+    :raises ValueError: 含与实例已有属性同名的下划线开头的键
+    """
+    if not context:
+        return
+    bad = sorted(
+        str(key)
+        for key in context
+        if str(key).startswith("_") and hasattr(strategy, str(key))
+    )
+    if bad:
+        raise ValueError(
+            f"context 不接受与策略内部属性同名的键(下划线开头且实例上已存在): {bad}"
+        )
+
+
 def run_info_to_plain(run_info: Mapping[str, Any]) -> Dict[str, Any]:
     """把冻结后的 ``run_info`` 还原成普通 dict/list, 用于跨进程传给子任务.
 

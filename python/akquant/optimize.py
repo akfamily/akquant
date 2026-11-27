@@ -297,6 +297,26 @@ def _is_functional_strategy(strategy: Any) -> bool:
     return not (isinstance(strategy, type) and issubclass(strategy, Strategy))
 
 
+def _keep_callers_run_info(
+    merged: Dict[str, Any], params: Mapping[str, Any], original: Mapping[str, Any]
+) -> None:
+    """运行信息属于调用方: 参数组合里出现同名键也不能顶掉它.
+
+    非严格模式(``strict_strategy_params=False``)下参数组合里的 ``run_info`` 不会被拒,
+    合并进回测参数后会盖住调用方传入的值。
+
+    :param merged: 已合并参数组合的回测参数, 原地修正
+    :param params: 本次的参数组合
+    :param original: 合并之前调用方给的回测参数
+    """
+    if "run_info" not in params:
+        return
+    if "run_info" in original:
+        merged["run_info"] = original["run_info"]
+    else:
+        merged.pop("run_info", None)
+
+
 def _run_single_backtest(args: Dict[str, Any]) -> OptimizationResult:
     """
     运行单个回测任务 (Internal).
@@ -328,12 +348,7 @@ def _run_single_backtest(args: Dict[str, Any]) -> OptimizationResult:
         kwargs["context"] = merged_context
     else:
         kwargs.update(params)
-    # 运行信息属于调用方: 参数组合里出现同名键(非严格模式下不会被拒)也不能顶掉它。
-    if "run_info" in params:
-        if "run_info" in backtest_kwargs:
-            kwargs["run_info"] = backtest_kwargs["run_info"]
-        else:
-            kwargs.pop("run_info", None)
+    _keep_callers_run_info(kwargs, params, backtest_kwargs)
 
     # 动态计算 warmup_period
     if warmup_calc:
@@ -1218,6 +1233,7 @@ def run_walk_forward(
             backtest_kwargs["context"] = merged_context
         else:
             backtest_kwargs.update(best_params)
+        _keep_callers_run_info(backtest_kwargs, best_params, kwargs)
         backtest_kwargs["initial_cash"] = initial_cash
         backtest_kwargs["warmup_period"] = current_warmup
 

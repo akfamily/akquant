@@ -103,6 +103,7 @@ from ..strategy_loader import resolve_strategy_input
 from ..strategy_run_info import (
     EMPTY_RUN_INFO,
     freeze_run_info,
+    reject_context_keys_shadowing_internals,
     reject_framework_context_keys,
 )
 from ..strategy_runtime_config import apply_strategy_runtime_config
@@ -3078,6 +3079,17 @@ class FunctionalStrategy(Strategy):
     ):
         """Initialize the FunctionalStrategy."""
         super().__init__()
+        reject_framework_context_keys(context)
+        reject_context_keys_shadowing_internals(self, context)
+        self._context = context or {}
+        # 将 context 注入到 self 中，模拟 Zipline 的 context 对象
+        # 用户可以通过 self.xxx 访问 context 属性。
+        # 注入放在最前: 之后才写钩子引用与运行信息, context 里出现同名键(如
+        # _on_start_func)也换不掉、关不掉它们。
+        for k, v in self._context.items():
+            setattr(self, k, v)
+        # 再写一次: context 里的 _context 键不能顶掉它
+        self._context = context or {}
         # 函数式策略的 initialize 相当于策略类的 on_start 之前的准备: 在它之前写入,
         # 让 initialize(ctx) 里也能读 ctx.run_info(运行入口开跑前还会再写一次同值)。
         self._framework_run_info = freeze_run_info(run_info)
@@ -3100,15 +3112,6 @@ class FunctionalStrategy(Strategy):
         self._on_pre_open_func = on_pre_open
         self._on_timer_func = on_timer
         self._on_bars_func = on_bars
-        self._context = context or {}
-        reject_framework_context_keys(self._context)
-
-        # 将 context 注入到 self 中，模拟 Zipline 的 context 对象
-        # 用户可以通过 self.xxx 访问 context 属性
-        for k, v in self._context.items():
-            setattr(self, k, v)
-        # context 注入之后再写一次, 理由同运行入口
-        self._framework_run_info = freeze_run_info(run_info)
 
         # 调用初始化函数
         if self._initialize is not None:
@@ -4114,6 +4117,7 @@ def run_backtest(
         for current_strategy in all_strategy_instances:
             if hasattr(current_strategy, "_context"):
                 continue
+            reject_context_keys_shadowing_internals(current_strategy, context)
             for k, v in context.items():
                 setattr(current_strategy, k, v)
         # context 注入之后再写一次运行信息: 无论 context 里放了什么键, 策略读到的
