@@ -745,3 +745,30 @@ def test_replacing_the_base_property_is_rejected_for_later_runs() -> None:
             )
     finally:
         Strategy.run_info = original  # type: ignore[misc,assignment]
+
+
+@pytest.mark.parametrize("key", ["_framework_run_info", "_framework_freq"])
+def test_context_cannot_overwrite_framework_private_state(key: str) -> None:
+    """Context 的键会被设成策略属性: 不能借它改写框架内部状态(如运行信息)."""
+    with pytest.raises(ValueError, match="_framework_"):
+        _run(
+            _Recorder,
+            context={key: {"user_id": "forged"}},
+            run_info={"user_id": "host"},
+        )
+
+
+def test_paper_live_context_cannot_overwrite_framework_private_state() -> None:
+    """实盘入口同样拒绝."""
+    with pytest.raises(ValueError, match="_framework_"):
+        aq.run_live(
+            strategy_cls=_Recorder,
+            instruments=[],
+            broker="replay",
+            trading_mode="paper",
+            gateway_options={"bars": [], "freq": "1min"},
+            context={"_framework_run_info": {"user_id": "forged"}},
+            run_info={"user_id": "host"},
+            show_progress=False,
+            duration="5s",
+        )

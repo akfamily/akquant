@@ -122,6 +122,26 @@ def freeze_run_info(run_info: Optional[Mapping[str, Any]]) -> Mapping[str, Any]:
     return frozen if frozen else EMPTY_RUN_INFO
 
 
+def reject_framework_context_keys(context: Optional[Mapping[str, Any]]) -> None:
+    """``context`` 的键会被设成策略属性: 不允许借它改写框架的内部状态.
+
+    以 ``_framework_`` 开头的属性是框架自己的(运行信息、数据周期等), 由运行入口
+    写入。放行的话, 能决定 ``context`` 内容的一方(例如把用户参数转成 ``context``
+    的宿主程序的用户)就能顶掉调用方传入的 ``run_info``。
+
+    :param context: 运行入口收到的 ``context``, 或 ``None``
+    :raises ValueError: 含以 ``_framework_`` 开头的键
+    """
+    if not context:
+        return
+    bad = sorted(str(key) for key in context if str(key).startswith("_framework_"))
+    if bad:
+        raise ValueError(
+            f"context 不接受以 _framework_ 开头的键(框架内部状态): {bad}; "
+            "运行信息请用 run_info= 传入"
+        )
+
+
 def run_info_to_plain(run_info: Mapping[str, Any]) -> Dict[str, Any]:
     """把冻结后的 ``run_info`` 还原成普通 dict/list, 用于跨进程传给子任务.
 

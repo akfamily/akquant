@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **`context` 可以顶掉调用方传入的运行信息**：`context` 的每个键会被设成策略属性，带上框架内部属性名（`_framework_run_info`）就能改写 `self.run_info` 读到的值。把用户参数转成 `context` 的宿主程序因此会让用户伪造运行信息。现在 `run_backtest`、`run_live`、函数式策略的 `context` 里出现以 `_framework_` 开头的键时直接抛 `ValueError`。宿主程序仍应自行限制用户能放进 `context` 的键。
+
 ## [0.4.4] - 2026-11-27
 
 ### Added

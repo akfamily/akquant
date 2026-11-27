@@ -61,7 +61,11 @@ from ..strategy_framework_hooks import (
     normalize_dual_stream_declaration,
 )
 from ..strategy_loader import resolve_strategy_input
-from ..strategy_run_info import EMPTY_RUN_INFO, freeze_run_info
+from ..strategy_run_info import (
+    EMPTY_RUN_INFO,
+    freeze_run_info,
+    reject_framework_context_keys,
+)
 from ..strategy_runtime_config import apply_strategy_runtime_config
 from ..strategy_window import configure_engine_window_subscriptions
 from ..utils import format_metric_value
@@ -595,6 +599,7 @@ class LiveRunner:
         self.on_timer = on_timer
         self.on_bars = on_bars
         self.context = context or {}
+        reject_framework_context_keys(self.context)
         self._run_info = freeze_run_info(run_info)
         self.strategy_max_order_value = self._normalize_strategy_float_map(
             strategy_max_order_value

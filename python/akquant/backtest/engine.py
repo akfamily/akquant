@@ -100,7 +100,11 @@ from ..strategy_framework_hooks import (
     normalize_dual_stream_declaration,
 )
 from ..strategy_loader import resolve_strategy_input
-from ..strategy_run_info import EMPTY_RUN_INFO, freeze_run_info
+from ..strategy_run_info import (
+    EMPTY_RUN_INFO,
+    freeze_run_info,
+    reject_framework_context_keys,
+)
 from ..strategy_runtime_config import apply_strategy_runtime_config
 from ..strategy_window import (
     configure_engine_window_subscriptions,
@@ -3097,6 +3101,7 @@ class FunctionalStrategy(Strategy):
         self._on_timer_func = on_timer
         self._on_bars_func = on_bars
         self._context = context or {}
+        reject_framework_context_keys(self._context)
 
         # 将 context 注入到 self 中，模拟 Zipline 的 context 对象
         # 用户可以通过 self.xxx 访问 context 属性
@@ -3685,6 +3690,7 @@ def run_backtest(
     )
     # 最先校验: 取值不合规时在加载数据、构造策略之前报错
     frozen_run_info = freeze_run_info(run_info)
+    reject_framework_context_keys(context)
     strategy_config = config.strategy_config if config is not None else None
     (
         strategy_id,
