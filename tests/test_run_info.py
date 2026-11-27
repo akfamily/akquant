@@ -745,3 +745,112 @@ def test_replacing_the_base_property_is_rejected_for_later_runs() -> None:
             )
     finally:
         Strategy.run_info = original  # type: ignore[misc,assignment]
+
+
+@pytest.mark.parametrize("key", ["_framework_run_info", "_framework_freq"])
+def test_context_cannot_overwrite_framework_private_state(key: str) -> None:
+    """Context 的键会被设成策略属性: 不能借它改写框架内部状态(如运行信息)."""
+    with pytest.raises(ValueError, match="_framework_"):
+        _run(
+            _Recorder,
+            context={key: {"user_id": "forged"}},
+            run_info={"user_id": "host"},
+        )
+
+
+def test_paper_live_context_cannot_overwrite_framework_private_state() -> None:
+    """实盘入口同样拒绝."""
+    with pytest.raises(ValueError, match="_framework_"):
+        aq.run_live(
+            strategy_cls=_Recorder,
+            instruments=[],
+            broker="replay",
+            trading_mode="paper",
+            gateway_options={"bars": [], "freq": "1min"},
+            context={"_framework_run_info": {"user_id": "forged"}},
+            run_info={"user_id": "host"},
+            show_progress=False,
+            duration="5s",
+        )
+
+
+@pytest.mark.parametrize("key", ["__dict__", "__class__"])
+def test_context_cannot_replace_instance_internals(key: str) -> None:
+    """``__dict__`` 整体替换实例属性也能带进假的运行信息: 双下划线键一并拒绝."""
+    with pytest.raises(ValueError, match="双下划线"):
+        _run(
+            _Recorder,
+            context={key: {"_framework_run_info": {"user_id": "forged"}}},
+            run_info={"user_id": "host"},
+        )
+
+
+def test_run_info_is_written_again_after_context_injection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """键名检查之外的第二道: context 注入之后重写, 不依赖键名清单是否列全."""
+    import akquant.backtest.engine as engine_module
+
+    monkeypatch.setattr(
+        engine_module, "reject_framework_context_keys", lambda context: None
+    )
+    result = _run(
+        _Recorder,
+        context={"_framework_run_info": {"user_id": "forged"}},
+        run_info={"user_id": "host"},
+    )
+    seen = result.strategy.seen
+    assert dict(seen["start"]) == {"user_id": "host"}
+    assert result.strategy.bars
+    assert all(dict(m) == {"user_id": "host"} for m in result.strategy.bars)
+
+
+def test_paper_live_run_info_is_written_again_after_context_injection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """实盘入口同样在 context 注入之后重写."""
+    import akquant.live._runner as runner_module
+
+    monkeypatch.setattr(
+        runner_module, "reject_framework_context_keys", lambda context: None
+    )
+    strategy = _Recorder()
+    _run_paper(
+        strategy,
+        context={"_framework_run_info": {"user_id": "forged"}},
+        run_info={"user_id": "host"},
+    )
+    assert dict(strategy.seen["start"]) == {"user_id": "host"}
+    assert strategy.bars
+    assert all(dict(m) == {"user_id": "host"} for m in strategy.bars)
+
+
+def test_functional_strategy_constructor_rejects_framework_context_keys() -> None:
+    """直接构造函数式策略(不经运行入口)时 context 同样受检."""
+    from akquant.backtest.engine import FunctionalStrategy
+
+    with pytest.raises(ValueError, match="_framework_"):
+        FunctionalStrategy(
+            None,
+            lambda ctx, bar: None,
+            context={"_framework_run_info": {"user_id": "forged"}},
+            run_info={"user_id": "host"},
+        )
+
+
+def test_grid_param_named_run_info_cannot_replace_callers_run_info() -> None:
+    """非严格模式下参数组合里的 run_info 不会被拒: 它也不能顶掉调用方传入的."""
+    denied = aq.run_grid_search(
+        strategy=_Guarded,
+        param_grid={"dummy": [1], "run_info": [{"user_id": "u-1"}]},
+        data=_data(5),
+        symbols=SYMBOL,
+        max_workers=1,
+        return_df=False,
+        raise_on_all_failed=False,
+        show_progress=False,
+        strict_strategy_params=False,
+        run_info={"user_id": "u-2"},
+    )
+    assert isinstance(denied, list) and len(denied) == 1
+    assert "'u-2' is not allowed" in str(denied[0].error)

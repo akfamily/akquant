@@ -100,7 +100,11 @@ from ..strategy_framework_hooks import (
     normalize_dual_stream_declaration,
 )
 from ..strategy_loader import resolve_strategy_input
-from ..strategy_run_info import EMPTY_RUN_INFO, freeze_run_info
+from ..strategy_run_info import (
+    EMPTY_RUN_INFO,
+    freeze_run_info,
+    reject_framework_context_keys,
+)
 from ..strategy_runtime_config import apply_strategy_runtime_config
 from ..strategy_window import (
     configure_engine_window_subscriptions,
@@ -3097,11 +3101,14 @@ class FunctionalStrategy(Strategy):
         self._on_timer_func = on_timer
         self._on_bars_func = on_bars
         self._context = context or {}
+        reject_framework_context_keys(self._context)
 
         # 将 context 注入到 self 中，模拟 Zipline 的 context 对象
         # 用户可以通过 self.xxx 访问 context 属性
         for k, v in self._context.items():
             setattr(self, k, v)
+        # context 注入之后再写一次, 理由同运行入口
+        self._framework_run_info = freeze_run_info(run_info)
 
         # 调用初始化函数
         if self._initialize is not None:
@@ -3685,6 +3692,7 @@ def run_backtest(
     )
     # 最先校验: 取值不合规时在加载数据、构造策略之前报错
     frozen_run_info = freeze_run_info(run_info)
+    reject_framework_context_keys(context)
     strategy_config = config.strategy_config if config is not None else None
     (
         strategy_id,
@@ -4108,6 +4116,11 @@ def run_backtest(
                 continue
             for k, v in context.items():
                 setattr(current_strategy, k, v)
+        # context 注入之后再写一次运行信息: 无论 context 里放了什么键, 策略读到的
+        # 都是调用方传入的那一份。
+        for current_strategy in all_strategy_instances:
+            ensure_run_info_untampered(current_strategy)
+            current_strategy._framework_run_info = frozen_run_info
 
     # 注入 Config 中的 Risk Config
     if config and config.strategy_config and config.strategy_config.risk:

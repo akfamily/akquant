@@ -61,7 +61,11 @@ from ..strategy_framework_hooks import (
     normalize_dual_stream_declaration,
 )
 from ..strategy_loader import resolve_strategy_input
-from ..strategy_run_info import EMPTY_RUN_INFO, freeze_run_info
+from ..strategy_run_info import (
+    EMPTY_RUN_INFO,
+    freeze_run_info,
+    reject_framework_context_keys,
+)
 from ..strategy_runtime_config import apply_strategy_runtime_config
 from ..strategy_window import configure_engine_window_subscriptions
 from ..utils import format_metric_value
@@ -595,6 +599,7 @@ class LiveRunner:
         self.on_timer = on_timer
         self.on_bars = on_bars
         self.context = context or {}
+        reject_framework_context_keys(self.context)
         self._run_info = freeze_run_info(run_info)
         self.strategy_max_order_value = self._normalize_strategy_float_map(
             strategy_max_order_value
@@ -1417,6 +1422,11 @@ class LiveRunner:
                     continue
                 for key, value in self.context.items():
                     setattr(target, key, value)
+            # context 注入之后再写一次运行信息: 无论 context 里放了什么键, 策略
+            # 读到的都是调用方传入的那一份。
+            for target in strategy_targets:
+                ensure_run_info_untampered(target)
+                target._framework_run_info = getattr(self, "_run_info", EMPTY_RUN_INFO)
 
         if hasattr(self.engine, "set_strategy_slots"):
             cast(Any, self.engine).set_strategy_slots(configured_slot_ids)
